@@ -120,7 +120,7 @@ export function createDshPetHost(options: DshPetHostOptions): PetHost {
         enabled: true,
         automaticWhispers: false,
       });
-      if (saved.enabled !== true) throw new Error('对话渠道没有接上');
+      if (!saved.enabled) throw new Error('对话渠道没有接上');
       return { model: saved.model || binding.model };
     },
   };

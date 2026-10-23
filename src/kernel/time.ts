@@ -7,7 +7,7 @@ export function localDateKey(now: Date): string {
 
 /** `HH:MM` 换成当天的第几分钟；写得不对返回 null。 */
 export function minutesOf(time: string | null | undefined): number | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(String(time ?? ''));
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time ?? '');
   if (!match) return null;
   const hour = Number(match[1]);
   const minute = Number(match[2]);

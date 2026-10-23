@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { directorAlive, drain, enqueue, writePid } from './inbox.ts';
 

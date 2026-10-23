@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { AudioPlayer, PlayOptions } from '../../ports/index.ts';
 import { createSfxPlayer, ensureSfx, sceneFor, wavBytes } from './sfx.ts';

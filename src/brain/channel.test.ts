@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { after, before, describe, test } from 'node:test';
+import { afterAll, beforeAll, describe, test } from 'vite-plus/test';
 
 import { createContext, createMemoryStore } from '@modelctx-ai/ctx';
 
@@ -51,18 +51,19 @@ describe('brain/channel', () => {
   const seen: Seen[] = [];
   let upstreamUrl = '';
   const upstream = createServer((req, res) => {
-    void readBody(req).then((body) => {
+    void (async () => {
+      const body = await readBody(req);
       seen.push({ path: req.url ?? '', auth: req.headers.authorization, body });
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('data: {"choices":[{"delta":{"content":"带"}}]}\n\n');
       res.end('data: [DONE]\n\n');
-    });
+    })();
   });
 
   let channel: Channel;
   const kv = memoryKv();
 
-  before(async () => {
+  beforeAll(async () => {
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
     upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1`;
     const db = new DatabaseSync(':memory:');
@@ -73,7 +74,7 @@ describe('brain/channel', () => {
     channel = await startChannel({ llm: llm({ baseUrl: upstreamUrl }), context, kv });
   });
 
-  after(async () => {
+  afterAll(async () => {
     await channel.close();
     upstream.close();
   });

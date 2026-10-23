@@ -1,9 +1,13 @@
 import type { Logger, PetHost } from '../../ports/index.ts';
 
 /** 什么也不产出，signal 中止时结束。不轮询，不占 CPU。 */
-async function* idleUntil(signal: AbortSignal): AsyncGenerator<never, void, undefined> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+function idleUntil(signal: AbortSignal): AsyncIterable<never> {
+  const aborted = new Promise<IteratorReturnResult<undefined>>((resolve) => {
+    const end = (): void => resolve({ done: true, value: undefined });
+    if (signal.aborted) end();
+    else signal.addEventListener('abort', end, { once: true });
+  });
+  return { [Symbol.asyncIterator]: () => ({ next: () => aborted }) };
 }
 
 /** 没有桌宠的机器上调试用：台词打印到终端，语音照常播放。 */

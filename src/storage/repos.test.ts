@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { ScheduleItem } from '../kernel/types.ts';
 import { openDatabase } from './db.ts';

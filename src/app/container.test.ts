@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
 import { localDateKey } from '../kernel/time.ts';

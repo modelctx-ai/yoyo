@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { confirmSend, reduceConfirm } from './confirm.ts';
 import type { ConfirmState } from './confirm.ts';
@@ -31,14 +31,14 @@ function decision(action: string, text?: string): string {
 function browser(decide: (url: string) => Promise<void>) {
   let visit: Promise<{ readonly url: string; readonly page: string }> | undefined;
   return {
-    open(url: string): void {
+    open: (url: string): void => {
       visit = (async () => {
         const page = await (await fetch(url)).text();
         await decide(url);
         return { url, page };
       })();
     },
-    visited() {
+    visited: () => {
       assert.ok(visit, '确认页没有打开');
       return visit;
     },

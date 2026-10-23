@@ -21,7 +21,7 @@ export function reduceConfirm(state: ConfirmState, event: ConfirmEvent): Confirm
   if (event.type === 'intervene') return { ...state, held: true };
   if (event.type === 'cancel') return { ...state, done: true, action: 'cancel' };
   if (event.type === 'send') {
-    const text = String(event.text ?? state.text).trim();
+    const text = (event.text ?? state.text).trim();
     if (!text) return { ...state, held: true };
     return { ...state, done: true, action: 'send', text };
   }
@@ -112,7 +112,7 @@ function decisionText(raw: string): string {
   }
   if (!body || typeof body !== 'object') return '';
   const { action, text } = body as { readonly action?: unknown; readonly text?: unknown };
-  return action === 'send' ? String(text ?? '').trim() : '';
+  return action === 'send' && typeof text === 'string' ? text.trim() : '';
 }
 
 /** 打开确认页，返回要发送的文字；取消或超时返回空字符串。 */

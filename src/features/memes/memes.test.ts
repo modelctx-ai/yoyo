@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { ActivityEvent, Line, MemePack } from '../../kernel/types.ts';
 import type { Repos, WebSearch } from '../../ports/index.ts';

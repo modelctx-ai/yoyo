@@ -169,7 +169,9 @@ export function loadConfig(path: string): Config {
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
   } catch (error) {
-    throw new Error(`config.json 不是合法的 JSON：${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`config.json 不是合法的 JSON：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    });
   }
   return parseConfig(raw);
 }
@@ -177,8 +179,8 @@ export function loadConfig(path: string): Config {
 const SPEECH_KEYS = ['baseUrl', 'apiKey', 'model', 'referenceId'] as const;
 
 /** Fish Audio 的四项都填了才合成语音；没填齐就只出字。 */
-export function speechReady(speech: SpeechConfig): boolean {
-  return SPEECH_KEYS.every((key) => speech[key].trim() !== '');
+export function speechReady(settings: SpeechConfig): boolean {
+  return SPEECH_KEYS.every((key) => settings[key].trim() !== '');
 }
 
 /**
@@ -194,6 +196,6 @@ export function assertDirectorReady(config: Config): void {
 }
 
 /** 模型配齐了才写碎碎念和回复。 */
-export function llmReady(llm: LlmConfig): boolean {
-  return Boolean(llm.apiKey && llm.model && (llm.baseUrl || llm.provider === 'anthropic'));
+export function llmReady(settings: LlmConfig): boolean {
+  return Boolean(settings.apiKey && settings.model && (settings.baseUrl || settings.provider === 'anthropic'));
 }

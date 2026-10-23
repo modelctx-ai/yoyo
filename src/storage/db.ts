@@ -156,12 +156,14 @@ function importFile(db: DatabaseSync, dir: string, name: string, load: (raw: str
   }
 }
 
-function importJson<T>(db: DatabaseSync, dir: string, name: string, load: (data: T) => void): void {
-  importFile(db, dir, name, (raw) => load(JSON.parse(raw) as T));
+/** 读出来的 JSON 不带类型，各个调用方按旧文件的形状断言。 */
+function importJson(db: DatabaseSync, dir: string, name: string, load: (json: unknown) => void): void {
+  importFile(db, dir, name, (raw) => load(JSON.parse(raw)));
 }
 
 function migrate(db: DatabaseSync, dir: string): void {
-  importJson<LegacyList<LegacyContact>>(db, dir, 'contacts.json', (data) => {
+  importJson(db, dir, 'contacts.json', (json) => {
+    const data = json as LegacyList<LegacyContact>;
     const insert = db.prepare(
       'INSERT OR IGNORE INTO contacts (id, name, yoyo, note, created_at) VALUES (?, ?, ?, ?, ?)',
     );
@@ -169,7 +171,8 @@ function migrate(db: DatabaseSync, dir: string): void {
       insert.run(item.id, item.name, item.yoyo, item.note ?? '', item.createdAt ?? new Date().toISOString());
     }
   });
-  importJson<LegacyList<LegacySchedule>>(db, dir, 'schedule.json', (data) => {
+  importJson(db, dir, 'schedule.json', (json) => {
+    const data = json as LegacyList<LegacySchedule>;
     const insert = db.prepare(
       'INSERT OR IGNORE INTO schedule (id, title, kind, time, date, repeat, weekday, enabled, last_fired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
@@ -187,16 +190,19 @@ function migrate(db: DatabaseSync, dir: string): void {
       );
     }
   });
-  importJson<LegacyList<LegacyClip>>(db, dir, 'clipboard.json', (data) => {
+  importJson(db, dir, 'clipboard.json', (json) => {
+    const data = json as LegacyList<LegacyClip>;
     const insert = db.prepare('INSERT INTO clipboard (text, at) VALUES (?, ?)');
-    for (const item of [...(data.items ?? [])].reverse()) insert.run(item.text, item.at);
+    for (const item of (data.items ?? []).toReversed()) insert.run(item.text, item.at);
   });
-  importJson<LegacyList<LegacyContextItem>>(db, dir, 'context.json', (data) => {
+  importJson(db, dir, 'context.json', (json) => {
+    const data = json as LegacyList<LegacyContextItem>;
     db.exec(LEGACY_CONTEXT);
     const insert = db.prepare('INSERT INTO context_items (role, text, at, item_key) VALUES (?, ?, ?, ?)');
     for (const item of data.items ?? []) insert.run(item.role, item.text, item.at ?? Date.now(), item.key ?? null);
   });
-  importJson<LegacyMemes>(db, dir, 'memes.json', (data) => {
+  importJson(db, dir, 'memes.json', (json) => {
+    const data = json as LegacyMemes;
     db.prepare('INSERT OR REPLACE INTO meme_pack (id, fetched_at, query) VALUES (1, ?, ?)').run(
       data.fetchedAt ?? null,
       data.query ?? null,
@@ -204,17 +210,20 @@ function migrate(db: DatabaseSync, dir: string): void {
     const insert = db.prepare('INSERT OR IGNORE INTO memes (url) VALUES (?)');
     for (const item of data.items ?? []) if (item.url) insert.run(item.url);
   });
-  importJson<LegacyList<LegacySpoken>>(db, dir, 'spoken.json', (data) => {
+  importJson(db, dir, 'spoken.json', (json) => {
+    const data = json as LegacyList<LegacySpoken>;
     const insert = db.prepare('INSERT OR REPLACE INTO spoken (text, at) VALUES (?, ?)');
     for (const item of data.items ?? []) insert.run(item.text, item.at);
   });
-  importJson<{ readonly date?: string }>(db, dir, 'weather-reported.json', (data) => {
+  importJson(db, dir, 'weather-reported.json', (json) => {
+    const data = json as { readonly date?: string };
     if (data.date) db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run('weather-date', data.date);
   });
-  importJson<unknown>(db, dir, 'place.json', (data) => {
+  importJson(db, dir, 'place.json', (data) => {
     db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run('place', JSON.stringify(data));
   });
-  importJson<LegacyList<unknown>>(db, dir, 'tasks.json', (data) => {
+  importJson(db, dir, 'tasks.json', (json) => {
+    const data = json as LegacyList<unknown>;
     const insert = db.prepare('INSERT INTO tasks (text) VALUES (?)');
     for (const item of data.items ?? []) if (typeof item === 'string' && item.trim()) insert.run(item.trim());
   });

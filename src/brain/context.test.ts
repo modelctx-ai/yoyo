@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { createContext, createMemoryStore, type ContextEntry, type ModelMessage } from '@modelctx-ai/ctx';
 import { createSqliteStore } from '@modelctx-ai/ctx-sqlite';
@@ -30,13 +30,18 @@ function memoryContext() {
   });
 }
 
+/** 文字内容原样，分段内容转成 JSON。 */
+function contentText(content: ModelMessage['content']): string {
+  return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
 function shown(messages: readonly ModelMessage[]): string[] {
-  return messages.map((message) => `${message.role}:${String(message.content)}`);
+  return messages.map((message) => `${message.role}:${contentText(message.content)}`);
 }
 
 function shapes(entries: readonly ContextEntry[]): string[] {
   return entries.map((entry) => {
-    if (entry.type === 'message') return `${entry.message.role}:${String(entry.message.content)}`;
+    if (entry.type === 'message') return `${entry.message.role}:${contentText(entry.message.content)}`;
     if (entry.type === 'event') return `${entry.kind}:${entry.text ?? ''}`;
     return `summary:${entry.text}`;
   });
@@ -70,7 +75,7 @@ function tables(db: DatabaseSync): string[] {
     }[]
   )
     .map((row) => row.name)
-    .sort();
+    .toSorted();
 }
 
 const LEGACY: readonly LegacyItem[] = [

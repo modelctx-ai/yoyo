@@ -11,7 +11,7 @@ export function parseWhisper(
   kind: 'generated' | 'reply' = 'generated',
 ): Line | null {
   let text =
-    String(raw ?? '')
+    (raw ?? '')
       .replace(/```[\s\S]*?```/g, '')
       .split('\n')
       .map((line) => line.trim())

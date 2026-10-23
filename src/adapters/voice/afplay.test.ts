@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { createAfplayPlayer } from './afplay.ts';
 

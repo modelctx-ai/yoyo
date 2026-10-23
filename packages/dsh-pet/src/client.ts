@@ -167,7 +167,7 @@ async function pause(ms: number, signal: AbortSignal): Promise<void> {
  * 单次请求的中止信号：到点按超时中止，调用方中止就跟着中止，用完调 `done()` 收掉计时器和监听。
  * 不用 `AbortSignal.any`：Node 22 里它挂在长寿的 signal 上会越积越多（每拍长轮询漏一份）。
  */
-function requestSignal(ms: number, outer?: AbortSignal): { readonly signal: AbortSignal; done(): void } {
+function requestSignal(ms: number, outer?: AbortSignal): { readonly signal: AbortSignal; readonly done: () => void } {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
@@ -179,7 +179,7 @@ function requestSignal(ms: number, outer?: AbortSignal): { readonly signal: Abor
   else outer?.addEventListener('abort', follow, { once: true });
   return {
     signal: controller.signal,
-    done() {
+    done: () => {
       clearTimeout(timer);
       outer?.removeEventListener('abort', follow);
     },

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { createContext, createMemoryStore, type ToolRegistry } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
@@ -26,7 +26,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
     events,
     contacts: { list: () => [], insert: () => {} },
     schedule: {
-      list: () => [...schedule].sort((a, b) => a.time.localeCompare(b.time)),
+      list: () => schedule.toSorted((a, b) => a.time.localeCompare(b.time)),
       insert: (item) => {
         schedule.push(item);
       },
@@ -74,12 +74,18 @@ async function run(registry: ToolRegistry, name: string, input: unknown = {}): P
 /** 2026-10-23（周五）14:10，本地时间。 */
 const NOW = new Date(2026, 9, 23, 14, 10);
 
+/** 在 `now` 这一刻加一条提醒，返回它落到的日期。 */
+async function dateOf(now: Date, input: Record<string, unknown>): Promise<string | null> {
+  const tools = createYoyoTools({ repos: memoryRepos(), search: null, now: () => now });
+  return ((await run(tools, 'add_alarm', { title: '提醒', ...input })) as ScheduleItem).date;
+}
+
 const TAIPEI = JSON.stringify({ name: '台北', latitude: 25.0375, longitude: 121.5637 });
 
 function forecast(status = 200): { fetch: typeof fetch; urls: string[] } {
   const urls: string[] = [];
   const fake = async (input: string | URL | Request) => {
-    urls.push(String(input));
+    urls.push(input instanceof Request ? input.url : String(input));
     if (status !== 200) return new Response('{}', { status });
     const time = Array.from({ length: 8 }, (_, i) => `2026-10-23T${String(14 + i).padStart(2, '0')}:00`);
     return Response.json({
@@ -91,7 +97,7 @@ function forecast(status = 200): { fetch: typeof fetch; urls: string[] } {
       },
     });
   };
-  return { fetch: fake as typeof fetch, urls };
+  return { fetch: fake, urls };
 }
 
 describe('brain/tools', () => {
@@ -183,10 +189,6 @@ describe('brain/tools', () => {
   });
 
   test('一次性提醒不写日期就取最近的那个时间点，也认今天、明天、后天', async () => {
-    const dateOf = async (now: Date, input: Record<string, unknown>) => {
-      const tools = createYoyoTools({ repos: memoryRepos(), search: null, now: () => now });
-      return ((await run(tools, 'add_alarm', { title: '提醒', ...input })) as ScheduleItem).date;
-    };
     assert.equal(await dateOf(NOW, { time: '15:00' }), '2026-10-23');
     assert.equal(await dateOf(NOW, { time: '14:10' }), '2026-10-23');
     assert.equal(await dateOf(NOW, { time: '09:00' }), '2026-10-24');

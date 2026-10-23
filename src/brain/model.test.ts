@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { after, before, describe, test } from 'node:test';
+import { afterAll, beforeAll, describe, test } from 'vite-plus/test';
 
 import { createContext, createMemoryStore } from '@modelctx-ai/ctx';
 
@@ -50,7 +50,8 @@ describe('brain/model', () => {
     let status = 200;
     let baseUrl = '';
     const upstream = createServer((req: IncomingMessage, res: ServerResponse) => {
-      void readBody(req).then((raw) => {
+      void (async () => {
+        const raw = await readBody(req);
         seen.push({ path: req.url ?? '', auth: req.headers.authorization, body: JSON.parse(raw) as Seen['body'] });
         res.writeHead(status, { 'content-type': 'application/json' });
         if (status !== 200) {
@@ -72,15 +73,15 @@ describe('brain/model', () => {
             usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
           }),
         );
-      });
+      })();
     });
 
-    before(async () => {
+    beforeAll(async () => {
       await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
       baseUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1/`;
     });
 
-    after(() => {
+    afterAll(() => {
       upstream.close();
     });
 

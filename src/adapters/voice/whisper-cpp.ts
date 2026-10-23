@@ -27,7 +27,7 @@ const HALLUCINATION = /^(谢谢|谢谢观看|字幕由\S*制作|各位观众|请
 
 /** 丢掉静音时 tiny 模型常冒出来的套话。 */
 export function cleanTranscript(raw: string): string {
-  const text = String(raw ?? '')
+  const text = (raw ?? '')
     .split('\n')
     .map((line) => line.replace(/^\[[^\]]*\]\s*/, '').trim())
     .filter((line) => line && !line.startsWith('read_audio'))

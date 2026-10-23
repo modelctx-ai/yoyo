@@ -79,9 +79,7 @@ export function inspectText(domain: Domain): string {
 }
 
 export function findDomains(domains: readonly Domain[], query: string | null | undefined): Domain[] {
-  const needle = String(query ?? '')
-    .trim()
-    .toLowerCase();
+  const needle = (query ?? '').trim().toLowerCase();
   if (!needle) return [];
   const hits: Domain[] = [];
   for (const domain of domains) {

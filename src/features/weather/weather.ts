@@ -143,7 +143,8 @@ export async function ensurePlace(
   const response = await fetcher('https://ipinfo.io/json', { signal: AbortSignal.timeout(8000) });
   if (!response.ok) return null;
   const data = fieldsOf(await response.json());
-  const [latitude, longitude] = String(data['loc'] ?? '').split(',');
+  const loc = data['loc'];
+  const [latitude, longitude] = (typeof loc === 'string' ? loc : '').split(',');
   const place = placeFrom({ name: data['city'], latitude, longitude });
   if (!place) return null;
   kv.set(PLACE_KEY, JSON.stringify(place));

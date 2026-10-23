@@ -10,7 +10,7 @@ export function wantsReply(line: Line | null | undefined, listen: Pick<ListenCon
 
 /** 听几秒：取整，限在 1 到 10 秒；读不懂就 5 秒。 */
 export function listenSeconds(listen: Pick<ListenConfig, 'seconds'>): number {
-  const seconds = Number(listen.seconds);
+  const seconds = listen.seconds;
   if (!Number.isFinite(seconds)) return 5;
   return Math.min(10, Math.max(1, Math.round(seconds)));
 }

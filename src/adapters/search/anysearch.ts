@@ -5,10 +5,7 @@ import type { WebSearch } from '../../ports/index.ts';
 
 /** 搜索结果压成一段，空白合并，最多 max 个字。 */
 export function clipSearch(markdown: string, max = 700): string {
-  return String(markdown ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
+  return (markdown ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
 /**

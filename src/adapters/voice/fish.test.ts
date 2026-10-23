@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { cacheFile, createFishSynthesizer, spokenText, ttsEndpoint } from './fish.ts';
 
@@ -17,7 +17,7 @@ interface Call {
 function fakeFetch(respond: () => Response) {
   const calls: Call[] = [];
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(input), init });
+    calls.push({ url: input instanceof Request ? input.url : String(input), init });
     return respond();
   }) as typeof fetch;
   return { calls, fetcher };
@@ -86,7 +86,7 @@ describe('fish', () => {
       'Content-Type': 'application/json',
       model: 's2.1-pro-free',
     });
-    assert.deepEqual(JSON.parse(String(call?.init?.body)), {
+    assert.deepEqual(JSON.parse(call?.init?.body as string), {
       text: '[happy] 在呢',
       reference_id: 'ref-1',
       format: 'mp3',

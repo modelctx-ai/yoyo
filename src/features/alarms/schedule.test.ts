@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { ActivityEvent, ScheduleItem } from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
@@ -27,7 +27,7 @@ function memoryRepos() {
   const events: ActivityEvent[] = [];
   const repos: Pick<Repos, 'schedule' | 'activity'> = {
     schedule: {
-      list: () => [...items].sort((a, b) => a.time.localeCompare(b.time)),
+      list: () => items.toSorted((a, b) => a.time.localeCompare(b.time)),
       insert: (entry) => {
         items.push(entry);
       },

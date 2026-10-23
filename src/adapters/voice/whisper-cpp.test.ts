@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { cleanTranscript, createWhisperTranscriber, ensureAsrModel } from './whisper-cpp.ts';
 
@@ -69,7 +69,7 @@ describe('whisper.cpp', () => {
     const dir = join(tempDir(), 'models');
     const urls: string[] = [];
     const fetcher = (async (input: string | URL | Request) => {
-      urls.push(String(input));
+      urls.push(input instanceof Request ? input.url : String(input));
       return new Response(new Uint8Array([1, 2, 3]));
     }) as typeof fetch;
     const file = await ensureAsrModel(dir, 'tiny', fetcher);
