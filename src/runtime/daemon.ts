@@ -2,7 +2,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { LanguageModel } from '@modelctx-ai/ctx';
 
-import { startHotkeyHelper } from '../adapters/platform/macos.ts';
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
@@ -27,6 +26,8 @@ export interface DaemonApp {
   readonly director: Director;
   /** 开本机对话渠道，关闭应用时一起关。 */
   openChannel(): Promise<Channel>;
+  /** 起按键助手。由组装根决定：macOS 且 `hotkey.enabled` 才真的起，别处什么也不做。 */
+  startHotkey(): void;
   close(): Promise<void>;
 }
 
@@ -41,6 +42,8 @@ export const COMPACT_EVERY_MS = 10 * 60 * 1000;
 export const WHISPER_RETRY_MS = 60_000;
 /** 找表情包失败以后，隔这么久再找。 */
 export const MEME_RETRY_MS = 10 * 60 * 1000;
+/** 桌宠还没开、对话渠道接不上时，隔这么久再接一次。 */
+export const BIND_RETRY_MS = 30_000;
 const RETRY_MS = 2000;
 
 export const MENU_OWNER = 'yoyo';
@@ -185,23 +188,41 @@ async function keepRunning(signal: AbortSignal, logger: Logger, run: () => Promi
   }
 }
 
-async function connectChannel(app: DaemonApp): Promise<void> {
+export type ChannelApp = Pick<DaemonApp, 'config' | 'logger' | 'host' | 'model' | 'openChannel'>;
+
+/**
+ * 开本机对话渠道，让桌宠右键对话接上它。网关只开一次；桌宠还没开、接不上时隔 `retryMs` 再接，
+ * 直到接上或 signal 中止。只记第一次失败。
+ */
+export async function connectChannel(app: ChannelApp, signal: AbortSignal, retryMs = BIND_RETRY_MS): Promise<void> {
   const plan = channelPlan(app.config, app.host.name, app.model !== null);
   if (plan === 'skip') return;
   if (plan === 'unsupported') {
     app.logger.info('llm.provider 不是 openai-compatible，桌宠右键对话不经过 yoyo');
     return;
   }
+  let channel: Channel;
   try {
-    const channel = await app.openChannel();
-    const saved = await app.host.bindChat({
-      baseUrl: channel.baseUrl,
-      model: app.config.llm.model,
-      apiKey: channel.token,
-    });
-    app.logger.info(`对话渠道已接上 ${saved.model}`);
+    channel = await app.openChannel();
   } catch (error) {
     app.logger.error(errorText(error));
+    return;
+  }
+  let failed = false;
+  while (!signal.aborted) {
+    try {
+      const saved = await app.host.bindChat({
+        baseUrl: channel.baseUrl,
+        model: app.config.llm.model,
+        apiKey: channel.token,
+      });
+      app.logger.info(`对话渠道已接上 ${saved.model}`);
+      return;
+    } catch (error) {
+      if (!failed) app.logger.error(`对话渠道还没接上桌宠，过一会儿再试：${errorText(error)}`);
+      failed = true;
+    }
+    await delay(retryMs, undefined, { signal }).catch(() => {});
   }
 }
 
@@ -228,11 +249,15 @@ function watchSayings(app: DaemonApp, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** `--bake` 预合成，`--once` 说一句；否则常驻，直到 SIGINT/SIGTERM。 */
-export async function runDaemon(
-  app: DaemonApp,
-  options: { readonly once?: boolean; readonly bake?: boolean },
-): Promise<void> {
+export interface DaemonOptions {
+  readonly once?: boolean;
+  readonly bake?: boolean;
+  /** 不发 SIGINT 也能停：中止后关掉应用，runDaemon 返回，不退出进程。测试用。 */
+  readonly signal?: AbortSignal;
+}
+
+/** `--bake` 预合成，`--once` 说一句；否则常驻，直到 SIGINT/SIGTERM（或 `options.signal` 中止）。 */
+export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Promise<void> {
   if (options.bake || options.once) {
     try {
       if (options.bake) await app.director.bake();
@@ -243,27 +268,40 @@ export async function runDaemon(
     return;
   }
 
-  const { config, paths, logger } = app;
   const controller = new AbortController();
   const { signal } = controller;
   let timer: NodeJS.Timeout | undefined;
-  const stop = (): void => {
+  let finish: () => void = () => {};
+  const finished = new Promise<void>((resolve) => (finish = resolve));
+
+  /** 停下所有循环，关掉应用。收到信号时再退出进程。 */
+  async function stop(exit: boolean): Promise<void> {
     if (signal.aborted) return;
     controller.abort();
     clearTimeout(timer);
-    app
-      .close()
-      .catch((error: unknown) => logger.error(errorText(error)))
-      .finally(() => process.exit(0));
-  };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
-
-  await connectChannel(app);
-  void watchMenu(app, signal);
-  if (process.platform === 'darwin' && config.hotkey.enabled) {
-    startHotkeyHelper({ binDir: paths.binDir, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    try {
+      await app.close();
+    } catch (error) {
+      app.logger.error(errorText(error));
+    }
+    finish();
+    if (exit) process.exit(0);
   }
+  function onSignal(): void {
+    void stop(true);
+  }
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  if (options.signal?.aborted) await stop(false);
+  options.signal?.addEventListener('abort', () => void stop(false), { once: true });
+  if (signal.aborted) return finished;
+
+  // 桌宠还没开时渠道会一直等着再接，不挡后面的事
+  void connectChannel(app, signal);
+  void watchMenu(app, signal);
+  app.startHotkey();
   void watchSayings(app, signal);
 
   const tick = createTick(app, { nextWhisper: Date.now(), lastTalk: 0, lastCompact: null, memeFailedAt: null });
@@ -272,5 +310,5 @@ export async function runDaemon(
     if (!signal.aborted) timer = setTimeout(loop, TICK_MS);
   };
   await loop();
-  await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+  await finished;
 }

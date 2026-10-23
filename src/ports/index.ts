@@ -64,7 +64,7 @@ export interface PetHost extends Stage {
 // ---------- 声音 ----------
 
 export interface Synthesizer {
-  /** 合成并返回音频文件路径。同一句（含情绪标签）走缓存。 */
+  /** 合成并返回音频文件路径。同一句（含情绪标签）走缓存。没配语音时返回空字符串，调用方只出字不播放。 */
   synthesize(text: string, cue: string): Promise<string>;
 }
 

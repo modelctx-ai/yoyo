@@ -60,7 +60,7 @@ flowchart TB
 * `cli` 和组装根可以直接用下面任何一层。
 * `packages/dsh-pet` 不依赖 yoyo 的任何东西。
 
-`features`、`brain` 和导演只认端口。换平台、换服务商、写测试替身，都只需要另给一份实现，在组装根里挑。按键助手是例外：常驻循环直接调 macOS 的实现。[^ports] [^container]
+`features`、`brain`、导演和常驻循环只认端口。换平台、换服务商、写测试替身，都只需要另给一份实现，在组装根里挑。按键助手也由组装根给：常驻循环只调 `startHotkey()`，只有 macOS 且 `hotkey.enabled` 时才真的起。[^ports] [^container]
 
 # 目录
 
@@ -68,22 +68,22 @@ flowchart TB
 | --- | --- |
 | `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路、气泡时长和记录类型。不做 IO |
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
-| `src/app/config.ts`、`paths.ts`、`log.ts` | 配置结构（zod，缺省值都在这里）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志 |
+| `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
 | `src/brain` | ctx 接线：`context.ts`（线程、投影、旧表迁移、写入）、`sources.ts`、`prompts.ts`、`compose.ts`（生成碎碎念和回复）、`model.ts`、`tools.ts`、`mcp.ts`、`channel.ts` |
-| `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
+| `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `director.ts`（说、听、提醒、预合成、压缩）、`daemon.ts`（常驻循环）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文和导演，开对话渠道 |
-| `src/main.ts`、`bin/yoyo.js` | 常驻进程入口、命令行入口 |
+| `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
 | `packages/dsh-pet` | `@yoyo/dsh-pet`：dsh-pet 独立模式 HTTP 接口的类型化客户端，只照 `openapi.yaml` 写 |
 
 # 常驻进程
 
-`src/main.ts` 读配置、检查语音配好了、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP，最后建上下文和导演。[^container]
+`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过），最后建上下文和导演。[^container]
 
-`runDaemon` 先接对话渠道，再挂右键菜单、起按键助手（macOS 且 `hotkey.enabled`）、盯气泡变化，然后每秒一拍，上一拍没走完就跳过：[^daemon]
+`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），挂右键菜单、调组装根给的 `startHotkey()`、盯气泡变化，然后每秒一拍，上一拍没走完就跳过：[^daemon]
 
 1. 粘贴板有变化就记一条（`clipboard.enabled`）。
 2. 并进桌宠的对话记忆。
@@ -91,7 +91,7 @@ flowchart TB
 4. 到点的闹钟和任务。
 5. 离下一句日常碎碎念还有 20 秒以上，就去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
 6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。
-7. 配了 `context.compactAt` 时，每 10 分钟最多看一次要不要压缩。
+7. 配了 `context.compactAt` 时，每 10 分钟最多看一次要不要压缩；压一次最多等 60 秒，超时这次就不压。
 
 `--once` 只说一句，`--bake` 只预合成，做完就关。
 
@@ -111,9 +111,9 @@ flowchart TB
 | 记录 | 生成都用 `record: false`，30 秒超时。合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `compose.ts`、`director.ts` |
 | 报错 | `describeError(error, { secrets: [llm.apiKey] })`；有状态码时「模型接口返回 <状态码>：<正文片段>」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过 | `storePetChat` |
-| 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。只支持 `openai-compatible` | `startChannel` |
+| 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。只支持 `openai-compatible` | `startChannel`、`connectChannel` |
 | 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，再加 `mcpServers` 的工具 | `createYoyoTools`、`connectMcp` |
-| 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep })`，摘要之前的条目还在库里。`yoyo context compact` 随时手动压 | `compactIfNeeded`、`compactContext` |
+| 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 模型 | `createModel({ provider, baseUrl, apiKey, model })`；没配齐就是 `null`：只用预制台词，碎碎念说完也不听 | `createLanguageModel` |
 | 迁移 | 打开上下文时，旧表 `context_items` 在一个事务里迁进线程，改名成 `context_items_migrated`；失败回滚，下次再试 | `migrateLegacyContext` |
 
@@ -221,7 +221,7 @@ sequenceDiagram
   participant Up as llm.baseUrl
   participant Daemon as 常驻循环
   Daemon->>GW: 启动时 startChannel：本机随机端口，新生成本机令牌
-  Daemon->>Pet: POST /standalone-ai/settings（网关地址、本机令牌）
+  Daemon->>Pet: POST /standalone-ai/settings（网关地址、本机令牌；桌宠没开就每 30 秒再试）
   User->>Pet: 右键「对话」说一句
   Pet->>GW: POST /v1/chat/completions（本机令牌，截断的历史）
   GW->>Ctx: view()
@@ -274,7 +274,7 @@ sequenceDiagram
 2. 要存东西：表加在 `src/storage/db.ts` 的 `SCHEMA`（`CREATE TABLE IF NOT EXISTS`，老库启动时补上），接口加进 `src/ports/index.ts` 的 `Repos`，实现写在 `src/storage/repos.ts`。
 3. 要用外部能力：先在 `ports` 定接口，实现放进 `adapters`，见下一节。
 4. 要开口：在导演里加一个方法，内部走 `speak`，先合成、再占锁投喂、播放、记行为和上下文。定时做的事放进常驻循环的一拍（`createTick`）。
-5. 新的配置项加进 `src/app/config.ts`，给缺省值，老的 `config.json` 不受影响。
+5. 新的配置项加进 `src/app/config.ts`，用文件里的 `text`、`flag`、`count` 这类写法：给缺省值，写错也按缺省值，老的 `config.json` 不受影响。
 6. 做过的事记一条行为：`repos.activity.record({ type: '…' })`，不写密钥。
 
 ## 给端口加一个实现
@@ -282,7 +282,7 @@ sequenceDiagram
 以另一家语音合成为例：
 
 1. 在 `src/adapters/voice/` 写一个工厂，返回 `Synthesizer`：`synthesize(text, cue)` 返回音频文件路径，同一句（含情绪标签）走缓存。缓存放自己的目录，或者用不同的键，别覆盖 `~/.yoyo/speech-cache` 里 Fish 的 mp3。
-2. 在 `src/app/config.ts` 的 `speech` 里加选项（例如服务商名），给缺省值。`assertDirectorReady` 现在要求 Fish 的四项都填，一起改。
+2. 在 `src/app/config.ts` 的 `speech` 里加选项（例如服务商名），给缺省值。`speechReady` 和 `assertDirectorReady`（驱动桌宠时）现在要求 Fish 的四项都填，一起改。
 3. 在 `src/app/container.ts` 里按配置挑实现。导演和命令只认端口，不用改。
 4. 测试里网络和子进程从参数注入，照 `fish.test.ts` 写。
 
@@ -326,10 +326,11 @@ registry.add(
 * `include`、`exclude` 用服务器上的原名挑工具，`"enabled": false` 先不连。
 * 工具名加服务器前缀，例如 `notes__search_notes`。
 * 启动时连接，连不上只记一行「MCP notes 没连上：…」，其余照常；退出时关掉。
+* 每台服务器连接前才检查：没有 `command` 也没有 `url` 就记一行「MCP notes 的配置不对，要有 command 或 url，先跳过」；`type` 只认 `http`、`sse`，别的按缺省；其余字段写错当没写。
 
 ## 不接桌宠跑
 
-`"stage": "console"` 把台词打印成 `[动作] 文字`，不占锁，没有菜单、对话记忆和右键对话，工作状态是空的。语音仍然要合成，Fish 的配置照填；不在 macOS 上时把 `speech.autoplay`、`listen.enabled` 设成 `false`。用一个单独的数据目录和配置，就不会碰到平时的库：
+`"stage": "console"` 把台词打印成 `[动作] 文字`，不占锁，没有菜单、对话记忆和右键对话，工作状态是空的。语音可以不配：Fish 的四项没填齐就只出字。不在 macOS 上不播放声音、不做配音，按键助手也不起；`listen.enabled` 缺省是关的，听写要 macOS 的 ffmpeg。在任何机器上都能跑，用一个单独的数据目录和配置，就不会碰到平时的库：
 
 ```sh
 YOYO_HOME=/tmp/yoyo-dev YOYO_CONFIG=/tmp/yoyo-dev/config.json pnpm once

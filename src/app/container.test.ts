@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
+import { silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
+import { localDateKey } from '../kernel/time.ts';
 import type { Director } from '../runtime/director.ts';
 import { memoryLogger } from '../runtime/testing.ts';
 import { parseConfig } from './config.ts';
@@ -67,5 +69,38 @@ describe('container', () => {
     assert.equal(app.repos.kv.get('channel-token'), channel.token);
     await app.close();
     await assert.rejects(fetch(`${channel.baseUrl}/chat/completions`, { method: 'POST', body: '{}' }));
+  });
+
+  test('控制台舞台、没配语音、不是 macOS：只出字，不合成也不播放，按键助手不起', async () => {
+    const logger = memoryLogger();
+    const paths = tempPaths();
+    const app = await createApp(parseConfig({ stage: 'console' }), paths, { logger, platform: 'linux' });
+    assert.equal(app.synthesizer, silentSynthesizer);
+    assert.equal(app.sfx, silentSfx);
+    assert.equal(await app.synthesizer.synthesize('你好', '[happy]'), '');
+    await app.player.play('/x.mp3');
+    app.player.fire('/x.mp3');
+    assert.deepEqual(logger.lines, ['这台机器不是 macOS，没有 afplay，语音和配音都不播放'], '只说一次');
+    app.startHotkey();
+    assert.equal(existsSync(paths.binDir), false);
+
+    // 导演用真时钟：先记下今天报过天气，免得赶上下班时间去联网查
+    app.repos.kv.set('weather-date', localDateKey(new Date()));
+    logger.lines.length = 0;
+    const result = await app.director.perform();
+    assert.ok(result);
+    assert.equal(logger.lines[0], `[${result.line.action}] ${result.line.text}`);
+    assert.equal(existsSync(paths.speechCacheDir), false, '没有合成');
+    assert.equal(existsSync(paths.sfxDir), false, '也没有生成配音');
+    await app.close();
+  });
+
+  test('语音配齐用 Fish；macOS 上用 afplay 和配音', async () => {
+    const config = parseConfig({ stage: 'console', speech: { apiKey: 'fish-key', referenceId: 'ref' } });
+    const app = await createApp(config, tempPaths(), { logger: memoryLogger(), platform: 'darwin' });
+    assert.notEqual(app.synthesizer, silentSynthesizer);
+    assert.notEqual(app.sfx, silentSfx);
+    await assert.rejects(app.player.play('/不存在/x.mp3'), '真的去调 afplay');
+    await app.close();
   });
 });

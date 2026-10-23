@@ -15,6 +15,7 @@ import {
 } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
+import { silentSynthesizer } from '../adapters/voice/silent.ts';
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { threadFor, yoyoProjection } from '../brain/context.ts';
@@ -71,6 +72,8 @@ interface RigOptions {
   readonly host?: FakeHostOptions;
   /** 搜索结果；给 Error 就让搜索失败。 */
   readonly search?: string | Error;
+  /** 用没配语音时的合成器：返回空路径。 */
+  readonly silent?: boolean;
   readonly recordError?: Error;
 }
 
@@ -108,7 +111,7 @@ function rig(options: RigOptions = {}): Rig {
     paths: resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') }),
     logger,
     host: fakeHost(calls, options.host),
-    synthesizer: fakeSynthesizer(calls),
+    synthesizer: options.silent ? silentSynthesizer : fakeSynthesizer(calls),
     player: fakePlayer(calls),
     sfx: fakeSfx(calls),
     recorder,
@@ -367,7 +370,7 @@ describe('director', () => {
 
   test('碎碎念念完听回应：听到就回复，算说过话', async () => {
     const model = mockModel('那我们就歇五分钟');
-    const { director, context, calls } = rig({ model, heard: '我有点累了' });
+    const { director, context, calls } = rig({ model, heard: '我有点累了', config: { listen: { enabled: true } } });
     const result = await director.perform();
     assert.equal(result?.talked, true);
     assert.ok(calls.includes('record:5'));
@@ -377,10 +380,37 @@ describe('director', () => {
   });
 
   test('碎碎念之后没听成只记一行，不算说过话', async () => {
-    const { director, logger } = rig({ model: mockModel('不该用到'), recordError: new Error('麦克风被占用') });
+    const { director, logger } = rig({
+      model: mockModel('不该用到'),
+      recordError: new Error('麦克风被占用'),
+      config: { listen: { enabled: true } },
+    });
     const result = await director.perform();
     assert.equal(result?.talked, false);
     assert.ok(logger.lines.includes('没听成：麦克风被占用'));
+  });
+
+  test('没写 listen 就不听，和旧代码一样', async () => {
+    const { director, calls } = rig({ model: mockModel('不该用到'), heard: '我在' });
+    const result = await director.perform();
+    assert.equal(result?.talked, false);
+    assert.equal(
+      calls.some((call) => call.startsWith('record:')),
+      false,
+    );
+  });
+
+  test('没配语音（合成出空路径）时只出字，不播放；bake 和朗读桌宠回复也不做', async () => {
+    const { director, calls, logger, repos } = rig({ silent: true });
+    const result = await director.perform();
+    assert.ok(result);
+    const { line } = result;
+    assert.deepEqual(calls, ['lock', `broadcast:${line.text}`, `anim:${line.action}`, `sfx:${line.action}`, 'release']);
+    assert.deepEqual(types(repos), [line.tone, 'sfx']);
+    await director.bake();
+    assert.ok(logger.lines.includes('语音没配好，没有可预合成的'));
+    assert.equal(await director.playForeign('桌宠的回复'), false);
+    assert.equal(types(repos).includes('chat-voice'), false);
   });
 
   test('listen.enabled 关掉时碎碎念念完不听', async () => {

@@ -5,13 +5,14 @@ import type { McpHub } from '@modelctx-ai/ctx-mcp';
 
 import { createConsoleHost } from '../adapters/console/host.ts';
 import { createDshPetHost } from '../adapters/dsh-pet/host.ts';
-import { createMacOpener, createPbpasteClipboard } from '../adapters/platform/macos.ts';
+import { createMacOpener, createPbpasteClipboard, startHotkeyHelper } from '../adapters/platform/macos.ts';
 import { noopClipboard, noopOpener } from '../adapters/platform/noop.ts';
 import { createAnysearch } from '../adapters/search/anysearch.ts';
 import { createAfplayPlayer } from '../adapters/voice/afplay.ts';
 import { createFfmpegRecorder } from '../adapters/voice/ffmpeg.ts';
 import { createFishSynthesizer } from '../adapters/voice/fish.ts';
 import { createSfxPlayer } from '../adapters/voice/sfx.ts';
+import { createSilentPlayer, silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
 import { createWhisperTranscriber } from '../adapters/voice/whisper-cpp.ts';
 import { startChannel, type Channel } from '../brain/channel.ts';
 import { createYoyoContext } from '../brain/context.ts';
@@ -35,7 +36,7 @@ import type {
 import { createDirector, type Director } from '../runtime/director.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
-import type { AnysearchConfig, Config } from './config.ts';
+import { speechReady, type AnysearchConfig, type Config } from './config.ts';
 import { consoleLogger, errorText } from './log.ts';
 import type { Paths } from './paths.ts';
 
@@ -65,11 +66,16 @@ export interface App extends AppServices {
   readonly paths: Paths;
   /** 开本机对话渠道（只开一次），关闭应用时一起关。 */
   openChannel(): Promise<Channel>;
+  /** 起按键助手：只有 macOS 且 `hotkey.enabled` 才起，别处什么也不做。 */
+  startHotkey(): void;
   /** 关掉 MCP 连接和对话渠道。数据库留给进程退出时关。 */
   close(): Promise<void>;
 }
 
-export type AppOverrides = Partial<AppServices>;
+export interface AppOverrides extends Partial<AppServices> {
+  /** 测试用：当成哪个系统来挑实现。缺省是 `process.platform`。 */
+  readonly platform?: NodeJS.Platform;
+}
 
 const darwin = process.platform === 'darwin';
 
@@ -97,17 +103,21 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     return given !== undefined ? (given as AppServices[K]) : make();
   }
 
+  const mac = (overrides.platform ?? process.platform) === 'darwin';
   const logger = use('logger', () => consoleLogger);
   const db = use('db', () => openDatabase(paths.dbFile));
   const repos = use('repos', () => createRepos(db));
   const host = use('host', () => createPetHost(config, logger));
-  const clipboard = use('clipboard', createPlatformClipboard);
-  const opener = use('opener', createPlatformOpener);
+  const clipboard = use('clipboard', () => (mac ? createPbpasteClipboard() : noopClipboard));
+  const opener = use('opener', () => (mac ? createMacOpener() : noopOpener));
+  // 语音没配齐就只出字；不是 macOS 就不播放，也不做配音
   const synthesizer = use('synthesizer', () =>
-    createFishSynthesizer({ speech: config.speech, cacheDir: paths.speechCacheDir }),
+    speechReady(config.speech)
+      ? createFishSynthesizer({ speech: config.speech, cacheDir: paths.speechCacheDir })
+      : silentSynthesizer,
   );
-  const player = use('player', createAfplayPlayer);
-  const sfx = use('sfx', () => createSfxPlayer({ dir: paths.sfxDir, player }));
+  const player = use('player', () => (mac ? createAfplayPlayer() : createSilentPlayer(logger)));
+  const sfx = use('sfx', () => (mac ? createSfxPlayer({ dir: paths.sfxDir, player }) : silentSfx));
   const recorder = use('recorder', () => createFfmpegRecorder({ device: config.listen.device }));
   const transcriber = use('transcriber', () =>
     createWhisperTranscriber({
@@ -198,6 +208,10 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         });
       }
       return channel;
+    },
+    startHotkey() {
+      if (!mac || !config.hotkey.enabled) return;
+      startHotkeyHelper({ binDir: paths.binDir, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
     },
     async close() {
       if (closed) return;

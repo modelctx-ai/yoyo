@@ -126,7 +126,8 @@ export function createDirector(deps: DirectorDeps): Director {
       repos.activity.record({ type: label, action: line.action, text: line.text, meme: line.imageUrl || undefined });
       sfx.play(line.action);
       repos.activity.record({ type: 'sfx', action: line.action });
-      if (config.speech.autoplay) await player.play(file);
+      // 没配语音时没有文件，只出字
+      if (file && config.speech.autoplay) await player.play(file);
       if (line.kind === 'weather') writeWeatherStamp(repos.kv, localDateKey(now));
       else repos.spoken.remember(line.text, now.getTime(), REPEAT_WINDOW_MS);
       await recordLine(context, line, now.getTime());
@@ -247,6 +248,10 @@ export function createDirector(deps: DirectorDeps): Director {
   async function bake(): Promise<void> {
     for (const line of LINES) {
       const file = await synthesizer.synthesize(line.text, line.cue);
+      if (!file) {
+        logger.info('语音没配好，没有可预合成的');
+        return;
+      }
       logger.info(`bake ${line.tone} ${line.text.length}字 ${file}`);
     }
   }
@@ -264,6 +269,7 @@ export function createDirector(deps: DirectorDeps): Director {
     own(trimmed);
     const cue = TONE_CUES[config.speech.tone ?? 'lively'];
     const file = await synthesizer.synthesize(trimmed, cue);
+    if (!file) return false;
     logger.info(`对话朗读 ${trimmed.length}字`);
     repos.activity.record({ type: 'chat-voice', text: trimmed });
     await player.play(file);

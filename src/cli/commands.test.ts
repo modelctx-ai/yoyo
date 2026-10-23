@@ -184,7 +184,7 @@ describe('commands', () => {
     );
   });
 
-  test('whisper：导演没在跑就当场说一句；语音没配好先报出来', async () => {
+  test('whisper：导演没在跑就当场说一句；驱动桌宠时语音没配好先报出来', async () => {
     const calls: string[] = [];
     const { run, env, logger } = cli({ config: CONSOLE_CONFIG, overrides: quietServices(calls) });
     // 导演用真时钟：先记下今天报过天气，免得赶上下班时间去联网查
@@ -205,7 +205,20 @@ describe('commands', () => {
       ['sfx'],
     );
 
-    const bare = cli({ config: { stage: 'console' } });
+    // 驱动桌宠时语音必须配好；控制台舞台不用，没配就只打印台词
+    const bare = cli({ config: {} });
     await assert.rejects(bare.run('whisper'), /speech\.apiKey 还空着/);
+    const quiet = cli({ config: { stage: 'console' }, overrides: { platform: 'linux' } });
+    quiet.env.repos().kv.set('weather-date', localDateKey(new Date()));
+    assert.deepEqual(await quiet.run('whisper'), []);
+    assert.ok(quiet.logger.lines.some((line) => line.startsWith('[')));
+    assert.deepEqual(
+      quiet.env
+        .repos()
+        .activity.list(10)
+        .map((event) => event.type)
+        .slice(-1),
+      ['sfx'],
+    );
   });
 });
