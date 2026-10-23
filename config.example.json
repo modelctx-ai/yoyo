@@ -1,0 +1,14 @@
+{
+  "pet": {
+    "baseUrl": "http://127.0.0.1:3080/dsh-pet-7340",
+    "id": "main",
+    "surface": "desktop"
+  },
+  "intervalSec": 300,
+  "speech": {
+    "baseUrl": "https://api.fish.audio/v1/tts",
+    "apiKey": "",
+    "model": "s2.1-pro-free",
+    "referenceId": ""
+  }
+}
