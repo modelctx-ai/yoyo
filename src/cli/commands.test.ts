@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { assistantEntry, eventEntry, userEntry } from '@modelctx-ai/ctx';
 
@@ -31,7 +31,7 @@ interface Cli {
   readonly lines: string[];
   readonly logger: MemoryLogger;
   /** 跑一条命令，返回这条命令打印的行。 */
-  run(...argv: string[]): Promise<string[]>;
+  readonly run: (...argv: string[]) => Promise<string[]>;
 }
 
 function cli(options: { readonly config?: unknown; readonly overrides?: AppOverrides } = {}): Cli {
@@ -52,7 +52,7 @@ function cli(options: { readonly config?: unknown; readonly overrides?: AppOverr
     paths,
     lines,
     logger,
-    async run(...argv) {
+    run: async (...argv) => {
       const start = lines.length;
       const result = dispatch(domains, argv);
       if (result.kind === 'text') lines.push(result.text);

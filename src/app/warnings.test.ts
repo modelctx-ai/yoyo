@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { isSqliteWarning, quietSqliteWarning } from './warnings.ts';
 

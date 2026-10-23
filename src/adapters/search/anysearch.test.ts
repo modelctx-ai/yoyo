@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { AnysearchConfig } from '../../app/config.ts';
 import { clipSearch, createAnysearch } from './anysearch.ts';
@@ -14,19 +14,20 @@ function config(overrides: Partial<AnysearchConfig>): AnysearchConfig {
   return { script: '', apiKey: '', maxResults: 3, ...overrides };
 }
 
+function applyEnv(values: Record<string, string | undefined>): void {
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
 async function withEnv<T>(changes: Record<string, string | undefined>, work: () => Promise<T>): Promise<T> {
   const saved = Object.fromEntries(Object.keys(changes).map((key) => [key, process.env[key]]));
-  const apply = (values: Record<string, string | undefined>) => {
-    for (const [key, value] of Object.entries(values)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  };
-  apply(changes);
+  applyEnv(changes);
   try {
     return await work();
   } finally {
-    apply(saved);
+    applyEnv(saved);
   }
 }
 

@@ -8,7 +8,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 /** 搜索结果里的图片地址，去重，最多 12 个。 */
 export function extractImageUrls(text: string): string[] {
-  const found = String(text ?? '').match(IMAGE) ?? [];
+  const found = (text ?? '').match(IMAGE) ?? [];
   const urls: string[] = [];
   for (const raw of found) {
     const url = raw.replace(/[),.;]+$/, '');

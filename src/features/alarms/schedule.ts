@@ -48,8 +48,8 @@ export function addSchedule(
   input: ScheduleInput,
   _now?: Date,
 ): ScheduleItem {
-  const title = String(input.title ?? '').trim();
-  const time = String(input.time ?? '').trim();
+  const title = (input.title ?? '').trim();
+  const time = (input.time ?? '').trim();
   if (!title) throw new Error('日程要有标题');
   if (minutesOf(time) === null) throw new Error('时间要写成 HH:MM');
   const repeat = repeatOf(input.repeat);
@@ -57,7 +57,7 @@ export function addSchedule(
   if (repeat === 'weekly' && (weekday === undefined || !Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
     throw new Error('weekly 要指定 weekday，0 是周日');
   }
-  const date = repeat ? null : String(input.date ?? '');
+  const date = repeat ? null : (input.date ?? '');
   if (date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('一次性日程要有日期 YYYY-MM-DD');
   const item: ScheduleItem = {
     id: `s_${randomUUID().slice(0, 8)}`,

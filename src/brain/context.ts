@@ -153,12 +153,12 @@ export function petChatEntries(messages: readonly PetChatMessage[]): NewEntry[] 
   const entries: NewEntry[] = [];
   for (const message of messages ?? []) {
     if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
-    const text = String(message.content ?? '');
+    const text = message.content ?? '';
     if (!text) continue;
     const key = `pet:${message.ts}:${message.role}:${text}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const options: EntryOptions = { at: Number(message.ts) || Date.now(), key, source: 'dsh-pet' };
+    const options: EntryOptions = { at: message.ts || Date.now(), key, source: 'dsh-pet' };
     entries.push(message.role === 'user' ? userEntry(text, options) : assistantEntry(text, options));
   }
   return entries;

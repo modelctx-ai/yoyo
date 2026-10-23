@@ -15,11 +15,12 @@
     "once": "node src/main.ts --once",
     "bake": "node src/main.ts --bake",
     "yoyo": "node bin/yoyo.js",
-    "test": "node --test-reporter=spec --test \"src/**/*.test.ts\" \"packages/*/src/**/*.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "check": "pnpm typecheck && pnpm test && pnpm format:check"
+    "typecheck": "vp check --no-fmt --no-lint",
+    "lint": "vp lint --deny-warnings",
+    "test": "vp test",
+    "format": "vp fmt",
+    "format:check": "vp fmt --check",
+    "check": "vp check --deny-warnings && vp test"
   },
   "dependencies": {
     "@modelctx-ai/ctx": "^0.1.0",
@@ -33,7 +34,7 @@
   "devDependencies": {
     "@types/node": "^22.19.0",
     "ai": "^7.0.150",
-    "prettier": "^3.9.6",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
   }
 }

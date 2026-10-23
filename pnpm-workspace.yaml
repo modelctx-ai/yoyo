@@ -1,9 +1,20 @@
 packages:
   - packages/*
 
-# ctx 还没发到 npm 之前，按同级目录链接：先把 ctx 克隆到 yoyo 旁边并 `pnpm install && pnpm build`。
-# 发布以后删掉这一段，依赖里的版本号就会从 npm 解析。
+# Vite+ 的约定布局（与 `vp migrate` 生成的一致）：vite 指到 Vite+ 自带的核心，Vitest 的 vite peer 由它提供。
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite-plus: 1.4.0
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: '*'
+
 overrides:
+  vite@*: 'catalog:'
+  # ctx 还没发到 npm 之前，按同级目录链接：先把 ctx 克隆到 yoyo 旁边并 `pnpm install && pnpm build`。
+  # 发布以后删掉下面这几行，依赖里的版本号就会从 npm 解析。
   '@modelctx-ai/ctx': link:../ctx/packages/core
   '@modelctx-ai/ctx-gateway': link:../ctx/packages/gateway
   '@modelctx-ai/ctx-mcp': link:../ctx/packages/mcp

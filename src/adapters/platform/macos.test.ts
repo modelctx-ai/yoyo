@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import type { Logger } from '../../ports/index.ts';
 import { createPbpasteClipboard, startHotkeyHelper } from './macos.ts';

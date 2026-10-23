@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { createPetClient } from '@yoyo/dsh-pet';
 import type { ChatMemoryMessage, PetClient, PollState, SayData } from '@yoyo/dsh-pet';
@@ -399,7 +399,7 @@ describe('dsh-pet 宿主', () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    t.after(
+    t.onTestFinished(
       () =>
         new Promise<void>((resolve) => {
           server.closeAllConnections();

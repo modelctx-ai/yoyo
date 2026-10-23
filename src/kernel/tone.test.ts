@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { TONE_ACTION, TONE_CUES, TONES, toneForHour } from './tone.ts';
 
@@ -31,7 +31,7 @@ describe('tone', () => {
   });
 
   test('每档语气都有情绪标签和动作', () => {
-    assert.deepEqual([...TONES].sort(), ['brisk', 'calm', 'lively', 'warm']);
+    assert.deepEqual(TONES.toSorted(), ['brisk', 'calm', 'lively', 'warm']);
     assert.deepEqual(TONE_CUES, { lively: '[happy]', warm: '[relaxed]', calm: '[calm]', brisk: '[confident]' });
     assert.deepEqual(TONE_ACTION, {
       lively: '碎碎念-对屏碎碎念',

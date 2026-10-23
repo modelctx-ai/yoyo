@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { cacheFile } from '../adapters/voice/fish.ts';
 import { assertDirectorReady, loadConfig, parseConfig, speechReady } from './config.ts';

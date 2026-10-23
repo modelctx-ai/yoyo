@@ -6,7 +6,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { PetApiError, createPetClient, defaultRuntimePath, readRuntimeToken } from './index.ts';
 import type { PetClient, PetClientOptions, PollState } from './index.ts';
@@ -56,16 +56,18 @@ async function startFake(handler: Handler): Promise<Fake> {
       seen.push(request);
       const closed = new AbortController();
       res.on('close', () => closed.abort());
-      void Promise.resolve()
-        .then(() => handler(request, closed.signal))
-        .then(
-          (answer) => {
-            if (res.destroyed || res.writableEnded) return;
-            res.writeHead(answer.status ?? 200, { 'content-type': 'application/json' });
-            res.end(answer.raw ?? JSON.stringify(answer.json ?? {}));
-          },
-          () => res.destroy(),
-        );
+      void (async () => {
+        let answer: Answer;
+        try {
+          answer = await handler(request, closed.signal);
+        } catch {
+          res.destroy();
+          return;
+        }
+        if (res.destroyed || res.writableEnded) return;
+        res.writeHead(answer.status ?? 200, { 'content-type': 'application/json' });
+        res.end(answer.raw ?? JSON.stringify(answer.json ?? {}));
+      })();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -109,7 +111,7 @@ describe('dsh-pet 客户端', () => {
       if (path.endsWith('/anim')) return { json: { ok: true, playbackId: 'pb-1' } };
       return { json: { ok: true } };
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     let issued = 0;
     const client = clientFor(fake, { token: () => `tok-${++issued}` });
 
@@ -152,7 +154,7 @@ describe('dsh-pet 客户端', () => {
     const fake = await startFake(({ path }) =>
       path.endsWith('/lock') ? { json: { ok: true, lockId: 'lk-1' } } : { json: { ok: true } },
     );
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     assert.equal(await client.anim('转身'), undefined);
@@ -184,7 +186,7 @@ describe('dsh-pet 客户端', () => {
         ],
       },
     }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     assert.deepEqual(await client.chat(6), [
@@ -215,7 +217,7 @@ describe('dsh-pet 客户端', () => {
       '/menu/item': { ok: false, reason: 'invalid-label', message: '菜单项太长' },
     };
     const fake = await startFake((seen) => ({ json: answers[route(seen)] }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     await assert.rejects(client.lock(), (error) => {
@@ -240,13 +242,13 @@ describe('dsh-pet 客户端', () => {
 
   test('占锁回 ok 却没有 lockId 也算失败', async (t) => {
     const fake = await startFake(() => ({ json: { ok: true } }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     await assert.rejects(clientFor(fake).lock(), { name: 'PetApiError', message: '拿不到桌宠占用锁' });
   });
 
   test('HTTP 非 2xx 抛 dsh-pet 状态码和路径', async (t) => {
     const fake = await startFake(() => ({ status: 405, json: { error: 'method not allowed' } }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     await assert.rejects(client.anim('东张西望', { lockId: 'lk-1' }), {
@@ -260,7 +262,7 @@ describe('dsh-pet 客户端', () => {
 
   test('响应体读不懂就当 bad-response', async (t) => {
     const fake = await startFake(() => ({ raw: '<html>gateway</html>' }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     await assert.rejects(client.broadcast(undefined, { text: '嗨' }), {
@@ -274,7 +276,7 @@ describe('dsh-pet 客户端', () => {
 
   test('放锁永不抛错', async (t) => {
     const fake = await startFake(() => ({ status: 500, raw: 'boom' }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     await client.release('lk-1');
@@ -299,7 +301,7 @@ describe('dsh-pet 客户端', () => {
             pets: { main: { say: { counter: 2, data: { text: '主人好' } } } },
           },
     }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
 
     const first = await client.state();
@@ -321,7 +323,7 @@ describe('dsh-pet 客户端', () => {
 
   test('state 缺 sections 或 pets 时补成空的', async (t) => {
     const fake = await startFake(() => ({ json: { counter: 1 } }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     assert.deepEqual(await clientFor(fake).state(), pollState(1));
   });
 
@@ -331,7 +333,7 @@ describe('dsh-pet 客户端', () => {
       if (seen.query['since']) setImmediate(() => controller.abort());
       return hold(closed);
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake, { timeoutMs: 30 });
 
     await assert.rejects(client.state(), { name: 'TimeoutError' });
@@ -340,7 +342,7 @@ describe('dsh-pet 客户端', () => {
 
   test('调用方的 signal 一直开着也不攒监听：每次请求完就摘掉', async (t) => {
     const fake = await startFake(({ query }) => ({ json: pollState(Number(query['since'] ?? 0) + 1) }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
     const controller = new AbortController();
 
@@ -363,7 +365,7 @@ describe('dsh-pet 客户端', () => {
       setImmediate(() => controller.abort());
       return hold(closed);
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
 
     const counters: number[] = [];
     for await (const state of clientFor(fake).watchState(controller.signal)) counters.push(state.counter);
@@ -386,7 +388,7 @@ describe('dsh-pet 客户端', () => {
       setImmediate(() => controller.abort());
       return hold(closed);
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
 
     const counters: number[] = [];
     const watch = clientFor(fake).watchState(controller.signal, { waitMs: 5000, retryMs: 5 });
@@ -401,7 +403,7 @@ describe('dsh-pet 客户端', () => {
 
   test('signal 已经中止就什么都不做', async (t) => {
     const fake = await startFake(() => ({ json: pollState(1) }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const controller = new AbortController();
     controller.abort();
     const client = clientFor(fake);
@@ -425,7 +427,7 @@ describe('dsh-pet 客户端', () => {
       setImmediate(() => controller.abort());
       return hold(closed);
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
 
     let registered = 0;
     const errors: unknown[] = [];
@@ -475,7 +477,7 @@ describe('dsh-pet 客户端', () => {
       setImmediate(() => controller.abort());
       return hold(closed);
     });
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
 
     let registered = 0;
     const errors: unknown[] = [];
@@ -518,7 +520,7 @@ describe('dsh-pet 客户端', () => {
         hasKey: true,
       },
     }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake, { baseUrl: `${fake.baseUrl}/` });
     const input = {
       protocol: 'openai-compatible' as const,
@@ -556,7 +558,7 @@ describe('dsh-pet 客户端', () => {
       { raw: 'oops' },
     ];
     const fake = await startFake(() => answers.shift() ?? {});
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = clientFor(fake);
     const input = { baseUrl: 'http://127.0.0.1:9/v1', model: 'demo', apiKey: 'secret', enabled: true };
 
@@ -591,12 +593,12 @@ describe('运行状态文件', () => {
     writeFileSync(file, JSON.stringify({ token: 'first' }));
     const previous = process.env['YOYO_PET_RUNTIME'];
     process.env['YOYO_PET_RUNTIME'] = file;
-    t.after(() => {
+    t.onTestFinished(() => {
       if (previous === undefined) delete process.env['YOYO_PET_RUNTIME'];
       else process.env['YOYO_PET_RUNTIME'] = previous;
     });
     const fake = await startFake(() => ({ json: { ok: true, playbackId: 'pb-1' } }));
-    t.after(() => fake.close());
+    t.onTestFinished(() => fake.close());
     const client = createPetClient({ baseUrl: fake.baseUrl, pet: 'main', surface: 'desktop' });
 
     await client.anim('东张西望');

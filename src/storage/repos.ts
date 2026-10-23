@@ -116,7 +116,7 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
           item.date ?? null,
           item.repeat ?? null,
           item.weekday ?? null,
-          item.enabled === false ? 0 : 1,
+          item.enabled ? 1 : 0,
           item.lastFired ?? null,
         );
       },
@@ -156,7 +156,7 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
         sql.record.run(clock().toISOString(), type, JSON.stringify(rest));
       },
       list(limit = 20) {
-        return sql.activity.all(limit).reverse().map(activityOf);
+        return sql.activity.all(limit).toReversed().map(activityOf);
       },
     },
     spoken: {

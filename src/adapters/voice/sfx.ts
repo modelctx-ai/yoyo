@@ -12,7 +12,7 @@ interface Rendered {
 
 /** 动作名对应一种很轻的配音，不盖过说话。 */
 export function sceneFor(action: string): SfxScene {
-  const name = String(action ?? '');
+  const name = action ?? '';
   if (name.includes('写代码')) return 'keys';
   if (name.includes('伸懒腰') || name.includes('哈欠')) return 'stretch';
   if (name.includes('小憩') || name.includes('发呆') || name.includes('呼吸')) return 'rest';

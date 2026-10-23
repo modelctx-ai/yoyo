@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { createToolRegistry, tool } from '@modelctx-ai/ctx';
 import type { McpConnector, McpServerConfig } from '@modelctx-ai/ctx-mcp';
@@ -56,7 +56,7 @@ describe('brain/mcp', () => {
       registry.list().map((info) => `${info.name}@${info.source}`),
       ['list_alarms@local', 'web__search@mcp:web'],
     );
-    assert.deepEqual(logger.lines.sort(), [
+    assert.deepEqual(logger.lines.toSorted(), [
       'info MCP off 没启用',
       'info MCP web 已连上，1 个工具',
       'warn MCP broken 没连上：spawn ENOENT',
@@ -90,7 +90,7 @@ describe('brain/mcp', () => {
       odd: { url: 'http://localhost/mcp', headers: { authorization: 'Bearer t', n: '3' } },
       local: { command: 'node', args: ['server.js', '8080'], enabled: true },
     });
-    assert.deepEqual(logger.lines.filter((line) => line.startsWith('warn')).sort(), [
+    assert.deepEqual(logger.lines.filter((line) => line.startsWith('warn')).toSorted(), [
       'warn MCP text 的配置不对，要有 command 或 url，先跳过',
       'warn MCP wrong 的配置不对，要有 command 或 url，先跳过',
     ]);

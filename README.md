@@ -33,16 +33,19 @@ pnpm install
 
 复制 `config.example.json` 为 `config.json`，填上 Fish Audio 的 `apiKey` 和 `referenceId`。`config.json` 不进版本库。示例里打开了 `listen.enabled`，不想说完就听就改成 `false`。
 
-| 命令                                | 作用                                                        |
-| ----------------------------------- | ----------------------------------------------------------- |
-| `pnpm start`                        | 常驻：马上说一句，之后按 `intervalSec` 重复，默认 5 分钟    |
-| `pnpm once`                         | 只说一句                                                    |
-| `pnpm bake`                         | 把固定台词预先合成到 `~/.yoyo/speech-cache`                 |
-| `pnpm yoyo <领域>`                  | 命令行，等于 `node bin/yoyo.js`，见[命令](#命令)            |
-| `pnpm test`                         | `node --test` 直接跑 `src/` 和 `packages/` 下的 `*.test.ts` |
-| `pnpm typecheck`                    | `tsc` 类型检查，不产出文件                                  |
-| `pnpm format` / `pnpm format:check` | prettier 改写 / 检查                                        |
-| `pnpm check`                        | 依次 typecheck、test、format:check；CI 跑同样几步           |
+| 命令                                | 作用                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------- |
+| `pnpm start`                        | 常驻：马上说一句，之后按 `intervalSec` 重复，默认 5 分钟                  |
+| `pnpm once`                         | 只说一句                                                                  |
+| `pnpm bake`                         | 把固定台词预先合成到 `~/.yoyo/speech-cache`                               |
+| `pnpm yoyo <领域>`                  | 命令行，等于 `node bin/yoyo.js`，见[命令](#命令)                          |
+| `pnpm test`                         | `vp test`：Vitest 跑 `src/` 和 `packages/` 下的 `*.test.ts`               |
+| `pnpm typecheck`                    | `vp check --no-fmt --no-lint`：只做类型检查（tsgolint，TS 7），不产出文件 |
+| `pnpm lint`                         | `vp lint`：Oxlint，带类型信息的规则，同时报类型错误；有警告也算失败       |
+| `pnpm format` / `pnpm format:check` | `vp fmt`：Oxfmt 改写 / 检查                                               |
+| `pnpm check`                        | `vp check`（格式、lint、类型）再 test；CI 跑同样几步                      |
+
+测试、lint、格式和类型检查用 [Vite+](https://viteplus.dev/)（`vite-plus`，命令 `vp`），配置在 `vite.config.ts`。应用本身仍由 Node 直接运行 `.ts`，没有构建步骤。
 
 ## 配置
 

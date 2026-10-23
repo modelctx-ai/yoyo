@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { MockLanguageModelV4 } from 'ai/test';
 
@@ -322,14 +322,14 @@ describe('daemon 一拍', () => {
   });
 
   test('一拍出错只记日志，下一拍照常；上一拍没走完就跳过', async () => {
-    let release: () => void = () => {};
+    const gate = Promise.withResolvers<void>();
     let slow = false;
     const { tick, calls, app } = tickRig({
       state: { nextWhisper: T0 + 10_000 },
       director: {
         syncPetChat: async () => {
           calls.push('sync');
-          if (slow) await new Promise<void>((resolve) => (release = resolve));
+          if (slow) await gate.promise;
           else throw new Error('数据库锁住了');
         },
       },
@@ -339,7 +339,7 @@ describe('daemon 一拍', () => {
     slow = true;
     const first = tick();
     await tick();
-    release();
+    gate.resolve();
     await first;
     assert.equal(calls.filter((call) => call === 'sync').length, 2);
   });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import {
   assistantEntry,
@@ -226,7 +226,7 @@ describe('director', () => {
   test('快下班先报天气：说完记下日期，不进 3 小时窗口，也不听回应', async () => {
     const asked: string[] = [];
     const fetcher = (async (input: string | URL | Request) => {
-      asked.push(String(input));
+      asked.push(input instanceof Request ? input.url : String(input));
       return jsonResponse(forecast());
     }) as typeof fetch;
     const model = mockModel('不该用到');

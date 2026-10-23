@@ -43,6 +43,6 @@ jobs:
         run: pnpm install --frozen-lockfile && pnpm build
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+      # 格式（Oxfmt）、lint（Oxlint）和类型检查（tsgolint，TS 7）一次跑完
+      - run: pnpm exec vp check --deny-warnings
       - run: pnpm test
-      - run: pnpm format:check

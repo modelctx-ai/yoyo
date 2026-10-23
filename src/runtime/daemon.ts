@@ -51,7 +51,7 @@ export const MENU_LABELS: readonly string[] = ['碎碎念', '听一句'];
 
 /** 两句日常碎碎念的间隔：至少一分钟，缺省 5 分钟。 */
 export function whisperIntervalMs(intervalSec: number): number {
-  return Math.max(60, Number(intervalSec) || 300) * 1000;
+  return Math.max(60, intervalSec || 300) * 1000;
 }
 
 export function memeIdle(now: number, nextWhisper: number): boolean {
@@ -64,7 +64,9 @@ export function memeDue(now: number, nextWhisper: number, failedAt: number | nul
 }
 
 export type WhisperStep =
-  { readonly kind: 'wait' } | { readonly kind: 'delay'; readonly until: number } | { readonly kind: 'speak' };
+  | { readonly kind: 'wait' }
+  | { readonly kind: 'delay'; readonly until: number }
+  | { readonly kind: 'speak' };
 
 /** 没到点就等；到点了但 30 秒内还有对话就顺延；否则开口。 */
 export function whisperStep(nextWhisper: number, lastTalk: number, now: number): WhisperStep {
@@ -271,8 +273,7 @@ export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Pr
   const controller = new AbortController();
   const { signal } = controller;
   let timer: NodeJS.Timeout | undefined;
-  let finish: () => void = () => {};
-  const finished = new Promise<void>((resolve) => (finish = resolve));
+  const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
 
   /** 停下所有循环，关掉应用。收到信号时再退出进程。 */
   async function stop(exit: boolean): Promise<void> {

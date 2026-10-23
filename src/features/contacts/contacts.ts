@@ -9,15 +9,15 @@ export function addContact(
   input: ContactInput,
   now: Date = new Date(),
 ): Contact {
-  const name = String(input.name ?? '').trim();
-  const yoyo = String(input.yoyo ?? '').trim();
+  const name = (input.name ?? '').trim();
+  const yoyo = (input.yoyo ?? '').trim();
   if (!name) throw new Error('联系人要有名字');
   if (!yoyo) throw new Error('联系人要有 yoyo 地址');
   const contact: Contact = {
     id: `c_${randomUUID().slice(0, 8)}`,
     name,
     yoyo,
-    note: String(input.note ?? '').trim(),
+    note: (input.note ?? '').trim(),
     createdAt: now.toISOString(),
   };
   repos.contacts.insert(contact);

@@ -55,7 +55,7 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
       insert: (contact) => void contacts.push(contact),
     },
     schedule: {
-      list: () => [...schedule].sort((a, b) => a.time.localeCompare(b.time)),
+      list: () => schedule.toSorted((a, b) => a.time.localeCompare(b.time)),
       insert: (item) => void schedule.push(item),
       markFired: (id, occurrence) => {
         schedule = schedule.map((item) => (item.id === id ? { ...item, lastFired: occurrence } : item));

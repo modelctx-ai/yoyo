@@ -11,7 +11,7 @@ export function notePaste(
   now: Date = new Date(),
 ): ClipEntry | null {
   // trimEnd 去掉的字符和 /\s+$/ 一样，但长空白不会回溯
-  const value = String(text ?? '').trimEnd();
+  const value = (text ?? '').trimEnd();
   if (!value) return null;
   const clipped = value.slice(0, MAX_CHARS);
   if (repos.clipboard.list(1)[0]?.text === clipped) return null;

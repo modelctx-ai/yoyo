@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { describe, test } from 'node:test';
+import { describe, test } from 'vite-plus/test';
 
 import { openDatabase, transaction } from './db.ts';
 import { createRepos } from './repos.ts';
@@ -76,10 +76,10 @@ function tempDir(): string {
 
 /** 建表语句，按表名排好。 */
 function tableSql(db: DatabaseSync): Record<string, string> {
-  const rows = db
+  const tables = db
     .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     .all();
-  return Object.fromEntries(rows.map((row) => [String(row.name), String(row.sql)]));
+  return Object.fromEntries(tables.map((row) => [String(row.name), String(row.sql)]));
 }
 
 function rows(db: DatabaseSync, sql: string): Record<string, unknown>[] {
