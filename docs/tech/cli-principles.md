@@ -31,7 +31,7 @@ sources:
 
 # 加一条命令时
 
-在领域表加一条记录即可。记录里要有 `name`、`summary`，动作还要有 `run`。需要参数就写 `flags`，在 `run(flags)` 里用 `flagText` 读。需要别名就写 `aliases`。不要在 README 里再抄一份完整帮助。
+在领域表加一条记录即可。记录里要有 `name`、`summary`，动作还要有 `run`。需要参数就写 `flags`，在 `run(flags)` 里用 `flagText` 读。需要别名就写 `aliases`。不要在 README 或 `docs/product/` 里再抄一份完整帮助，那里只放几个例子。
 
 # 不这样做
 

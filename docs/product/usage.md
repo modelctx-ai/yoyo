@@ -1,0 +1,73 @@
+---
+type: Guide
+title: 日常使用
+description: 右键菜单、按键和命令行。
+tags: [product, cli]
+status: stable
+---
+
+# 右键菜单
+
+桌宠的右键菜单里多了一个 yoyo 分组：
+
+* **碎碎念**：马上说一句。
+* **听一句**：马上听你说话。
+
+宠物原来的那项「碎碎念」仍然是它自己的，不会叫到 yoyo。右键「对话」接的是 yoyo 的记忆，见[功能介绍](overview.md#右键对话)。
+
+# 按键
+
+Control+Option+Y：马上听一句。需要系统允许辅助功能。
+
+# 命令行
+
+`pnpm yoyo` 只列出有哪些领域。跟上领域名看它有哪些动作，`inspect` 看参数，`find` 按关键词找。
+
+```sh
+pnpm yoyo
+pnpm yoyo alarm
+pnpm yoyo inspect alarm
+pnpm yoyo find 粘贴
+```
+
+常用的几条：
+
+```sh
+pnpm yoyo whisper        # 马上说一句
+pnpm yoyo listen         # 马上听一句
+pnpm yoyo clip history   # yoyo 运行期间复制过的内容
+pnpm yoyo context tail   # 最近的对话记忆
+pnpm yoyo log tail       # 最近 20 件做过的事
+pnpm yoyo chat sync      # 右键对话没接上时重接
+```
+
+完整的列表以 `pnpm yoyo` 的输出为准。`pnpm yoyo` 也可以写成 `node bin/yoyo.js`。常驻进程开着时，`whisper` 和 `listen` 交给它去做，不会另开一个去抢桌宠。
+
+## 闹钟和日程
+
+```sh
+pnpm yoyo alarm list
+pnpm yoyo alarm add --title 喝水 --time 15:30 --repeat daily
+pnpm yoyo alarm add --title 周报 --time 18:00 --repeat weekdays --kind task
+pnpm yoyo alarm add --title 周会 --time 10:00 --repeat weekly --weekday 1
+pnpm yoyo alarm add --title 开会 --time 09:30 --date 2026-10-24
+```
+
+`--repeat` 可以是 `daily`、`weekdays`、`weekly`；不写 `--repeat` 就用 `--date` 定某一天。`--kind task` 到点先说「到点了。」。
+
+## 联系人
+
+```sh
+pnpm yoyo contact list
+pnpm yoyo contact add --name 小王 --yoyo yoyo://xiaowang@example --note 同事
+```
+
+## 本地任务
+
+写一份 `~/.yoyo/tasks.json`：
+
+```json
+{ "items": ["写周报"] }
+```
+
+yoyo 下次打开数据时把它导进去，再改名成 `tasks.json.migrated`；要加新的就再写一份。碎碎念和回复会带上前 5 条任务，桌宠工作状态里的任务也算。

@@ -7,3 +7,4 @@
 * **Update**: 命令原则和运行时原则改指新的源文件（`src/cli/commands.ts`、`src/cli/registry.ts`、`src/runtime/director.ts`、`src/kernel/pace.ts`），并跟上行为变化：上下文存进 ctx 的表，桌宠右键对话拿本机令牌，粘贴板进提示词，压缩按配置才做，命令用到什么才打开什么。
 * **Update**: README 按新目录重写：要求、安装 ctx、pnpm 脚本、完整的配置表、数据位置、老用户要知道的变化。
 * **Update**: 跟上一轮修正：配置和旧版一样宽松（写错按缺省值，`listen` 缺省关闭，`mcpServers` 写错的服务器跳过）；控制台舞台不要求语音，别的系统不播放；对话渠道接不上时每 30 秒再接；压缩有 60 秒超时；按键助手由组装根给；`node src/main.js` 照旧能用。
+* **Update**: 文档分成产品和技术两类。README 只留产品介绍、快速开始和文档入口。原来 README 里的内容拆进 `product/`：功能介绍、安装与运行、日常使用、配置、数据、从旧版升级；脚本、工具链、ctx 联调和 CI 进 `tech/development.md`。架构、命令原则、运行时原则移到 `tech/`。索引按两类重排。
