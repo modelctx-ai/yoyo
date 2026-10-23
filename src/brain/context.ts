@@ -1,0 +1,172 @@
+import type { DatabaseSync } from 'node:sqlite';
+
+import {
+  assistantEntry,
+  createContext,
+  eventEntry,
+  userEntry,
+  type Context,
+  type ContextSource,
+  type ContextStore,
+  type EntryOptions,
+  type LanguageModel,
+  type NewEntry,
+  type ProjectionOptions,
+  type ToolRegistry,
+} from '@modelctx-ai/ctx';
+import { createSqliteStore } from '@modelctx-ai/ctx-sqlite';
+
+import { contextRoleOf } from '../kernel/line.ts';
+import type { Line, PetChatMessage } from '../kernel/types.ts';
+import type { Logger } from '../ports/index.ts';
+
+const LEGACY_TABLE = 'context_items';
+const MIGRATED_TABLE = 'context_items_migrated';
+
+/** 每只桌宠一条线程。 */
+export function threadFor(petId: string): string {
+  return `pet:${petId}`;
+}
+
+/** 连续的碎碎念收成一条助手消息；用户话和回复原样带上，不截断。 */
+export const yoyoProjection: ProjectionOptions = {
+  events: {
+    whisper: {
+      fold: true,
+      render: (events) => {
+        const texts = events.map((event) => event.text ?? '').filter(Boolean);
+        return texts.length > 0 ? { role: 'assistant', content: `碎碎念：\n${texts.join('\n')}` } : null;
+      },
+    },
+  },
+  summary: (entry) => ({ role: 'user', content: `前面对话的摘要：\n${entry.text}` }),
+};
+
+export interface YoyoContextOptions {
+  readonly db: DatabaseSync;
+  readonly petId: string;
+  readonly sources?: readonly ContextSource[];
+  readonly tools?: ToolRegistry;
+  readonly model?: LanguageModel | null;
+  /** 交给模型的历史上限（估算 token）。不给就整段带上。 */
+  readonly maxTokens?: number;
+  readonly logger?: Logger;
+}
+
+/** ctx-sqlite 复用 yoyo.db（表前缀 'ctx_'）；第一次会把旧表 context_items 迁进来。 */
+export async function createYoyoContext(options: YoyoContextOptions): Promise<Context> {
+  const store = createSqliteStore({ database: options.db, prefix: 'ctx_' });
+  const thread = threadFor(options.petId);
+  await migrateLegacyContext(options.db, store, thread);
+  return createContext({
+    store,
+    thread,
+    projection: { ...yoyoProjection, window: options.maxTokens ? { maxTokens: options.maxTokens } : undefined },
+    sources: options.sources,
+    tools: options.tools,
+    model: options.model ?? undefined,
+    source: 'yoyo',
+    logger: options.logger,
+  });
+}
+
+interface LegacyRow {
+  readonly role: unknown;
+  readonly text: unknown;
+  readonly at: unknown;
+  readonly item_key: unknown;
+}
+
+function hasTable(db: DatabaseSync, name: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+}
+
+/** 旧表的一行变成条目。认不出的角色和空文字跳过，和旧的 toMessages 一样。 */
+function legacyEntry(row: LegacyRow): NewEntry | null {
+  const text = typeof row.text === 'string' ? row.text : '';
+  if (!text) return null;
+  const stamp = Number(row.at);
+  const key = typeof row.item_key === 'string' ? row.item_key : undefined;
+  const options: EntryOptions = {
+    at: Number.isFinite(stamp) ? stamp : Date.now(),
+    source: key?.startsWith('pet:') ? 'dsh-pet' : 'yoyo',
+    ...(key !== undefined ? { key } : {}),
+  };
+  if (row.role === 'user') return userEntry(text, options);
+  if (row.role === 'assistant') return assistantEntry(text, options);
+  if (row.role === 'whisper') return eventEntry('whisper', { ...options, text });
+  return null;
+}
+
+/**
+ * 把旧表 context_items 迁进 ctx，然后改名成 context_items_migrated，返回写入的条数。
+ * 整个过程在一个事务里，失败回滚、下次再试；`store` 要和 `db` 是同一个库。
+ */
+export async function migrateLegacyContext(db: DatabaseSync, store: ContextStore, thread: string): Promise<number> {
+  if (!hasTable(db, LEGACY_TABLE)) return 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // 别的进程可能刚迁完
+    if (!hasTable(db, LEGACY_TABLE)) {
+      db.exec('COMMIT');
+      return 0;
+    }
+    const rows = db
+      .prepare(`SELECT role, text, at, item_key FROM ${LEGACY_TABLE} ORDER BY at, id`)
+      .all() as unknown as LegacyRow[];
+    const entries = rows.map(legacyEntry).filter((entry): entry is NewEntry => entry !== null);
+    const written = entries.length > 0 ? await store.append(thread, entries) : [];
+    if (hasTable(db, MIGRATED_TABLE)) {
+      // 旧版本又建过一次表：并进已有的备份
+      db.exec(
+        `INSERT INTO ${MIGRATED_TABLE} (role, text, at, item_key) ` +
+          `SELECT role, text, at, item_key FROM ${LEGACY_TABLE} ORDER BY at, id`,
+      );
+      db.exec(`DROP TABLE ${LEGACY_TABLE}`);
+    } else {
+      db.exec(`ALTER TABLE ${LEGACY_TABLE} RENAME TO ${MIGRATED_TABLE}`);
+    }
+    db.exec('COMMIT');
+    return written.length;
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** 说出口的一句写进上下文：回复、提醒、天气是助手消息，碎碎念是碎碎念事件。 */
+export async function recordLine(context: Context, line: Line, at: number): Promise<void> {
+  const entry =
+    contextRoleOf(line) === 'assistant'
+      ? assistantEntry(line.text, { at })
+      : eventEntry('whisper', { text: line.text, at });
+  await context.append(entry);
+}
+
+export async function recordUser(context: Context, text: string, at: number): Promise<void> {
+  await context.append(userEntry(text, { at }));
+}
+
+/** 桌宠对话记忆变成条目。同一条（时间、角色、原文）用同一个幂等键，和旧代码一字不差。 */
+export function petChatEntries(messages: readonly PetChatMessage[]): NewEntry[] {
+  const seen = new Set<string>();
+  const entries: NewEntry[] = [];
+  for (const message of messages ?? []) {
+    if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
+    const text = String(message.content ?? '');
+    if (!text) continue;
+    const key = `pet:${message.ts}:${message.role}:${text}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const options: EntryOptions = { at: Number(message.ts) || Date.now(), key, source: 'dsh-pet' };
+    entries.push(message.role === 'user' ? userEntry(text, options) : assistantEntry(text, options));
+  }
+  return entries;
+}
+
+/** 并进桌宠对话记忆，已有的键由存储跳过。返回新写入的条数。 */
+export async function storePetChat(context: Context, messages: readonly PetChatMessage[]): Promise<number> {
+  const entries = petChatEntries(messages);
+  if (entries.length === 0) return 0;
+  return (await context.append(...entries)).length;
+}

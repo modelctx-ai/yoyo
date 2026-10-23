@@ -2,15 +2,38 @@
   "name": "yoyo",
   "private": true,
   "type": "module",
-  "description": "个人桌宠导演。用 dsh-pet 的官方接口表演，台词、语气、语音和天气都在这里。",
+  "description": "个人桌宠导演。用 dsh-pet 的官方接口表演，台词、语气、语音和天气都在这里；上下文交给 ctx。",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "bin": {
     "yoyo": "./bin/yoyo.js"
   },
   "scripts": {
-    "start": "node src/main.js",
+    "start": "node src/main.ts",
+    "once": "node src/main.ts --once",
+    "bake": "node src/main.ts --bake",
     "yoyo": "node bin/yoyo.js",
-    "once": "node src/main.js --once",
-    "bake": "node src/main.js --bake",
-    "test": "node --test test/*.test.js"
+    "test": "node --test-reporter=spec --test \"src/**/*.test.ts\" \"packages/*/src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm test && pnpm format:check"
+  },
+  "dependencies": {
+    "@modelctx-ai/ctx": "^0.1.0",
+    "@modelctx-ai/ctx-gateway": "^0.1.0",
+    "@modelctx-ai/ctx-mcp": "^0.1.0",
+    "@modelctx-ai/ctx-models": "^0.1.0",
+    "@modelctx-ai/ctx-sqlite": "^0.1.0",
+    "@yoyo/dsh-pet": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "ai": "^7.0.150",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
   }
 }

@@ -1,0 +1,12 @@
+{
+  "name": "@yoyo/dsh-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dsh-pet 独立模式 HTTP 接口的类型化客户端。只依赖官方契约（openapi.yaml），不依赖 yoyo。",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  }
+}
