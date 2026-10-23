@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/icon.png" width="128" height="128" alt="yoyo"></p>
+<p align="center"><img src="assets/character.svg" width="200" height="200" alt="yoyo"></p>
 
 # yoyo
 
