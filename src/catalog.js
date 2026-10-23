@@ -84,18 +84,26 @@ export function bubbleMs(text) {
   return Math.min(40_000, 8_000 + text.length * 180);
 }
 
+export const REPEAT_WINDOW_MS = 3 * 60 * 60 * 1000;
+
 /**
- * 只在当前语气里抽，避开上一句。有长句时大约一半概率抽长句。
+ * 3 小时内说过的句子不再抽。当前语气用完了就换别的语气。
+ * 全部都在窗口里时返回空，调用方这次不说话。
+ * 有长句时大约一半概率抽长句。
  * @param {readonly Line[]} lines
  * @param {Tone} tone
- * @param {string | undefined} previous
+ * @param {readonly { text: string, at: number }[]} recent
+ * @param {number} now
  * @param {() => number} rand
  * @returns {Line | undefined}
  */
-export function pickLine(lines, tone, previous, rand = Math.random) {
-  const inTone = lines.filter((line) => line.tone === tone && line.text.trim() !== '');
-  const usable = inTone.filter((line) => line.text !== previous);
-  const base = usable.length > 0 ? usable : inTone;
+export function pickLine(lines, tone, recent = [], now = Date.now(), rand = Math.random) {
+  const blocked = new Set(
+    recent.filter((item) => now - item.at < REPEAT_WINDOW_MS).map((item) => item.text),
+  );
+  const fresh = lines.filter((line) => line.text.trim() !== '' && !blocked.has(line.text));
+  const inTone = fresh.filter((line) => line.tone === tone);
+  const base = inTone.length > 0 ? inTone : fresh;
   const longer = base.filter((line) => line.text.length >= 24);
   const list = longer.length > 0 && rand() < 0.5 ? longer : base;
   if (list.length === 0) return undefined;

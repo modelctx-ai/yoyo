@@ -28,8 +28,25 @@ describe('catalog', () => {
       { text: '短句', tone: 'warm', cue: '[relaxed]', action: '照镜子' },
       { text: '这是一段超过二十四个字的小笑话，用来确认长句会被优先抽到。', tone: 'warm', cue: '[relaxed]', action: '碎碎念-对屏碎碎念' },
     ];
-    assert.equal(pickLine(mixed, 'warm', undefined, () => 0)?.text, mixed[1].text);
+    assert.equal(pickLine(mixed, 'warm', [], 0, () => 0)?.text, mixed[1].text);
     assert.equal(bubbleMs('短句'), 10_000);
     assert.equal(bubbleMs(mixed[1].text) > 10_000, true);
+  });
+
+  test('3 小时内不重复；当前语气用完就换语气；全部用完就停', () => {
+    const now = 10_000_000;
+    const hour = 60 * 60 * 1000;
+    const lines = [
+      { text: '甲', tone: 'warm', cue: '[relaxed]', action: '照镜子' },
+      { text: '乙', tone: 'warm', cue: '[relaxed]', action: '照镜子' },
+      { text: '丙', tone: 'calm', cue: '[calm]', action: '碎碎念-发呆碎碎念' },
+    ];
+    assert.equal(pickLine(lines, 'warm', [{ text: '甲', at: now - hour }], now, () => 0.9)?.text, '乙');
+    assert.equal(pickLine(lines, 'warm', [{ text: '甲', at: now - hour }, { text: '乙', at: now - hour }], now, () => 0.9)?.text, '丙');
+    assert.equal(
+      pickLine(lines, 'warm', lines.map((line) => ({ text: line.text, at: now - hour })), now, () => 0.9),
+      undefined,
+    );
+    assert.equal(pickLine(lines, 'warm', [{ text: '甲', at: now - 4 * hour }], now, () => 0)?.text, '甲');
   });
 });

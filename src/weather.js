@@ -1,5 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { getKv, setKv } from './db.js';
 
 export const WEATHER_ACTION = '东张西望';
 export const WEATHER_CUE = '[relaxed]';
@@ -80,24 +79,17 @@ export function pickUpcoming(times, temps, rains, codes, now) {
   return [rows[0], rows[2], rows[4]].filter((row) => row !== undefined);
 }
 
-function readJson(path) {
-  if (!existsSync(path)) return undefined;
-  const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192) return undefined;
+export function readPlace(dataDir) {
+  const stored = getKv(dataDir, 'place');
+  if (!stored) return null;
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return placeFrom(JSON.parse(stored));
   } catch {
-    return undefined;
+    return null;
   }
 }
 
-function writeJson(path, value) {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-}
-
-export function readPlace(path) {
-  const raw = readJson(path);
+function placeFrom(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const latitude = Number(raw.latitude);
   const longitude = Number(raw.longitude);
@@ -106,22 +98,21 @@ export function readPlace(path) {
   return isUnusablePlace(place) ? null : place;
 }
 
-export function readWeatherStamp(path) {
-  const raw = readJson(path);
-  if (!raw || typeof raw !== 'object') return null;
-  return typeof raw.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : null;
+export function readWeatherStamp(dataDir) {
+  const date = getKv(dataDir, 'weather-date');
+  return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 }
 
-export function writeWeatherStamp(path, date) {
-  writeJson(path, { date });
+export function writeWeatherStamp(dataDir, date) {
+  setKv(dataDir, 'weather-date', date);
 }
 
-export async function ensurePlace(path, fetcher = fetch) {
-  const saved = readPlace(path);
+export async function ensurePlace(dataDir, fetcher = fetch) {
+  const saved = readPlace(dataDir);
   if (saved) return saved;
   const zoned = placeForTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   if (zoned) {
-    writeJson(path, zoned);
+    setKv(dataDir, 'place', JSON.stringify(zoned));
     return zoned;
   }
   const response = await fetcher('https://ipinfo.io/json', { signal: AbortSignal.timeout(8000) });
@@ -134,7 +125,7 @@ export async function ensurePlace(path, fetcher = fetch) {
     longitude: Number(lon),
   };
   if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude) || isUnusablePlace(place)) return null;
-  writeJson(path, place);
+  setKv(dataDir, 'place', JSON.stringify(place));
   return place;
 }
 
@@ -154,7 +145,7 @@ export async function fetchUpcoming(place, now, fetcher = fetch) {
 }
 
 export async function buildOffWorkWeather(dataDir, now, fetcher = fetch) {
-  const place = await ensurePlace(join(dataDir, 'place.json'), fetcher);
+  const place = await ensurePlace(dataDir, fetcher);
   if (!place) return null;
   const hours = await fetchUpcoming(place, now, fetcher);
   if (hours.length === 0) return null;

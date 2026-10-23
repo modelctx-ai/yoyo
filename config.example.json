@@ -9,6 +9,26 @@
     "baseUrl": "https://api.fish.audio/v1/tts",
     "apiKey": "",
     "model": "s2.1-pro-free",
-    "referenceId": ""
+    "referenceId": "",
+    "autoplay": true
+  },
+  "llm": {
+    "baseUrl": "https://example.test/v1",
+    "apiKey": "",
+    "model": ""
+  },
+  "listen": {
+    "enabled": true,
+    "seconds": 5,
+    "device": ":0",
+    "action": "碎碎念-对屏碎碎念"
+  },
+  "asr": {
+    "model": "tiny"
+  },
+  "anysearch": {
+    "script": "",
+    "apiKey": "",
+    "maxResults": 3
   }
 }

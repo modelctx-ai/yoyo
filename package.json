@@ -3,8 +3,12 @@
   "private": true,
   "type": "module",
   "description": "个人桌宠导演。用 dsh-pet 的官方接口表演，台词、语气、语音和天气都在这里。",
+  "bin": {
+    "yoyo": "./bin/yoyo.js"
+  },
   "scripts": {
     "start": "node src/main.js",
+    "yoyo": "node bin/yoyo.js",
     "once": "node src/main.js --once",
     "bake": "node src/main.js --bake",
     "test": "node --test test/*.test.js"

@@ -3,6 +3,11 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, unlinkSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** 缺省开启。只有明确写成 false 才不把对话回复念出来。 */
+export function speechAutoplay(speech) {
+  return speech?.autoplay !== false;
+}
+
 export function spokenText(text, cue) {
   const body = text.trim();
   if (!body) return '';
@@ -13,6 +18,17 @@ export function spokenText(text, cue) {
 export function ttsEndpoint(baseUrl) {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
   return trimmed.endsWith('/v1/tts') ? trimmed : `${trimmed}/v1/tts`;
+}
+
+/** 桌宠自己说出的新句子。yoyo 刚投喂过的原文不算。 */
+export function foreignLine(state, petId, owned) {
+  const leaf = state?.pets?.[petId]?.say;
+  if (!leaf || typeof leaf.counter !== 'number') return null;
+  const data = leaf.data;
+  if (!data || data.clear === true || typeof data.text !== 'string') return null;
+  const text = data.text.trim();
+  if (!text || owned.has(text)) return null;
+  return { counter: leaf.counter, text };
 }
 
 export function cacheFile(dir, settings, text, cue) {

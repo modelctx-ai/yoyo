@@ -12,6 +12,38 @@ function runtimeToken() {
   return data.token;
 }
 
+/** 右键「对话」走桌宠自己的接口。这里只把 yoyo 的渠道写进去，不替它生成回复。 */
+export function chatSettingsBody(llm) {
+  return {
+    protocol: 'openai-compatible',
+    baseUrl: String(llm.baseUrl ?? '').replace(/\/+$/, ''),
+    model: llm.model,
+    apiKey: llm.apiKey,
+    enabled: true,
+    automaticWhispers: false,
+  };
+}
+
+export async function syncChatChannel(pet, llm, fetcher = fetch) {
+  const body = chatSettingsBody(llm);
+  if (!body.baseUrl || !body.model || !body.apiKey) throw new Error('config.json 的 llm 不完整');
+  const origin = new URL(pet.baseUrl).origin;
+  const response = await fetcher(`${origin}/standalone-ai/settings`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-dsh-pet-token': runtimeToken(),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.enabled !== true) {
+    throw new Error(data.message || data.error || `对话渠道没有接上（${response.status}）`);
+  }
+  return { model: data.model, hasKey: data.hasKey === true };
+}
+
 export function createPet(pet) {
   const root = pet.baseUrl.replace(/\/+$/, '');
 
@@ -40,6 +72,15 @@ export function createPet(pet) {
     return data;
   }
 
+  async function get(path, timeoutMs = 15_000) {
+    const response = await fetch(`${root}${path}`, {
+      headers: { 'x-dsh-pet-token': runtimeToken() },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw new Error(`dsh-pet ${response.status} ${path}`);
+    return response.json();
+  }
+
   function query(extra = '') {
     const params = new URLSearchParams({ pet: pet.id, surface: pet.surface });
     if (extra) params.set('lock', extra);
@@ -57,10 +98,13 @@ export function createPet(pet) {
     async release(lockId) {
       await post(`/lock/release${query()}`, { lockId }).catch(() => {});
     },
-    async broadcast(lockId, text, durationMs) {
-      const data = await post(`/broadcast${query(lockId)}`, { text, anim: false, duration: durationMs });
+    async broadcast(lockId, text, durationMs, imageUrl) {
+      const body = { text, anim: false, duration: durationMs };
+      if (imageUrl) body.url = imageUrl;
+      const data = await post(`/broadcast${query(lockId)}`, body);
       if (!data.ok) throw new Error(data.message || data.reason || '投喂失败');
     },
+    get,
     async anim(lockId, name) {
       const data = await post(`/anim${query(lockId)}`, { name });
       if (!data.ok) throw new Error(data.message || data.reason || `动作不在池内：${name}`);
