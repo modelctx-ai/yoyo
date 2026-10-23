@@ -11,9 +11,12 @@ import type { Clipboard } from '../ports/index.ts';
 import type { Director, PerformResult } from './director.ts';
 import {
   COMPACT_EVERY_MS,
+  MEME_RETRY_MS,
+  WHISPER_RETRY_MS,
   channelPlan,
   compactDue,
   createTick,
+  memeDue,
   memeIdle,
   menuRequest,
   nextAfterSpeak,
@@ -88,7 +91,7 @@ function tickRig(
     clipboard: options.clipboard ?? { read: () => '' },
     director: fakeDirector(calls, options.director),
   };
-  const state: DaemonState = { nextWhisper: T0, lastTalk: 0, lastCompact: null, ...options.state };
+  const state: DaemonState = { nextWhisper: T0, lastTalk: 0, lastCompact: null, memeFailedAt: null, ...options.state };
   return { app, calls, state, clock, tick: createTick(app, state, () => clock.now) };
 }
 
@@ -109,9 +112,14 @@ describe('daemon 节奏', () => {
     assert.equal(nextAfterSpeak(100_000, 10_000, 99_000), 129_000, '刚说完话，下一句等对话停 30 秒');
   });
 
-  test('离下一句还有 20 秒以上才去找表情包', () => {
+  test('离下一句还有 20 秒以上才去找表情包；上次没找成就等 10 分钟', () => {
     assert.equal(memeIdle(0, 20_001), true);
     assert.equal(memeIdle(0, 20_000), false);
+    const far = 10 * MEME_RETRY_MS;
+    assert.equal(memeDue(0, far, null), true);
+    assert.equal(memeDue(MEME_RETRY_MS - 1, far, 0), false);
+    assert.equal(memeDue(MEME_RETRY_MS, far, 0), true);
+    assert.equal(memeDue(MEME_RETRY_MS, MEME_RETRY_MS + 20_000, 0), false, '不空闲也不找');
   });
 
   test('配了 compactAt 才压缩，10 分钟最多看一次', () => {
@@ -201,19 +209,78 @@ describe('daemon 一拍', () => {
     assert.equal(state.lastTalk, T0);
   });
 
-  test('离下一句还早就去找表情包，出错只记日志', async () => {
-    const { tick, calls, app } = tickRig({
-      state: { nextWhisper: T0 + 60_000 },
+  test('离下一句还早就去找表情包；出错只记日志，10 分钟内不再找', async () => {
+    let failing = true;
+    const { tick, calls, app, clock, state } = tickRig({
+      state: { nextWhisper: T0 + 2 * MEME_RETRY_MS },
       director: {
         refreshMemes: async () => {
           calls.push('memes');
-          throw new Error('anysearch 退出 1');
+          if (failing) throw new Error('anysearch 退出 1');
+          return null;
         },
       },
     });
     await tick();
     assert.deepEqual(calls, ['sync', 'memes']);
     assert.ok(app.logger.lines.includes('anysearch 退出 1'));
+    assert.equal(state.memeFailedAt, T0);
+
+    clock.now = T0 + 1000;
+    await tick();
+    clock.now = T0 + MEME_RETRY_MS - 1;
+    await tick();
+    assert.equal(calls.filter((call) => call === 'memes').length, 1, '10 分钟内不再找');
+
+    failing = false;
+    clock.now = T0 + MEME_RETRY_MS;
+    await tick();
+    assert.equal(calls.filter((call) => call === 'memes').length, 2);
+    assert.equal(state.memeFailedAt, null, '找成了就清掉失败时间');
+    clock.now += 1000;
+    await tick();
+    assert.equal(calls.filter((call) => call === 'memes').length, 3, '之后照常每拍看一眼');
+  });
+
+  test('到点的碎碎念没说成：记日志，一分钟后再试，不每秒重来', async () => {
+    let failing = true;
+    const { tick, calls, app, clock, state } = tickRig({
+      director: {
+        perform: async () => {
+          calls.push('perform');
+          if (failing) throw new Error('拿不到桌宠占用锁');
+          return { line: LINE, talked: false };
+        },
+      },
+    });
+    await tick();
+    assert.ok(app.logger.lines.includes('拿不到桌宠占用锁'));
+    assert.equal(state.nextWhisper, T0 + WHISPER_RETRY_MS);
+
+    clock.now = T0 + 1000;
+    await tick();
+    assert.equal(calls.filter((call) => call === 'perform').length, 1, '下一拍不再试');
+
+    failing = false;
+    clock.now = T0 + WHISPER_RETRY_MS;
+    await tick();
+    assert.equal(calls.filter((call) => call === 'perform').length, 2);
+    assert.equal(state.nextWhisper, T0 + WHISPER_RETRY_MS + 300_000);
+  });
+
+  test('收件箱里的请求出错照旧：只记日志，不动下一句碎碎念的时间', async () => {
+    const { tick, app, state } = tickRig({
+      state: { nextWhisper: T0 + 100_000 },
+      director: {
+        perform: async () => {
+          throw new Error('拿不到桌宠占用锁');
+        },
+      },
+    });
+    enqueue(app.paths.inboxFile, 'whisper');
+    await tick();
+    assert.ok(app.logger.lines.includes('拿不到桌宠占用锁'));
+    assert.equal(state.nextWhisper, T0 + 100_000);
   });
 
   test('粘贴板打开时每拍记一下变化', async () => {

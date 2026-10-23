@@ -12,7 +12,7 @@ import { notePaste } from '../features/clipboard/clipboard.ts';
 import { nextWhisperAt } from '../kernel/pace.ts';
 import type { InboxRequest } from '../kernel/types.ts';
 import type { Clipboard, Logger, PetHost, Repos } from '../ports/index.ts';
-import type { Director } from './director.ts';
+import type { Director, PerformResult } from './director.ts';
 import { drain, enqueue } from './inbox.ts';
 
 /** 常驻循环要用到的那部分应用（`createApp` 的结果满足它）。 */
@@ -37,6 +37,10 @@ export const TICK_MS = 1000;
 export const MEME_LEAD_MS = 20_000;
 /** 上下文多久看一次要不要压缩。 */
 export const COMPACT_EVERY_MS = 10 * 60 * 1000;
+/** 到点的碎碎念没说成（桌宠没开、锁被占着之类），隔这么久再试，不每秒重来。 */
+export const WHISPER_RETRY_MS = 60_000;
+/** 找表情包失败以后，隔这么久再找。 */
+export const MEME_RETRY_MS = 10 * 60 * 1000;
 const RETRY_MS = 2000;
 
 export const MENU_OWNER = 'yoyo';
@@ -49,6 +53,11 @@ export function whisperIntervalMs(intervalSec: number): number {
 
 export function memeIdle(now: number, nextWhisper: number): boolean {
   return now + MEME_LEAD_MS < nextWhisper;
+}
+
+/** 空闲，而且上次失败已经过了 10 分钟，才去找表情包。 */
+export function memeDue(now: number, nextWhisper: number, failedAt: number | null): boolean {
+  return memeIdle(now, nextWhisper) && (failedAt === null || now - failedAt >= MEME_RETRY_MS);
 }
 
 export type WhisperStep =
@@ -95,6 +104,8 @@ export interface DaemonState {
   lastTalk: number;
   /** 最近一次看要不要压缩上下文的时间。 */
   lastCompact: number | null;
+  /** 最近一次找表情包失败的时间。 */
+  memeFailedAt: number | null;
 }
 
 /** 一拍：粘贴板、桌宠对话、收件箱、到点提醒、空闲找图、碎碎念让路、上下文压缩。上一拍没走完就跳过。 */
@@ -119,10 +130,12 @@ export function createTick(app: TickApp, state: DaemonState, clock: () => number
         await director.remind(item, now);
         state.lastTalk = clock();
       }
-      if (memeIdle(clock(), state.nextWhisper)) {
+      if (memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
+          state.memeFailedAt = null;
         } catch (error) {
+          state.memeFailedAt = clock();
           logger.error(errorText(error));
         }
       }
@@ -132,7 +145,14 @@ export function createTick(app: TickApp, state: DaemonState, clock: () => number
         logger.info('碎碎念先让一下，等对话停 30 秒');
         repos.activity.record({ type: 'delay', until: new Date(step.until).toISOString() });
       } else if (step.kind === 'speak') {
-        const spoken = await director.perform();
+        let spoken: PerformResult | null;
+        try {
+          spoken = await director.perform();
+        } catch (error) {
+          // 一分钟后再试；日志照旧由下面统一记
+          state.nextWhisper = clock() + WHISPER_RETRY_MS;
+          throw error;
+        }
         if (spoken?.talked) state.lastTalk = clock();
         state.nextWhisper = nextAfterSpeak(clock(), intervalMs, state.lastTalk);
       }
@@ -246,7 +266,7 @@ export async function runDaemon(
   }
   void watchSayings(app, signal);
 
-  const tick = createTick(app, { nextWhisper: Date.now(), lastTalk: 0, lastCompact: null });
+  const tick = createTick(app, { nextWhisper: Date.now(), lastTalk: 0, lastCompact: null, memeFailedAt: null });
   const loop = async (): Promise<void> => {
     await tick();
     if (!signal.aborted) timer = setTimeout(loop, TICK_MS);
