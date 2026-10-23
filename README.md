@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" width="128" height="128" alt="yoyo"></p>
+
 # yoyo
 
 个人桌宠导演。dsh-pet 保持官方行为，只负责显示气泡和播放动作。说什么、用什么语气、配哪段动作、语音怎么合成，都在这个仓库里决定。上下文交给 [ctx](https://github.com/modelctx-ai/ctx)。
