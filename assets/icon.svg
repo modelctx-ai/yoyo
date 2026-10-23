@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E8F3FF"/>
+      <stop offset="1" stop-color="#C9E2FF"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5AA8F5"/>
+      <stop offset="1" stop-color="#2F6FD6"/>
+    </linearGradient>
+    <clipPath id="tile"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <!-- 后发 -->
+    <path d="M96 268 C82 150 160 78 256 78 C352 78 430 150 416 268 L428 420 C430 446 404 452 392 432 L366 380 L146 380 L120 432 C108 452 82 446 84 420 Z" fill="url(#hair)"/>
+    <!-- 女仆裙领 -->
+    <path d="M150 470 C170 410 210 392 256 392 C302 392 342 410 362 470 L362 512 L150 512 Z" fill="#2B3A67"/>
+    <path d="M206 398 L256 446 L306 398 C290 392 274 390 256 390 C238 390 222 392 206 398 Z" fill="#FFFFFF"/>
+    <circle cx="256" cy="452" r="12" fill="#E85D8A"/>
+    <!-- 脸 -->
+    <ellipse cx="256" cy="282" rx="128" ry="118" fill="#FFE9DC"/>
+    <!-- 刘海 -->
+    <path d="M120 258 C118 168 180 120 256 120 C332 120 394 168 392 258 C372 228 350 214 330 206 C334 226 330 238 322 246 C306 222 286 208 262 200 C262 222 254 236 244 244 C232 222 214 210 192 206 C192 226 184 238 172 246 C160 232 140 236 120 258 Z" fill="url(#hair)"/>
+    <!-- 发饰 -->
+    <path d="M132 156 C170 104 214 92 256 92 C298 92 342 104 380 156 C342 136 300 128 256 128 C212 128 170 136 132 156 Z" fill="#FFFFFF"/>
+    <g fill="#FFFFFF">
+      <circle cx="156" cy="138" r="16"/><circle cx="190" cy="116" r="16"/><circle cx="224" cy="104" r="16"/>
+      <circle cx="256" cy="100" r="16"/><circle cx="288" cy="104" r="16"/><circle cx="322" cy="116" r="16"/>
+      <circle cx="356" cy="138" r="16"/>
+    </g>
+    <!-- 眼 -->
+    <g>
+      <ellipse cx="200" cy="292" rx="24" ry="32" fill="#2B3A67"/>
+      <ellipse cx="312" cy="292" rx="24" ry="32" fill="#2B3A67"/>
+      <ellipse cx="200" cy="304" rx="16" ry="18" fill="#3D8BEB"/>
+      <ellipse cx="312" cy="304" rx="16" ry="18" fill="#3D8BEB"/>
+      <circle cx="192" cy="280" r="9" fill="#FFFFFF"/>
+      <circle cx="304" cy="280" r="9" fill="#FFFFFF"/>
+      <circle cx="208" cy="310" r="4" fill="#FFFFFF"/>
+      <circle cx="320" cy="310" r="4" fill="#FFFFFF"/>
+    </g>
+    <!-- 腮红 -->
+    <ellipse cx="166" cy="342" rx="22" ry="12" fill="#FF9DB5" opacity="0.6"/>
+    <ellipse cx="346" cy="342" rx="22" ry="12" fill="#FF9DB5" opacity="0.6"/>
+    <!-- 嘴 -->
+    <path d="M240 344 Q256 360 272 344" fill="none" stroke="#2B3A67" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>
