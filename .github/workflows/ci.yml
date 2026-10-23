@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: yoyo
+    steps:
+      # ctx 还没发到 npm：和本地一样克隆在 yoyo 旁边，overrides 里的 link:../ctx/packages/* 才找得到
+      - uses: actions/checkout@v4
+        with:
+          path: yoyo
+
+      - uses: actions/checkout@v4
+        with:
+          repository: modelctx-ai/ctx
+          path: ctx
+
+      # pnpm 版本取 yoyo 的 packageManager
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: yoyo/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: |
+            ctx/pnpm-lock.yaml
+            yoyo/pnpm-lock.yaml
+
+      # yoyo 读的是 ctx 的 dist/
+      - name: Build ctx
+        working-directory: ctx
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm format:check
