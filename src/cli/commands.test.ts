@@ -154,6 +154,14 @@ describe('commands', () => {
     assert.equal(rows.includes('ctx.compacted\t不列'), false);
   });
 
+  test('context tail 按时间排：后写进来的旧对话（桌宠对话导入）排回原来的位置', async () => {
+    const { run, env } = cli();
+    const context = await createYoyoContext({ db: env.db(), petId: 'main' });
+    await context.append(userEntry('现在说的', { at: 100 }), assistantEntry('现在回的', { at: 101 }));
+    await context.append(userEntry('导入的旧话', { at: 10, key: 'pet:10:user:导入的旧话' }));
+    assert.deepEqual(await run('context', 'tail'), ['user\t导入的旧话', 'user\t现在说的', 'assistant\t现在回的']);
+  });
+
   test('context compact：没配模型就说一句', async () => {
     const { run } = cli({ config: {} });
     assert.deepEqual(await run('context', 'compact'), ['还没配好 llm，压缩要用模型']);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, type Entry, type ModelMessage } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, type Entry, type Message } from '@modelctx-ai/ctx';
 import { createSqliteStore } from '@modelctx-ai/ctx-sqlite';
 
 import type { Line, PetChatMessage } from '../kernel/types.ts';
@@ -31,11 +31,11 @@ function memoryContext() {
 }
 
 /** 文字内容原样，分段内容转成 JSON。 */
-function contentText(content: ModelMessage['content']): string {
+function contentText(content: Message['content']): string {
   return typeof content === 'string' ? content : JSON.stringify(content);
 }
 
-function shown(messages: readonly ModelMessage[]): string[] {
+function shown(messages: readonly Message[]): string[] {
   return messages.map((message) => `${message.role}:${contentText(message.content)}`);
 }
 
@@ -123,8 +123,9 @@ function renamedDatabase(): DatabaseSync {
   return db;
 }
 
+/** 含生成列（`table_info` 不列它们）。 */
 function columns(db: DatabaseSync): string[] {
-  return (db.prepare('PRAGMA table_info(ctx_entries)').all() as { name: string }[]).map((row) => row.name);
+  return (db.prepare('PRAGMA table_xinfo(ctx_entries)').all() as { name: string }[]).map((row) => row.name);
 }
 
 function indexSql(db: DatabaseSync): string[] {
@@ -282,20 +283,24 @@ describe('brain/context', () => {
     ['ctx 0.1 的旧库（thread 列）', v01Database],
     ['yoyo 之前自己改过名的库（session 列，schema 仍是 1）', renamedDatabase],
   ] as const) {
-    test(`${name}：打开时由 ctx-sqlite 迁到 session 列和 schema 2，能读能接着写，只迁一次`, async () => {
+    test(`${name}：打开时由 ctx-sqlite 迁到 session 列和 schema 3，能读能接着写，只迁一次`, async () => {
       const db = make();
       const context = await createYoyoContext({ db, petId: 'main' });
       assert.equal(columns(db).includes('thread'), false);
       assert.equal(columns(db).includes('session'), true);
+      // schema 3 多了行格式版本 v 和生成列 kind；按 (at, seq) 的索引换成按 seq 的
+      assert.equal(columns(db).includes('v'), true);
+      assert.equal(columns(db).includes('kind'), true);
       assert.deepEqual(indexSql(db), [
-        'CREATE INDEX ctx_entries_order ON ctx_entries (session, at, seq)',
+        'CREATE INDEX ctx_entries_kind ON ctx_entries (session, kind, seq)',
+        'CREATE INDEX ctx_entries_seq ON ctx_entries (session, seq)',
         'CREATE UNIQUE INDEX ctx_entries_key ON ctx_entries (session, key) WHERE key IS NOT NULL',
       ]);
       assert.deepEqual(
         (db.prepare('SELECT key, value FROM ctx_meta').all() as { key: string; value: string }[]).map(
           (row) => `${row.key}=${row.value}`,
         ),
-        ['schema=2'],
+        ['schema=3'],
       );
       assert.deepEqual(shown((await context.view()).messages), [
         'assistant:碎碎念：\n在呢',
@@ -358,7 +363,7 @@ describe('brain/context', () => {
     const context = memoryContext();
     await recordUser(context, '很早的问题', 1);
     await recordUser(context, '新问题', 3);
-    await context.append({ type: 'summary', text: '主人每天下午喝水', covers: { at: 1, seq: 1 } });
+    await context.append({ type: 'summary', text: '主人每天下午喝水', covers: 1 });
     assert.deepEqual(shown((await context.view()).messages), [
       'user:前面对话的摘要：\n主人每天下午喝水',
       'user:新问题',

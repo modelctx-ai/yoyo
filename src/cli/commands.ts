@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { textOf, type Entry } from '@modelctx-ai/ctx';
+import { compareEntries, textOf, type Entry } from '@modelctx-ai/ctx';
 
 import { assertDirectorReady, llmReady, loadConfig, parseConfig, type Config } from '../app/config.ts';
 import { createApp, createPetHost, createPlatformClipboard, type App, type AppOverrides } from '../app/container.ts';
@@ -227,7 +227,9 @@ export function buildDomains(env: CommandEnv): Domain[] {
           summary: '最后几条原文',
           async run() {
             const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+            // entries 按写入顺序返回；导入的桌宠对话 at 在过去，展示前按 (at, seq) 排回它们的位置
             const rows = (await context.entries({ last: 500 }))
+              .toSorted(compareEntries)
               .map(contextRow)
               .filter((row): row is string => row !== null);
             if (rows.length === 0) return env.out('还没有上下文');
