@@ -395,3 +395,105 @@ describe('brain/compose 一轮的请求', () => {
     assert.equal(replyRun.record, false);
   });
 });
+
+/** 模型这一次收到的东西：指令、消息、工具、温度。 */
+function received(model: MockLanguageModelV4, index = 0) {
+  const call = model.doGenerateCalls[index]!;
+  return {
+    // JSON 来回一次，去掉值为 undefined 的键
+    prompt: JSON.parse(JSON.stringify(call.prompt)) as { role: string; content: unknown }[],
+    tools: call.tools?.map((item) => item.name),
+    temperature: call.temperature,
+  };
+}
+
+const system = (content: string) => ({ role: 'system', content });
+const said = (role: 'user' | 'assistant', text: string) => ({ role, content: [{ type: 'text', text }] });
+
+/** seeded 写进去的三条历史，投影以后模型看到的样子。 */
+const HISTORY = [
+  said('assistant', '碎碎念：\n先把这一小步做完'),
+  said('user', '看一下测试'),
+  said('assistant', '好，我盯着'),
+];
+
+describe('brain/compose 交给模型的内容', () => {
+  // 这几条把两个 agent 各自交给模型的指令、消息、工具逐字固定下来：改事实的收法时它们不能变。
+  test('碎碎念：事实和请求在最后一条用户消息里，指令里没有事实', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('先把测试跑一遍再说') });
+    const context = await seeded({ model, tools: alarmTools([]) });
+    await recordLine(context, spoken('whisper', '再来一句'), 4);
+    await whisper(context, { tone: 'brisk' });
+    assert.deepEqual(received(model), {
+      prompt: [
+        system(whisperInstructions('brisk')),
+        ...HISTORY,
+        said('assistant', '碎碎念：\n再来一句'),
+        said('user', '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。'),
+      ],
+      tools: undefined,
+      temperature: 0.8,
+    });
+  });
+
+  test('碎碎念：没有事实时最后一条只有请求', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('这会儿好安静呀，我陪着你') });
+    const context = await seeded({ model, sources: [] });
+    await whisper(context, { tone: 'calm' });
+    assert.deepEqual(received(model), {
+      prompt: [system(whisperInstructions('calm')), ...HISTORY, said('user', '请再说一句碎碎念。')],
+      tools: undefined,
+      temperature: 0.8,
+    });
+  });
+
+  test('回复：事实接在指令后面，搜索结果在最后一条用户消息里', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('台北今天晴，28 度，出门记得防晒。') });
+    const context = await seeded({ model });
+    await recordUser(context, '台北今天天气怎么样', 4);
+    await reply(context, { tone: 'warm', searchText: ' 台北晴，28 度 ' });
+    assert.deepEqual(received(model), {
+      prompt: [
+        system(`${replyInstructions('warm')}\n\n当前任务：修天气地点\n粘贴板：npm test`),
+        ...HISTORY,
+        said('user', '台北今天天气怎么样'),
+        said('user', '搜索结果：\n台北晴，28 度'),
+      ],
+      tools: undefined,
+      temperature: 0.7,
+    });
+  });
+
+  test('回复：没有事实也没有搜索结果时，指令就是人设加语气；打开工具时每一步都带着事实', async () => {
+    const plain = new MockLanguageModelV4({ doGenerate: textResult('在呢，你说。') });
+    const bare = await seeded({ model: plain, sources: [] });
+    await recordUser(bare, '在吗', 4);
+    await reply(bare, { tone: 'calm' });
+    assert.deepEqual(received(plain), {
+      prompt: [system(replyInstructions('calm')), ...HISTORY, said('user', '在吗')],
+      tools: undefined,
+      temperature: 0.7,
+    });
+
+    const model = new MockLanguageModelV4({
+      doGenerate: [toolCallResult('c1', 'list_alarms', {}), textResult('明早八点要开周会哦')],
+    });
+    const context = await seeded({ model, tools: alarmTools([]) });
+    await recordUser(context, '我明天有什么安排', 4);
+    await reply(context, { tone: 'lively', tools: true });
+    const head = [system(`${replyInstructions('lively')}\n\n当前任务：修天气地点\n粘贴板：npm test`), ...HISTORY];
+    const asked = said('user', '我明天有什么安排');
+    assert.deepEqual(received(model, 0), {
+      prompt: [...head, asked],
+      tools: ['list_alarms'],
+      temperature: 0.7,
+    });
+    const step = received(model, 1);
+    assert.deepEqual(step.prompt.slice(0, head.length + 1), [...head, asked]);
+    assert.deepEqual(
+      step.prompt.slice(head.length + 1).map((message) => message.role),
+      ['assistant', 'tool'],
+    );
+    assert.deepEqual(step.tools, ['list_alarms']);
+  });
+});
