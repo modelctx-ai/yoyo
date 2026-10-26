@@ -325,7 +325,13 @@ describe('brain/compose 模型报错', () => {
     const error = await whisper(context, { tone: 'brisk', secrets: ['sk-secret-123'] }).catch((e: unknown) => e);
     assert.ok(error instanceof Error);
     assert.equal(error.message, '模型接口返回 401：{"error":"bad key ***"}');
-    assert.equal(error.cause, failure);
+    assert.deepEqual(error.cause, {
+      message: 'Unauthorized',
+      type: 'api_call',
+      retryable: false,
+      statusCode: 401,
+      responseBody: '{"error":"bad key sk-secret-123"}',
+    });
     await assert.rejects(reply(context, { tone: 'brisk', secrets: ['sk-secret-123'] }), {
       message: '模型接口返回 401：{"error":"bad key ***"}',
     });

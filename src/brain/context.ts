@@ -23,8 +23,6 @@ import type { Logger } from '../ports/index.ts';
 
 const LEGACY_TABLE = 'context_items';
 const MIGRATED_TABLE = 'context_items_migrated';
-/** ctx-sqlite 的条目表（前缀 'ctx_'）。 */
-const ENTRIES_TABLE = 'ctx_entries';
 
 /** 每只桌宠一个会话。 */
 export function sessionFor(petId: string): string {
@@ -58,10 +56,8 @@ export interface YoyoContextOptions {
   readonly logger?: Logger;
 }
 
-/** ctx-sqlite 复用 yoyo.db（表前缀 'ctx_'）；第一次会把旧表 context_items 迁进来。 */
+/** ctx-sqlite 复用 yoyo.db（表前缀 'ctx_'）；打开时 ctx-sqlite 自己把 0.1 的库迁到当前结构，第一次还会把旧表 context_items 迁进来。 */
 export async function createYoyoContext(options: YoyoContextOptions): Promise<Context> {
-  // 要在 createSqliteStore 建表、准备语句之前
-  migrateSessionColumn(options.db);
   const store = createSqliteStore({ database: options.db, prefix: 'ctx_' });
   const session = sessionFor(options.petId);
   await migrateLegacyContext(options.db, store, session);
@@ -87,38 +83,6 @@ interface LegacyRow {
 
 function hasTable(db: DatabaseSync, name: string): boolean {
   return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
-}
-
-function columnsOf(db: DatabaseSync, table: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((row) => row.name);
-}
-
-function hasThreadColumn(db: DatabaseSync): boolean {
-  const columns = columnsOf(db, ENTRIES_TABLE);
-  return columns.includes('thread') && !columns.includes('session');
-}
-
-/**
- * ctx-sqlite 0.2 把 ctx_entries 的 thread 列改名成 session，没带迁移；老库在这里改一次，返回改没改。
- * 两个索引（ctx_entries_key、ctx_entries_order）名字不变，RENAME COLUMN 会顺带改它们的定义；
- * ctx_meta 的 schema 两版都是 '1'，不用动。一个事务，失败回滚、下次再试。
- */
-export function migrateSessionColumn(db: DatabaseSync): boolean {
-  if (!hasThreadColumn(db)) return false;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    // 别的进程可能刚改完
-    if (!hasThreadColumn(db)) {
-      db.exec('COMMIT');
-      return false;
-    }
-    db.exec(`ALTER TABLE ${ENTRIES_TABLE} RENAME COLUMN thread TO session`);
-    db.exec('COMMIT');
-    return true;
-  } catch (error) {
-    if (db.isTransaction) db.exec('ROLLBACK');
-    throw error;
-  }
 }
 
 /** 旧表的一行变成条目。认不出的角色和空文字跳过，和旧的 toMessages 一样。 */

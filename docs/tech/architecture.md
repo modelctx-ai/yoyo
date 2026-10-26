@@ -156,13 +156,13 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | 回复 | 指令是回复人设加语气，事实追加在指令后；有搜索结果时最后加一条「搜索结果：\n…」。`temperature` 0.7；`llm.tools` 打开时给工具，最多 4 步 | `generateReply` |
 | 事实 | 两个 agent 放的位置不一样，所以由 `compose.ts` 取来源、按 agent 放好；harness 里的 builder 带 `facts: false`，不再收集 | `createYoyoHarness` |
 | 记录 | 每一轮都是 `record: false`：用户这句、回复和 `ctx.run.*` 都不写。听到的话在跑回复之前由编排器 `recordUser`；合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `orchestrator.ts`、`director.ts` |
-| 报错 | `stopReason` 是 `error` 或 `aborted` 就报错。`RunResult.error` 只有消息，所以 `compose.ts` 给这一轮的模型包一层，记下模型抛的原始错误，再 `describeError(error, { secrets: [llm.apiKey] })`；有状态码时「模型接口返回 <状态码>：<正文片段>」，否则「模型没回：…」 | `compose.ts` |
+| 报错 | `stopReason` 是 `error` 或 `aborted` 就报错。`RunResult.error`（`ErrorInfo`）带 `statusCode` 和 `responseBody`，`compose.ts` 抹掉 `llm.apiKey`、压成一行、截到 180 字，和 `describeError` 对抛出来的错误做的一样；有状态码时「模型接口返回 <状态码>：<正文片段>」，否则「模型没回：…」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过 | `storePetChat` |
 | 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。只支持 `openai-compatible` | `startChannel`、`connectChannel` |
 | 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness | `createYoyoTools`、`connectMcp` |
 | 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。压缩另记的 `ctx.compacted` 和别的框架事件 `ctx.*` 投影里看不见，不计入阈值，`yoyo context tail` 也不列。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 模型 | `createModel({ provider, baseUrl, apiKey, model })`；没配齐就是 `null`：只用预制台词，碎碎念说完也不听 | `createLanguageModel` |
-| 迁移 | 打开上下文时，先在 `createSqliteStore` 建表之前把 ctx 0.1 的 `ctx_entries.thread` 列改名成 `session`（两个索引名字不变，定义跟着改；`ctx_meta` 的 schema 仍是 `1`）；再把旧表 `context_items` 迁进会话，改名成 `context_items_migrated`。各在一个事务里，失败回滚，下次再试 | `migrateSessionColumn`、`migrateLegacyContext` |
+| 迁移 | `createSqliteStore` 打开库时自己升级结构：ctx 0.1 的 `ctx_entries.thread` 列在写锁里改名成 `session`，`ctx_meta` 的 schema 升到 `2`；yoyo 之前自己改过名的库（列已是 `session`，schema 仍是 `1`）只升版本。失败回滚，下次再试。然后 yoyo 把旧表 `context_items` 迁进会话，改名成 `context_items_migrated`，在一个事务里，失败回滚，下次再试 | `migrateLegacyContext` |
 
 # 怎么用 dsh-pet
 

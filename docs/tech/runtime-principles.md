@@ -45,7 +45,7 @@ yoyo 里分两层：编排器决定什么时候、在哪个会话上跑一轮模
 
 # 记下什么
 
-联系人、日程、粘贴板、上下文、表情包、行为记录、说过的句子、地点和天气日期都在 `~/.yoyo/yoyo.db`。上下文在 ctx 的表 `ctx_entries` 里；旧版的 `context_items` 第一次启动时迁进去，改名成 `context_items_migrated` 留着；ctx 0.1 建的 `ctx_entries` 第一次启动时把 `thread` 列改名成 `session`。做过的事包括说话、听写、搜索、提醒、顺延、配音、加联系人、加日程、粘贴板变化。记录里不写密钥。
+联系人、日程、粘贴板、上下文、表情包、行为记录、说过的句子、地点和天气日期都在 `~/.yoyo/yoyo.db`。上下文在 ctx 的表 `ctx_entries` 里；旧版的 `context_items` 第一次启动时迁进去，改名成 `context_items_migrated` 留着；ctx 0.1 建的 `ctx_entries` 第一次启动时由 ctx-sqlite 把 `thread` 列改名成 `session`。做过的事包括说话、听写、搜索、提醒、顺延、配音、加联系人、加日程、粘贴板变化。记录里不写密钥。
 
 粘贴板历史是 yoyo 运行期间看到的变化。这不是操作系统里更早的全部复制记录。最近一条会交给模型；`clipboard.enabled` 设为 `false` 就不读，也不交。
 

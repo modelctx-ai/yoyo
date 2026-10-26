@@ -9,7 +9,6 @@ import type { Line, PetChatMessage } from '../kernel/types.ts';
 import {
   createYoyoContext,
   migrateLegacyContext,
-  migrateSessionColumn,
   petChatEntries,
   recordLine,
   recordUser,
@@ -114,6 +113,13 @@ function v01Database(): DatabaseSync {
   insert.run('e2', 'pet:main', 2, 'message', 'pet:2:user:在吗', 'dsh-pet', v01Message('user', '在吗'));
   insert.run('e3', 'pet:main', 3, 'message', null, 'yoyo', v01Message('assistant', '在的'));
   insert.run('e4', 'pet:desk', 4, 'message', null, 'yoyo', v01Message('user', '别的桌宠'));
+  return db;
+}
+
+/** yoyo 之前自己把 thread 列改成 session 的库：列是新的，ctx_meta 的 schema 仍是 '1'。 */
+function renamedDatabase(): DatabaseSync {
+  const db = v01Database();
+  db.exec('ALTER TABLE ctx_entries RENAME COLUMN thread TO session');
   return db;
 }
 
@@ -272,42 +278,46 @@ describe('brain/context', () => {
     assert.equal((db.prepare('SELECT COUNT(*) AS n FROM context_items_migrated').get() as { n: number }).n, 8);
   });
 
-  test('ctx 0.1 的旧库：thread 列改名 session，索引跟着改，0.2 的存储能读能接着写，只改一次', async () => {
-    const db = v01Database();
-    const context = await createYoyoContext({ db, petId: 'main' });
-    assert.equal(columns(db).includes('thread'), false);
-    assert.equal(columns(db).includes('session'), true);
-    assert.deepEqual(indexSql(db), [
-      'CREATE INDEX ctx_entries_order ON ctx_entries (session, at, seq)',
-      'CREATE UNIQUE INDEX ctx_entries_key ON ctx_entries (session, key) WHERE key IS NOT NULL',
-    ]);
-    assert.deepEqual(
-      (db.prepare('SELECT key, value FROM ctx_meta').all() as { key: string; value: string }[]).map(
-        (row) => `${row.key}=${row.value}`,
-      ),
-      ['schema=1'],
-    );
-    assert.deepEqual(shown((await context.view()).messages), [
-      'assistant:碎碎念：\n在呢',
-      'user:在吗',
-      'assistant:在的',
-    ]);
-    assert.deepEqual(
-      (await context.entries()).map((entry) => `${entry.session}:${entry.id}`),
-      ['pet:main:e1', 'pet:main:e2', 'pet:main:e3'],
-    );
+  for (const [name, make] of [
+    ['ctx 0.1 的旧库（thread 列）', v01Database],
+    ['yoyo 之前自己改过名的库（session 列，schema 仍是 1）', renamedDatabase],
+  ] as const) {
+    test(`${name}：打开时由 ctx-sqlite 迁到 session 列和 schema 2，能读能接着写，只迁一次`, async () => {
+      const db = make();
+      const context = await createYoyoContext({ db, petId: 'main' });
+      assert.equal(columns(db).includes('thread'), false);
+      assert.equal(columns(db).includes('session'), true);
+      assert.deepEqual(indexSql(db), [
+        'CREATE INDEX ctx_entries_order ON ctx_entries (session, at, seq)',
+        'CREATE UNIQUE INDEX ctx_entries_key ON ctx_entries (session, key) WHERE key IS NOT NULL',
+      ]);
+      assert.deepEqual(
+        (db.prepare('SELECT key, value FROM ctx_meta').all() as { key: string; value: string }[]).map(
+          (row) => `${row.key}=${row.value}`,
+        ),
+        ['schema=2'],
+      );
+      assert.deepEqual(shown((await context.view()).messages), [
+        'assistant:碎碎念：\n在呢',
+        'user:在吗',
+        'assistant:在的',
+      ]);
+      assert.deepEqual(
+        (await context.entries()).map((entry) => `${entry.session}:${entry.id}`),
+        ['pet:main:e1', 'pet:main:e2', 'pet:main:e3'],
+      );
 
-    assert.equal(await storePetChat(context, [{ role: 'user', content: '在吗', ts: 2 }]), 0, '旧的键照样去重');
-    await recordUser(context, '升级以后说的', 5);
-    const store = createSqliteStore({ database: db, prefix: 'ctx_' });
-    assert.deepEqual((await store.sessions()).toSorted(), ['pet:desk', 'pet:main']);
-    assert.equal((await store.list('pet:main')).at(-1)?.type, 'message');
-    assert.equal((await store.list('pet:main')).length, 4);
+      assert.equal(await storePetChat(context, [{ role: 'user', content: '在吗', ts: 2 }]), 0, '旧的键照样去重');
+      await recordUser(context, '升级以后说的', 5);
+      const store = createSqliteStore({ database: db, prefix: 'ctx_' });
+      assert.deepEqual((await store.sessions()).toSorted(), ['pet:desk', 'pet:main']);
+      assert.equal((await store.list('pet:main')).at(-1)?.type, 'message');
+      assert.equal((await store.list('pet:main')).length, 4);
 
-    assert.equal(migrateSessionColumn(db), false, '已经改过就不再改');
-    const again = await createYoyoContext({ db, petId: 'desk' });
-    assert.deepEqual(shown((await again.view()).messages), ['user:别的桌宠']);
-  });
+      const again = await createYoyoContext({ db, petId: 'desk' });
+      assert.deepEqual(shown((await again.view()).messages), ['user:别的桌宠']);
+    });
+  }
 
   test('列改名失败就回滚，旧列留着下次再试', async () => {
     const db = v01Database();

@@ -139,8 +139,6 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   };
   /** 常驻时随拍子一起停：停下以后，正在跑的模型不再等。 */
   const stopping = new AbortController();
-  /** 每一轮一个派生的 signal：ctx 的队列会在 `request.signal` 上挂监听，不能都挂在这个常驻的上面。 */
-  const runSignal = (): AbortSignal => AbortSignal.any([stopping.signal]);
   let busy = false;
   let started = false;
   let closed = false;
@@ -151,7 +149,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     if (!model) return null;
     logger.info('预制台词用完了，按最近的对话和任务写一句');
     const tone = toneForHour(now.getHours());
-    return generateWhisper(context, orchestrator, { tone, model, secrets, signal: runSignal() });
+    return generateWhisper(context, orchestrator, { tone, model, secrets, signal: stopping.signal });
   }
 
   /** 像提问就先搜一下。打开工具时由模型自己决定搜不搜，不再先按问句搜一遍。 */
@@ -176,7 +174,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       model: llm,
       secrets,
       tools: config.llm.tools,
-      signal: runSignal(),
+      signal: stopping.signal,
       ...(searchText ? { searchText } : {}),
     });
     await director.speak(line, now);
