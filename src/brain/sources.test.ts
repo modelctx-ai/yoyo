@@ -40,7 +40,7 @@ function clips(texts: readonly string[]): { clipboard: ClipboardRepo } {
 }
 
 function collect(source: ContextSource) {
-  return source.collect({ thread: 'pet:main' });
+  return source.collect({ session: 'pet:main' });
 }
 
 describe('brain/sources', () => {
@@ -85,7 +85,7 @@ describe('brain/sources', () => {
   test('接进上下文后按顺序成为这一次的事实', async () => {
     const context = createContext({
       store: createMemoryStore(),
-      thread: 'pet:main',
+      session: 'pet:main',
       sources: [
         taskSource({ host: host({ task: '修天气地点', state: null }), repos: tasks([]) }),
         clipboardSource(clips(['https://example.com/issue/1'])),

@@ -1,13 +1,25 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
+import { DatabaseSync } from 'node:sqlite';
+
 import { createToolRegistry, tool } from '@modelctx-ai/ctx';
 import type { McpConnector, McpServerConfig } from '@modelctx-ai/ctx-mcp';
+import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 
 import { parseConfig } from '../app/config.ts';
 import type { Logger } from '../ports/index.ts';
+import { generateReply } from './compose.ts';
+import { createYoyoContext, recordUser } from './context.ts';
 import { connectMcp, mcpServerOf } from './mcp.ts';
+
+type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
+
+const usage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+  outputTokens: { total: 1, text: 1, reasoning: 0 },
+};
 
 function recorder(): Logger & { readonly lines: string[] } {
   const lines: string[] = [];
@@ -23,7 +35,7 @@ const fake = (text: string) => tool({ description: text, inputSchema: z.object({
 
 describe('brain/mcp', () => {
   test('没配 mcpServers 就不连，返回 null', async () => {
-    const registry = createToolRegistry().add('list_alarms', fake('x'));
+    const registry = createToolRegistry().addTool('list_alarms', fake('x'));
     const logger = recorder();
     assert.equal(await connectMcp(parseConfig({}).mcpServers, registry, logger), null);
     assert.equal(registry.size, 1);
@@ -48,7 +60,7 @@ describe('brain/mcp', () => {
         off: { command: 'node', enabled: false },
       },
     }).mcpServers;
-    const registry = createToolRegistry().add('list_alarms', fake('x'));
+    const registry = createToolRegistry().addTool('list_alarms', fake('x'));
     const logger = recorder();
     const hub = await connectMcp(servers, registry, logger, { connector });
     assert.ok(hub);
@@ -64,6 +76,56 @@ describe('brain/mcp', () => {
     await hub.close();
     assert.deepEqual(closed, ['web']);
   });
+  test('hub 交给上下文当执行环境，回复时模型调得到 MCP 工具', async () => {
+    const calls: string[] = [];
+    const connector: McpConnector = async () => ({
+      tools: async () => ({
+        search: tool({
+          description: '搜一下',
+          inputSchema: z.object({ query: z.string() }),
+          execute: async ({ query }) => {
+            calls.push(query);
+            return '台北晴';
+          },
+        }),
+      }),
+      close: async () => {},
+    });
+    const registry = createToolRegistry();
+    const hub = await connectMcp({ web: { url: 'https://mcp.example/api' } }, registry, recorder(), { connector });
+    assert.ok(hub);
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'web__search', input: JSON.stringify({ query: '台北' }) },
+          ],
+          finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+          usage,
+          warnings: [],
+        } satisfies DoGenerateResult,
+        {
+          content: [{ type: 'text', text: '台北今天是晴天哦。' }],
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage,
+          warnings: [],
+        } satisfies DoGenerateResult,
+      ],
+    });
+    const context = await createYoyoContext({
+      db: new DatabaseSync(':memory:'),
+      petId: 'main',
+      tools: registry,
+      executors: [hub],
+      model,
+    });
+    await recordUser(context, '台北天气怎么样', 1);
+    const line = await generateReply(context, { tone: 'warm', tools: true });
+    assert.equal(line.text, '台北今天是晴天哦。');
+    assert.deepEqual(calls, ['台北']);
+    await hub.close();
+  });
+
   test('写错的服务器记一行中文跳过，写对的照常连；可选字段写错当没写', async () => {
     const seen: Record<string, McpServerConfig> = {};
     const connector: McpConnector = async (name, config) => {

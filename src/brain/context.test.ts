@@ -2,18 +2,19 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, type ContextEntry, type ModelMessage } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, type Entry, type ModelMessage } from '@modelctx-ai/ctx';
 import { createSqliteStore } from '@modelctx-ai/ctx-sqlite';
 
 import type { Line, PetChatMessage } from '../kernel/types.ts';
 import {
   createYoyoContext,
   migrateLegacyContext,
+  migrateSessionColumn,
   petChatEntries,
   recordLine,
   recordUser,
   storePetChat,
-  threadFor,
+  sessionFor,
   yoyoProjection,
 } from './context.ts';
 
@@ -25,7 +26,7 @@ function memoryContext() {
   let clock = 0;
   return createContext({
     store: createMemoryStore({ now: () => (clock += 1) }),
-    thread: threadFor('main'),
+    session: sessionFor('main'),
     projection: yoyoProjection,
   });
 }
@@ -39,7 +40,7 @@ function shown(messages: readonly ModelMessage[]): string[] {
   return messages.map((message) => `${message.role}:${contentText(message.content)}`);
 }
 
-function shapes(entries: readonly ContextEntry[]): string[] {
+function shapes(entries: readonly Entry[]): string[] {
   return entries.map((entry) => {
     if (entry.type === 'message') return `${entry.message.role}:${contentText(entry.message.content)}`;
     if (entry.type === 'event') return `${entry.kind}:${entry.text ?? ''}`;
@@ -78,6 +79,58 @@ function tables(db: DatabaseSync): string[] {
     .toSorted();
 }
 
+/** ctx-sqlite 0.1 的建表语句（ctx 7b32cc3），列名还是 thread。 */
+const CTX_V01_SCHEMA = `
+CREATE TABLE IF NOT EXISTS ctx_entries (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  thread TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  key TEXT,
+  source TEXT,
+  body TEXT NOT NULL,
+  meta TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ctx_entries_key ON ctx_entries (thread, key) WHERE key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ctx_entries_order ON ctx_entries (thread, at, seq);
+CREATE TABLE IF NOT EXISTS ctx_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT OR IGNORE INTO ctx_meta (key, value) VALUES ('schema', '1');
+`;
+
+/** 0.1 存消息条目的 body。 */
+function v01Message(role: string, content: string): string {
+  return JSON.stringify({ message: { role, content } });
+}
+
+/** 照 0.1 的写法造一个旧库：两只桌宠，碎碎念、带键的用户话、回复。 */
+function v01Database(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
+  db.exec(CTX_V01_SCHEMA);
+  const insert = db.prepare(
+    'INSERT INTO ctx_entries (id, thread, at, type, key, source, body, meta) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+  );
+  insert.run('e1', 'pet:main', 1, 'event', null, 'yoyo', JSON.stringify({ kind: 'whisper', text: '在呢' }));
+  insert.run('e2', 'pet:main', 2, 'message', 'pet:2:user:在吗', 'dsh-pet', v01Message('user', '在吗'));
+  insert.run('e3', 'pet:main', 3, 'message', null, 'yoyo', v01Message('assistant', '在的'));
+  insert.run('e4', 'pet:desk', 4, 'message', null, 'yoyo', v01Message('user', '别的桌宠'));
+  return db;
+}
+
+function columns(db: DatabaseSync): string[] {
+  return (db.prepare('PRAGMA table_info(ctx_entries)').all() as { name: string }[]).map((row) => row.name);
+}
+
+function indexSql(db: DatabaseSync): string[] {
+  return (
+    db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ctx_entries' AND sql IS NOT NULL")
+      .all() as { sql: string }[]
+  )
+    .map((row) => row.sql)
+    .toSorted();
+}
+
 const LEGACY: readonly LegacyItem[] = [
   { role: 'whisper', text: '在呢', at: 10 },
   { role: 'whisper', text: '水记得喝一口哦', at: 20 },
@@ -89,8 +142,8 @@ const LEGACY: readonly LegacyItem[] = [
 ];
 
 describe('brain/context', () => {
-  test('线程按桌宠分开', () => {
-    assert.equal(threadFor('main'), 'pet:main');
+  test('会话按桌宠分开', () => {
+    assert.equal(sessionFor('main'), 'pet:main');
   });
 
   test('连续碎碎念合成一条，对话原句不截断', async () => {
@@ -184,7 +237,7 @@ describe('brain/context', () => {
     );
 
     const store = createSqliteStore({ database: db, prefix: 'ctx_' });
-    assert.equal(await migrateLegacyContext(db, store, threadFor('main')), 0);
+    assert.equal(await migrateLegacyContext(db, store, sessionFor('main')), 0);
     assert.equal(await storePetChat(context, [{ role: 'user', content: '在吗', ts: 30 }]), 0, '迁过来的键照样去重');
 
     const again = await createYoyoContext({ db, petId: 'main' });
@@ -219,6 +272,55 @@ describe('brain/context', () => {
     assert.equal((db.prepare('SELECT COUNT(*) AS n FROM context_items_migrated').get() as { n: number }).n, 8);
   });
 
+  test('ctx 0.1 的旧库：thread 列改名 session，索引跟着改，0.2 的存储能读能接着写，只改一次', async () => {
+    const db = v01Database();
+    const context = await createYoyoContext({ db, petId: 'main' });
+    assert.equal(columns(db).includes('thread'), false);
+    assert.equal(columns(db).includes('session'), true);
+    assert.deepEqual(indexSql(db), [
+      'CREATE INDEX ctx_entries_order ON ctx_entries (session, at, seq)',
+      'CREATE UNIQUE INDEX ctx_entries_key ON ctx_entries (session, key) WHERE key IS NOT NULL',
+    ]);
+    assert.deepEqual(
+      (db.prepare('SELECT key, value FROM ctx_meta').all() as { key: string; value: string }[]).map(
+        (row) => `${row.key}=${row.value}`,
+      ),
+      ['schema=1'],
+    );
+    assert.deepEqual(shown((await context.view()).messages), [
+      'assistant:碎碎念：\n在呢',
+      'user:在吗',
+      'assistant:在的',
+    ]);
+    assert.deepEqual(
+      (await context.entries()).map((entry) => `${entry.session}:${entry.id}`),
+      ['pet:main:e1', 'pet:main:e2', 'pet:main:e3'],
+    );
+
+    assert.equal(await storePetChat(context, [{ role: 'user', content: '在吗', ts: 2 }]), 0, '旧的键照样去重');
+    await recordUser(context, '升级以后说的', 5);
+    const store = createSqliteStore({ database: db, prefix: 'ctx_' });
+    assert.deepEqual((await store.sessions()).toSorted(), ['pet:desk', 'pet:main']);
+    assert.equal((await store.list('pet:main')).at(-1)?.type, 'message');
+    assert.equal((await store.list('pet:main')).length, 4);
+
+    assert.equal(migrateSessionColumn(db), false, '已经改过就不再改');
+    const again = await createYoyoContext({ db, petId: 'desk' });
+    assert.deepEqual(shown((await again.view()).messages), ['user:别的桌宠']);
+  });
+
+  test('列改名失败就回滚，旧列留着下次再试', async () => {
+    const db = v01Database();
+    // 坏掉的视图让 RENAME COLUMN 校验整库时出错
+    db.exec('CREATE VIEW broken AS SELECT * FROM nowhere');
+    await assert.rejects(createYoyoContext({ db, petId: 'main' }), /nowhere/);
+    assert.equal(db.isTransaction, false);
+    assert.equal(columns(db).includes('thread'), true);
+    db.exec('DROP VIEW broken');
+    const context = await createYoyoContext({ db, petId: 'main' });
+    assert.equal((await context.entries()).length, 3);
+  });
+
   test('没有旧表就什么也不做；新库照样能写能读', async () => {
     const db = new DatabaseSync(':memory:');
     const context = await createYoyoContext({ db, petId: 'main' });
@@ -228,7 +330,7 @@ describe('brain/context', () => {
     assert.deepEqual(shown((await reopened.view()).messages), ['user:你好']);
     assert.equal((await reopened.entries())[0]?.source, 'yoyo');
     const other = await createYoyoContext({ db, petId: 'other' });
-    assert.equal((await other.entries()).length, 0, '别的桌宠是另一条线程');
+    assert.equal((await other.entries()).length, 0, '别的桌宠是另一个会话');
   });
 
   test('配了 maxTokens 就从最旧的开始裁，不配就整段带上', async () => {

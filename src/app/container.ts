@@ -147,6 +147,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         sources,
         logger,
         ...(tools ? { tools } : {}),
+        // MCP 工具绑定在 hub 这个执行环境上，要交给上下文
+        ...(mcp ? { executors: [mcp] } : {}),
         ...(model ? { model } : {}),
         ...(config.context.maxTokens ? { maxTokens: config.context.maxTokens } : {}),
       }));

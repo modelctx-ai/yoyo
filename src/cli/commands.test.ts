@@ -141,6 +141,8 @@ describe('commands', () => {
     }
     await context.append(
       eventEntry('meme-pack', { text: '不列', at: 100 }),
+      // 框架事件也不列
+      eventEntry('ctx.compacted', { text: '不列', at: 100 }),
       eventEntry('whisper', { text: '最后一句', at: 101 }),
     );
     const rows = await run('context', 'tail');
@@ -149,6 +151,7 @@ describe('commands', () => {
     assert.equal(rows[1], 'user\t第 1 句 换行');
     assert.equal(rows.at(-1), 'whisper\t最后一句');
     assert.equal(rows.includes('meme-pack\t不列'), false);
+    assert.equal(rows.includes('ctx.compacted\t不列'), false);
   });
 
   test('context compact：没配模型就说一句', async () => {

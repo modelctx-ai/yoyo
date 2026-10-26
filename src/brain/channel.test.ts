@@ -136,7 +136,7 @@ describe('brain/channel', () => {
   });
 
   test('只支持 openai-compatible；模型没配齐不开', async () => {
-    const context = createContext({ store: createMemoryStore(), thread: 'pet:main' });
+    const context = createContext({ store: createMemoryStore(), session: 'pet:main' });
     await recordUser(context, '在吗', 1);
     await assert.rejects(
       startChannel({ llm: llm({ provider: 'anthropic', baseUrl: upstreamUrl }), context, kv: memoryKv() }),

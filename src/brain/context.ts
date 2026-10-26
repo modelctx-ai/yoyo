@@ -7,11 +7,12 @@ import {
   userEntry,
   type Context,
   type ContextSource,
-  type ContextStore,
   type EntryOptions,
+  type Executor,
   type LanguageModel,
   type NewEntry,
   type ProjectionOptions,
+  type SessionStore,
   type ToolRegistry,
 } from '@modelctx-ai/ctx';
 import { createSqliteStore } from '@modelctx-ai/ctx-sqlite';
@@ -22,9 +23,11 @@ import type { Logger } from '../ports/index.ts';
 
 const LEGACY_TABLE = 'context_items';
 const MIGRATED_TABLE = 'context_items_migrated';
+/** ctx-sqlite 的条目表（前缀 'ctx_'）。 */
+const ENTRIES_TABLE = 'ctx_entries';
 
-/** 每只桌宠一条线程。 */
-export function threadFor(petId: string): string {
+/** 每只桌宠一个会话。 */
+export function sessionFor(petId: string): string {
   return `pet:${petId}`;
 }
 
@@ -47,6 +50,8 @@ export interface YoyoContextOptions {
   readonly petId: string;
   readonly sources?: readonly ContextSource[];
   readonly tools?: ToolRegistry;
+  /** 注册表里非本地工具绑定的执行环境，例如 MCP hub。 */
+  readonly executors?: readonly Executor[];
   readonly model?: LanguageModel | null;
   /** 交给模型的历史上限（估算 token）。不给就整段带上。 */
   readonly maxTokens?: number;
@@ -55,15 +60,18 @@ export interface YoyoContextOptions {
 
 /** ctx-sqlite 复用 yoyo.db（表前缀 'ctx_'）；第一次会把旧表 context_items 迁进来。 */
 export async function createYoyoContext(options: YoyoContextOptions): Promise<Context> {
+  // 要在 createSqliteStore 建表、准备语句之前
+  migrateSessionColumn(options.db);
   const store = createSqliteStore({ database: options.db, prefix: 'ctx_' });
-  const thread = threadFor(options.petId);
-  await migrateLegacyContext(options.db, store, thread);
+  const session = sessionFor(options.petId);
+  await migrateLegacyContext(options.db, store, session);
   return createContext({
     store,
-    thread,
+    session,
     projection: { ...yoyoProjection, window: options.maxTokens ? { maxTokens: options.maxTokens } : undefined },
     sources: options.sources,
     tools: options.tools,
+    executors: options.executors,
     model: options.model ?? undefined,
     source: 'yoyo',
     logger: options.logger,
@@ -79,6 +87,38 @@ interface LegacyRow {
 
 function hasTable(db: DatabaseSync, name: string): boolean {
   return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+}
+
+function columnsOf(db: DatabaseSync, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map((row) => row.name);
+}
+
+function hasThreadColumn(db: DatabaseSync): boolean {
+  const columns = columnsOf(db, ENTRIES_TABLE);
+  return columns.includes('thread') && !columns.includes('session');
+}
+
+/**
+ * ctx-sqlite 0.2 把 ctx_entries 的 thread 列改名成 session，没带迁移；老库在这里改一次，返回改没改。
+ * 两个索引（ctx_entries_key、ctx_entries_order）名字不变，RENAME COLUMN 会顺带改它们的定义；
+ * ctx_meta 的 schema 两版都是 '1'，不用动。一个事务，失败回滚、下次再试。
+ */
+export function migrateSessionColumn(db: DatabaseSync): boolean {
+  if (!hasThreadColumn(db)) return false;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // 别的进程可能刚改完
+    if (!hasThreadColumn(db)) {
+      db.exec('COMMIT');
+      return false;
+    }
+    db.exec(`ALTER TABLE ${ENTRIES_TABLE} RENAME COLUMN thread TO session`);
+    db.exec('COMMIT');
+    return true;
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 /** 旧表的一行变成条目。认不出的角色和空文字跳过，和旧的 toMessages 一样。 */
@@ -102,7 +142,7 @@ function legacyEntry(row: LegacyRow): NewEntry | null {
  * 把旧表 context_items 迁进 ctx，然后改名成 context_items_migrated，返回写入的条数。
  * 整个过程在一个事务里，失败回滚、下次再试；`store` 要和 `db` 是同一个库。
  */
-export async function migrateLegacyContext(db: DatabaseSync, store: ContextStore, thread: string): Promise<number> {
+export async function migrateLegacyContext(db: DatabaseSync, store: SessionStore, session: string): Promise<number> {
   if (!hasTable(db, LEGACY_TABLE)) return 0;
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -115,7 +155,7 @@ export async function migrateLegacyContext(db: DatabaseSync, store: ContextStore
       .prepare(`SELECT role, text, at, item_key FROM ${LEGACY_TABLE} ORDER BY at, id`)
       .all() as unknown as LegacyRow[];
     const entries = rows.map(legacyEntry).filter((entry): entry is NewEntry => entry !== null);
-    const written = entries.length > 0 ? await store.append(thread, entries) : [];
+    const written = entries.length > 0 ? await store.append(session, entries) : [];
     if (hasTable(db, MIGRATED_TABLE)) {
       // 旧版本又建过一次表：并进已有的备份
       db.exec(

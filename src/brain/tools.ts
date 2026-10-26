@@ -1,4 +1,4 @@
-import { createToolRegistry, tool, type ToolRegistry } from '@modelctx-ai/ctx';
+import { createToolRegistry, tool, type LocalToolRegistry } from '@modelctx-ai/ctx';
 import { z } from 'zod';
 
 import { errorText } from '../app/log.ts';
@@ -37,13 +37,13 @@ function resolveDate(date: string | undefined, time: string, now: Date): string 
 }
 
 /** 回复时可以交给模型的本地工具。只有 `llm.tools` 打开时才用。 */
-export function createYoyoTools(deps: YoyoToolDeps): ToolRegistry {
+export function createYoyoTools(deps: YoyoToolDeps): LocalToolRegistry {
   const { repos, search } = deps;
   const now = deps.now ?? (() => new Date());
   const registry = createToolRegistry();
 
   if (search) {
-    registry.add(
+    registry.addTool(
       'web_search',
       tool({
         description: '上网搜索。主人问到新闻、最新的事、数字或人物时用，不要凭记忆编。',
@@ -62,7 +62,7 @@ export function createYoyoTools(deps: YoyoToolDeps): ToolRegistry {
     );
   }
 
-  registry.add(
+  registry.addTool(
     'weather_forecast',
     tool({
       description: '查主人所在地接下来几个小时的天气：气温、天气、要不要带伞。',
@@ -80,7 +80,7 @@ export function createYoyoTools(deps: YoyoToolDeps): ToolRegistry {
     }),
   );
 
-  registry.add(
+  registry.addTool(
     'list_alarms',
     tool({
       description: '列出已经设好的闹钟和定时任务。',
@@ -89,7 +89,7 @@ export function createYoyoTools(deps: YoyoToolDeps): ToolRegistry {
     }),
   );
 
-  registry.add(
+  registry.addTool(
     'add_alarm',
     tool({
       description: '新增一个闹钟或定时任务，到点由小女仆说出来。返回存好的日程，或者说明哪里不对。',

@@ -23,11 +23,12 @@
     "check": "vp check --deny-warnings && vp test"
   },
   "dependencies": {
-    "@modelctx-ai/ctx": "^0.1.0",
-    "@modelctx-ai/ctx-gateway": "^0.1.0",
-    "@modelctx-ai/ctx-mcp": "^0.1.0",
-    "@modelctx-ai/ctx-models": "^0.1.0",
-    "@modelctx-ai/ctx-sqlite": "^0.1.0",
+    "@modelctx-ai/ctx": "^0.2.0",
+    "@modelctx-ai/ctx-gateway": "^0.2.0",
+    "@modelctx-ai/ctx-mcp": "^0.2.0",
+    "@modelctx-ai/ctx-models": "^0.2.0",
+    "@modelctx-ai/ctx-protocol": "^0.2.0",
+    "@modelctx-ai/ctx-sqlite": "^0.2.0",
     "@yoyo/dsh-pet": "workspace:*",
     "zod": "^4.6.7"
   },

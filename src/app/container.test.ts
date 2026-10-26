@@ -26,7 +26,7 @@ describe('container', () => {
     assert.equal(app.search, null);
     assert.equal(app.model, null);
     assert.equal(app.tools, undefined);
-    assert.equal(app.context.thread, 'pet:main');
+    assert.equal(app.context.session, 'pet:main');
     assert.equal(typeof app.director.perform, 'function');
     await app.close();
     await app.close();
@@ -44,7 +44,7 @@ describe('container', () => {
     assert.ok(app.search);
     assert.ok(app.model);
     assert.ok(app.tools && app.tools.size > 0);
-    assert.equal(app.context.thread, 'pet:desk');
+    assert.equal(app.context.session, 'pet:desk');
     await app.close();
   });
 

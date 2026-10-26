@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { textOf, type ContextEntry } from '@modelctx-ai/ctx';
+import { textOf, type Entry } from '@modelctx-ai/ctx';
 
 import { assertDirectorReady, llmReady, loadConfig, parseConfig, type Config } from '../app/config.ts';
 import { createApp, createPetHost, createPlatformClipboard, type App, type AppOverrides } from '../app/container.ts';
@@ -73,7 +73,7 @@ function oneLine(text: string, max: number): string {
 }
 
 /** `context tail` 的一行：消息按角色，碎碎念记成 whisper。其余条目不列。 */
-export function contextRow(entry: ContextEntry): string | null {
+export function contextRow(entry: Entry): string | null {
   if (entry.type === 'message') {
     const text = textOf(entry.message);
     return text ? `${entry.message.role}\t${oneLine(text, 80)}` : null;

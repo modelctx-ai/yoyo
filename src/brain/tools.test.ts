@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, type ToolRegistry } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, type LocalToolRegistry, type ToolOutput } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import type { ActivityRecord, ScheduleItem } from '../kernel/types.ts';
@@ -65,10 +65,14 @@ function searcher(result: string | Error, queries: string[] = []): WebSearch {
   };
 }
 
-async function run(registry: ToolRegistry, name: string, input: unknown = {}): Promise<unknown> {
-  const picked = registry.select([name])[name];
+/** 经注册表包好的工具执行一次，拆出结果：文字是字符串，JSON 是原值。 */
+async function run(registry: LocalToolRegistry, name: string, input: unknown = {}): Promise<unknown> {
+  const picked = registry.toolSet([name])[name];
   assert.ok(picked?.execute, `没有工具 ${name}`);
-  return picked.execute(input, { toolCallId: 'c1', messages: [], context: {} });
+  const output = (await picked.execute(input, { toolCallId: 'c1', messages: [], context: {} })) as ToolOutput;
+  if (output.type === 'text') return output.text;
+  if (output.type === 'json') return output.value;
+  throw new Error(`工具 ${name} 的结果是 ${output.type}`);
 }
 
 /** 2026-10-23（周五）14:10，本地时间。 */
@@ -226,7 +230,7 @@ describe('brain/tools', () => {
     });
     const context = createContext({
       store: createMemoryStore(),
-      thread: 'pet:main',
+      session: 'pet:main',
       projection: yoyoProjection,
       model,
       tools: createYoyoTools({ repos, search: null, now: () => NOW }),

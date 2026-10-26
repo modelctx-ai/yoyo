@@ -11,12 +11,13 @@ catalogs:
       version: 1.4.0
 
 overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@1.4.0
   '@modelctx-ai/ctx': link:../ctx/packages/core
   '@modelctx-ai/ctx-gateway': link:../ctx/packages/gateway
   '@modelctx-ai/ctx-mcp': link:../ctx/packages/mcp
   '@modelctx-ai/ctx-models': link:../ctx/packages/models
+  '@modelctx-ai/ctx-protocol': link:../ctx/packages/protocol
   '@modelctx-ai/ctx-sqlite': link:../ctx/packages/sqlite
-  vite@*: npm:@voidzero-dev/vite-plus-core@1.4.0
 
 importers:
 
@@ -34,6 +35,9 @@ importers:
       '@modelctx-ai/ctx-models':
         specifier: link:../ctx/packages/models
         version: link:../ctx/packages/models
+      '@modelctx-ai/ctx-protocol':
+        specifier: link:../ctx/packages/protocol
+        version: link:../ctx/packages/protocol
       '@modelctx-ai/ctx-sqlite':
         specifier: link:../ctx/packages/sqlite
         version: link:../ctx/packages/sqlite
