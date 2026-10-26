@@ -46,7 +46,7 @@ sources:
 
 # 和 ctx 联调
 
-ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的六个包链到 `../ctx/packages/*`，读的是 ctx 的 `dist/`：`@modelctx-ai/ctx`（`core`）、`ctx-protocol`（`protocol`，核心包把它当 peer）、`ctx-sqlite`、`ctx-mcp`、`ctx-gateway`、`ctx-models`。`ctx-exec`、`ctx-remote` 用不到，不链。改了 ctx 要在 ctx 里重新 `pnpm build`。ctx 发布以后删掉 `overrides`，同样的 `^0.2.0` 从 npm 解析。[^workspace]
+ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的六个包链到 `../ctx/packages/*`，读的是 ctx 的 `dist/`：`@modelctx-ai/ctx`（`core`）、`ctx-protocol`（`protocol`，核心包把它当 peer）、`ctx-sqlite`、`ctx-mcp`、`ctx-gateway`、`ctx-models`。`ctx-exec`、`ctx-remote` 用不到，不链。改了 ctx 要在 ctx 里重新 `pnpm build`。ctx 发布以后删掉 `overrides`，同样的 `^0.3.0` 从 npm 解析。[^workspace]
 
 三个仓库怎么分工、怎么一起联调，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/repos.md`。
 

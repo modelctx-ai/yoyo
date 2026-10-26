@@ -2,6 +2,7 @@
 
 ## 2026-10-26
 
+* **Update**: 跟上 ctx 0.3（会话位置、消息格式、`AgentSpec.context`）。架构：事实的收法和位置写进两个 agent 的 `context`（碎碎念 `prompt`、回复 `instructions`），harness 直接用上下文的 builder；`yoyo context tail` 和桌宠对话按 `(at, seq)` 排；迁移加上 schema 3；新加「旧摘要」一行（常驻进程启动时、开拍子之前重新压缩被旧摘要盖住的记录，没有模型记警告，命令行不做）。运行时原则、开发（依赖 `^0.3.0`）同步；从旧版升级加「从上一版升级（ctx 0.3）」：先停常驻进程，库结构自动升级，旧版读不了。碎碎念最后一条用户消息里，事实和「请再说一句碎碎念。」之间由一个换行变成一个空行（builder 接提示的写法），其余交给模型的指令、消息和事实不变。
 * **Update**: 删掉绕开 ctx 缺口的代码（ctx 已合并「版本化迁移」和「小缺口」两处修复）。架构的「报错」改成直接读 `RunResult.error` 的 `statusCode`、`responseBody`，不再包一层模型记原始错误；「迁移」改成由 `createSqliteStore` 打开库时升级（`thread` 列改名、schema 升到 2），yoyo 只剩旧表 `context_items` 的迁移。运行时原则同步。用户可见的行为和文案不变。
 * **Update**: 编排改成实现 ctx 的 `Orchestrator`。架构：分层图和目录表加上编排器（`runtime/orchestrator.ts`）、harness（`brain/harness.ts`）和 agent 配置（`brain/agents.ts`）；「常驻进程」改成编排器、harness、导演、常驻循环各管什么和调用关系，拍子由编排器打；新加「和 ctx 组件的对应」；「怎么用 ctx」加上 agent、一轮、事实、报错的新做法；两条数据流改成编排器提交 → harness 跑 → 导演表演 → 记录；扩展里的「要开口」「要跑模型」跟上，工具例子改用 `addTool`。运行时原则：让路和记录写到编排器上，`resource` 改指编排器。索引的架构一行跟上。用户可见的行为和文案不变。
 * **Update**: 跟上 ctx 0.2（机械迁移）。架构的「怎么用 ctx」：线程改叫会话（`sessionFor`），记录写明 `record: false` 连 `ctx.run.*` 也不写，工具用 `addTool`、MCP hub 经 `executors` 交给上下文，压缩写明框架事件 `ctx.*` 不计入阈值、`context tail` 不列，迁移加上 `ctx_entries.thread` 列改名（`migrateSessionColumn`）。运行时原则的线程改成会话。开发里的 `overrides` 列出六个包（新加 `ctx-protocol`），版本改成 `^0.2.0`。从旧版升级加「从上一版升级（ctx 0.2）」：更新 ctx、对话记忆自动改名迁移。

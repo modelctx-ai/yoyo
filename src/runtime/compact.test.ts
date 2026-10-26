@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, eventEntry, userEntry, type Context } from '@modelctx-ai/ctx';
+import {
+  createContext,
+  createMemoryStore,
+  eventEntry,
+  findLossySummaries,
+  userEntry,
+  type Context,
+} from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { yoyoProjection } from '../brain/context.ts';
-import { compactContext, historyTokens } from './compact.ts';
+import { COMPACT_INSTRUCTIONS } from '../brain/prompts.ts';
+import { compactContext, historyTokens, recompactLossySummaries } from './compact.ts';
+import { lossyContext, memoryLogger } from './testing.ts';
 
 type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
@@ -69,5 +78,68 @@ describe('compact', () => {
       clearTimeout(alive);
     }
     assert.ok(Date.now() - started < 5000);
+  });
+});
+
+const texts = async (context: Context) =>
+  (await context.view()).messages.map((message) => JSON.stringify(message.content));
+
+describe('recompactLossySummaries', () => {
+  test('旧摘要盖住了晚到的记录：用 yoyo 的压缩指令重新压缩，新摘要取代旧摘要，再找为空', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('新摘要：问题一和二，还有晚到的回答') });
+    const context = await lossyContext();
+    const logger = memoryLogger();
+    assert.equal((await findLossySummaries(context.store)).length, 1);
+    assert.ok(!(await texts(context)).some((text) => text.includes('晚到的回答')), '修复前模型看不到它');
+
+    assert.equal(await recompactLossySummaries(context, { model, logger }), 1);
+    assert.equal(model.doGenerateCalls.length, 1);
+    const call = model.doGenerateCalls[0]!;
+    assert.deepEqual(call.prompt[0], { role: 'system', content: COMPACT_INSTRUCTIONS });
+    const input = JSON.stringify(call.prompt[1]);
+    assert.ok(input.includes('旧摘要：问题一和二') && input.includes('晚到的回答'), '输入是旧摘要加被盖住的记录');
+    assert.deepEqual(await texts(context), ['"前面对话的摘要：\\n新摘要：问题一和二，还有晚到的回答"', '"之后的问题"']);
+    assert.deepEqual(logger.lines, ['旧摘要盖住了 1 条记录，已重新压缩']);
+
+    assert.deepEqual(await findLossySummaries(context.store), []);
+    assert.equal(await recompactLossySummaries(context, { model, logger }), 0, '第二次启动什么也不做');
+    assert.equal(model.doGenerateCalls.length, 1);
+  });
+
+  test('没有模型：只记一条警告，什么也不写，等下次带模型启动', async () => {
+    const context = await lossyContext();
+    const logger = memoryLogger();
+    const before = (await context.entries()).length;
+    assert.equal(await recompactLossySummaries(context, { model: null, logger }), 0);
+    assert.deepEqual(logger.lines, ['旧摘要盖住了 1 条较晚写进来的记录，没配模型，等下次带着模型启动时再重新压缩']);
+    assert.equal((await context.entries()).length, before);
+    assert.equal((await findLossySummaries(context.store)).length, 1, '还在，下次启动再做');
+  });
+
+  test('没有旧摘要的问题就不调模型、不出声', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: async () => textResult('不该用到') });
+    const context = createContext({ store: createMemoryStore(), session: 'pet:main', projection: yoyoProjection });
+    await context.append(userEntry('一句话'));
+    const logger = memoryLogger();
+    assert.equal(await recompactLossySummaries(context, { model, logger }), 0);
+    assert.equal(model.doGenerateCalls.length, 0);
+    assert.deepEqual(logger.lines, []);
+  });
+
+  test('模型出错或没给摘要：记一条警告，不抛，旧摘要留着下次再试', async () => {
+    const broken = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new Error('socket hang up');
+      },
+    });
+    const context = await lossyContext();
+    const logger = memoryLogger();
+    assert.equal(await recompactLossySummaries(context, { model: broken, logger }), 0);
+    assert.deepEqual(logger.lines, ['旧摘要没重新压缩成：socket hang up']);
+
+    const empty = new MockLanguageModelV4({ doGenerate: async () => textResult('   ') });
+    assert.equal(await recompactLossySummaries(context, { model: empty, logger }), 0);
+    assert.equal(logger.lines.at(-1), '旧摘要没重新压缩成：模型没有给出完整的摘要，等下次启动再试');
+    assert.equal((await findLossySummaries(context.store)).length, 1);
   });
 });

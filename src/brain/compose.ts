@@ -85,15 +85,14 @@ async function run(runs: Runs, request: RunRequest, secrets: readonly string[] |
 }
 
 /**
- * 碎碎念这一轮：人设加语气是指令，历史是上下文视图，这一刻的事实（当前任务、粘贴板）放进最后一条临时用户消息。
+ * 碎碎念这一轮：人设加语气是指令，历史是上下文视图，这一刻的事实（当前任务、粘贴板）由 agent 的 `context` 放进最后一条临时用户消息。
  * 只调模型、不写日志：说出口以后才由导演记。
  */
-export async function whisperRequest(context: Context, options: ComposeOptions): Promise<RunRequest> {
-  const facts = await context.facts(options.signal);
+export function whisperRequest(context: Context, options: ComposeOptions): RunRequest {
   return {
     session: context.session,
     agent: whisperAgent(options.tone, options.model),
-    prompt: whisperPrompt(facts),
+    prompt: whisperPrompt(),
     record: false,
     ...(options.signal ? { signal: options.signal } : {}),
   };
@@ -105,13 +104,12 @@ export interface ReplyOptions extends ComposeOptions {
   readonly tools?: boolean;
 }
 
-/** 回复这一轮：事实接在指令后面，有搜索结果时放在最后一条临时用户消息里。不写日志。 */
-export async function replyRequest(context: Context, options: ReplyOptions): Promise<RunRequest> {
-  const facts = await context.facts(options.signal);
+/** 回复这一轮：事实由 agent 的 `context` 接在指令后面，有搜索结果时放在最后一条临时用户消息里。不写日志。 */
+export function replyRequest(context: Context, options: ReplyOptions): RunRequest {
   const prompt = searchPrompt(options.searchText);
   return {
     session: context.session,
-    agent: replyAgent(options.tone, options.model, { tools: options.tools === true, facts }),
+    agent: replyAgent(options.tone, options.model, { tools: options.tools === true }),
     ...(prompt !== undefined ? { prompt } : {}),
     record: false,
     ...(options.signal ? { signal: options.signal } : {}),
@@ -120,7 +118,7 @@ export async function replyRequest(context: Context, options: ReplyOptions): Pro
 
 /** 按上下文视图和这一刻的事实现写一句碎碎念，经编排器跑一轮。 */
 export async function generateWhisper(context: Context, runs: Runs, options: ComposeOptions): Promise<Line> {
-  const text = await run(runs, await whisperRequest(context, options), options.secrets);
+  const text = await run(runs, whisperRequest(context, options), options.secrets);
   const line = parseWhisper(text, options.tone);
   if (!line) throw new Error('模型没有返回可用的碎碎念');
   const { messages } = await context.view();
@@ -130,7 +128,7 @@ export async function generateWhisper(context: Context, runs: Runs, options: Com
 
 /** 回复主人刚说的话（调用前先 recordUser），经编排器跑一轮。 */
 export async function generateReply(context: Context, runs: Runs, options: ReplyOptions): Promise<Line> {
-  const text = await run(runs, await replyRequest(context, options), options.secrets);
+  const text = await run(runs, replyRequest(context, options), options.secrets);
   const line = parseWhisper(text, options.tone, 'reply');
   if (!line) throw new Error('模型没有返回可用的回复');
   return line;
