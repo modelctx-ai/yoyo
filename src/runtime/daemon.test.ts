@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, findLossySummaries } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { parseConfig } from '../app/config.ts';
@@ -14,7 +14,21 @@ import { createYoyoHarness } from '../brain/harness.ts';
 import { channelPlan, connectChannel, menuRequest, runDaemon, type ChannelApp, type DaemonApp } from './daemon.ts';
 import { drain } from './inbox.ts';
 import { createYoyoOrchestrator } from './orchestrator.ts';
-import { fakeDirector, fakeHost, memoryLogger, memoryRepos } from './testing.ts';
+import { fakeDirector, fakeHost, lossyContext, memoryLogger, memoryRepos } from './testing.ts';
+
+type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
+
+function textResult(text: string): GenerateResult {
+  return {
+    content: [{ type: 'text', text }],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: {
+      inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 1, text: 1, reasoning: 0 },
+    },
+    warnings: [],
+  };
+}
 
 describe('daemon 菜单和渠道', () => {
   test('右键菜单的两项各对应一种请求', () => {
@@ -100,6 +114,34 @@ describe('daemon 对话渠道', () => {
   });
 });
 
+/** 旧摘要盖住了晚到的记录的会话，加一个只数调用的编排器。 */
+async function staleRig(model: MockLanguageModelV4 | null) {
+  const calls: string[] = [];
+  const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
+  const context = await lossyContext();
+  const logger = memoryLogger();
+  const app: DaemonApp = {
+    config: parseConfig({ stage: 'console' }),
+    paths: resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') }),
+    logger,
+    host: fakeHost(calls),
+    model,
+    context,
+    director: fakeDirector(calls),
+    orchestrator: {
+      whisper: async () => null,
+      // 开拍子的时候模型已经被调过几次
+      start: () => void calls.push(`start:${model?.doGenerateCalls.length ?? 0}`),
+    },
+    openChannel: async () => {
+      throw new Error('不该开渠道');
+    },
+    startHotkey: () => {},
+    close: async () => {},
+  };
+  return { app, calls, logger, context };
+}
+
 describe('daemon 常驻', () => {
   test('起按键助手（组装根决定起不起）、编排器开始打拍子、菜单交给收件箱、气泡里的话念出来；signal 中止就关掉返回', async () => {
     const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
@@ -140,6 +182,7 @@ describe('daemon 常驻', () => {
         ],
       }),
       model: null,
+      context,
       director,
       orchestrator,
       openChannel: async () => {
@@ -177,6 +220,7 @@ describe('daemon 常驻', () => {
       logger: memoryLogger(),
       host: fakeHost(calls),
       model: null,
+      context: createContext({ store: createMemoryStore(), session: sessionFor('main') }),
       director: fakeDirector(calls),
       orchestrator: {
         whisper: async () => {
@@ -194,5 +238,41 @@ describe('daemon 常驻', () => {
     await runDaemon(app, { once: true });
     await runDaemon(app, { bake: true });
     assert.deepEqual(calls, ['whisper', 'close', 'bake', 'close']);
+  });
+
+  test('常驻启动：开拍子之前把旧摘要盖住的记录重新压缩一次', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('新摘要：含晚到的回答') });
+    const { app, calls, logger, context } = await staleRig(model);
+    const controller = new AbortController();
+    const running = runDaemon(app, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    await running;
+    assert.ok(calls.includes('start:1'), '压缩在 start 之前做完');
+    assert.deepEqual(logger.lines, ['旧摘要盖住了 1 条记录，已重新压缩']);
+    assert.deepEqual(await findLossySummaries(context.store), []);
+  });
+
+  test('常驻启动没有模型：记一条警告，照常开拍子', async () => {
+    const { app, calls, logger, context } = await staleRig(null);
+    const controller = new AbortController();
+    const running = runDaemon(app, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    await running;
+    assert.ok(calls.includes('start:0'));
+    assert.equal(logger.lines.length, 1);
+    assert.match(logger.lines[0]!, /没配模型/);
+    assert.equal((await findLossySummaries(context.store)).length, 1);
+  });
+
+  test('--once 和 --bake 不检查旧摘要', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('不该用到') });
+    const { app, logger, context } = await staleRig(model);
+    await runDaemon(app, { once: true });
+    await runDaemon(app, { bake: true });
+    assert.equal(model.doGenerateCalls.length, 0);
+    assert.deepEqual(logger.lines, []);
+    assert.equal((await findLossySummaries(context.store)).length, 1);
   });
 });

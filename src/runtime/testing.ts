@@ -2,7 +2,11 @@
  * 导演和常驻循环测试用的替身。都在内存里，不联网、不开子进程。
  */
 import { writeFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
+import { userEntry, type Context } from '@modelctx-ai/ctx';
+
+import { createYoyoContext, recordUser } from '../brain/context.ts';
 import type {
   ActivityRecord,
   Line,
@@ -238,4 +242,22 @@ export function fakeDirector(calls: string[], overrides: Partial<Director> = {})
     },
     ...overrides,
   };
+}
+
+/**
+ * 0.2 留下的会话：晚到的回答（at 500）先于锚点（at 300）写进来，摘要的 covers 是 { at: 300, seq: 3 }。
+ * 旧规则按 at 比，晚到的回答摘要之后还看得见；0.3 按 seq 比，它被盖住了。新库里写好，再把摘要那一行改回 v0 的样子。
+ */
+export async function lossyContext(): Promise<Context> {
+  const db = new DatabaseSync(':memory:');
+  const context = await createYoyoContext({ db, petId: 'main' });
+  await recordUser(context, '很早的问题', 100);
+  await context.append(userEntry('晚到的回答', { at: 500 }));
+  await recordUser(context, '问题二', 300);
+  await context.append({ type: 'summary', text: '旧摘要：问题一和二', covers: 3, at: 700 });
+  await recordUser(context, '之后的问题', 800);
+  db.exec(
+    `UPDATE ctx_entries SET v = 0, body = json_set(body, '$.covers', json('{"at":300,"seq":3}')) WHERE type = 'summary'`,
+  );
+  return context;
 }

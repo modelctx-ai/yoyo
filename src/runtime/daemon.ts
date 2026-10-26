@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
-import type { LanguageModel } from '@modelctx-ai/ctx';
+import type { Context, LanguageModel } from '@modelctx-ai/ctx';
 
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
@@ -9,6 +9,7 @@ import type { Channel } from '../brain/channel.ts';
 import type { InboxRequest } from '../kernel/types.ts';
 import type { Logger, PetHost } from '../ports/index.ts';
 import type { Director } from './director.ts';
+import { recompactLossySummaries } from './compact.ts';
 import { enqueue } from './inbox.ts';
 import type { YoyoOrchestrator } from './orchestrator.ts';
 
@@ -22,6 +23,8 @@ export interface DaemonApp {
   readonly logger: Logger;
   readonly host: PetHost;
   readonly model: LanguageModel | null;
+  /** 启动时检查旧摘要用。 */
+  readonly context: Pick<Context, 'session' | 'store' | 'builder'>;
   readonly director: Pick<Director, 'bake' | 'claim' | 'playForeign'>;
   readonly orchestrator: Pick<YoyoOrchestrator, 'whisper' | 'start'>;
   /** 开本机对话渠道，关闭应用时一起关。 */
@@ -173,6 +176,10 @@ export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Pr
   process.once('SIGTERM', onSignal);
   if (options.signal?.aborted) await stop(false);
   options.signal?.addEventListener('abort', () => void stop(false), { once: true });
+  if (signal.aborted) return finished;
+
+  // 升级前留下的旧摘要可能盖住了后写进来的记录：在渠道、拍子开始读写上下文之前修一次（命令行不跑）
+  await recompactLossySummaries(app.context, { model: app.model, logger: app.logger, signal });
   if (signal.aborted) return finished;
 
   // 桌宠还没开时渠道会一直等着再接，不挡后面的事

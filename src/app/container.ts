@@ -186,6 +186,9 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
 
   // MCP 工具绑定在 hub 这个执行环境上，harness 分发工具时要用
   const harness = use('harness', () => createYoyoHarness(context, { logger, ...(mcp ? { executors: [mcp] } : {}) }));
+  // 碎碎念和回复都是 `record: false`：运行不写 `ctx.run.*`，不占会话，崩溃也没有断掉的运行要恢复，所以这里不配 `owner`，也不 `recover`。
+  // 以后打开 `record` 时要做两件事：createYoyoOrchestrator 里的 createOrchestrator 配 `owner: 'yoyo'`（常驻进程和命令行共用一个库），
+  // 并在 `start()` 和第一次 `submit` 之前 `await orchestrator.recover()`，否则崩溃留下的未结束运行会让会话一直 `session_busy`。
   const orchestrator = use('orchestrator', () =>
     createYoyoOrchestrator({
       config,
