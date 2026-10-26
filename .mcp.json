@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "todos": {
+      "type": "http",
+      "url": "https://todos.dev/api/mcp"
+    }
+  }
+}
