@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-import type { Context, LanguageModel, ToolRegistry } from '@modelctx-ai/ctx';
+import type { Context, Harness, LanguageModel, ToolRegistry } from '@modelctx-ai/ctx';
 import type { McpHub } from '@modelctx-ai/ctx-mcp';
 
 import { createConsoleHost } from '../adapters/console/host.ts';
@@ -16,6 +16,7 @@ import { createSilentPlayer, silentSfx, silentSynthesizer } from '../adapters/vo
 import { createWhisperTranscriber } from '../adapters/voice/whisper-cpp.ts';
 import { startChannel, type Channel } from '../brain/channel.ts';
 import { createYoyoContext } from '../brain/context.ts';
+import { createYoyoHarness } from '../brain/harness.ts';
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { clipboardSource, taskSource } from '../brain/sources.ts';
@@ -34,6 +35,7 @@ import type {
   WebSearch,
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
+import { createYoyoOrchestrator, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { speechReady, type AnysearchConfig, type Config } from './config.ts';
@@ -58,7 +60,12 @@ export interface AppServices {
   /** 只有 `llm.tools` 打开时才有。 */
   readonly tools: ToolRegistry | undefined;
   readonly context: Context;
+  /** 跑一轮：组装上下文、调模型、分发工具。 */
+  readonly harness: Harness;
+  /** 舞台上的动作：说、听、提醒、预合成、压缩。 */
   readonly director: Director;
+  /** 什么时候、在哪个会话上跑一轮：拍子、让路、收件箱、到点，模型经它交给 harness。 */
+  readonly orchestrator: YoyoOrchestrator;
 }
 
 export interface App extends AppServices {
@@ -68,7 +75,7 @@ export interface App extends AppServices {
   openChannel(): Promise<Channel>;
   /** 起按键助手：只有 macOS 且 `hotkey.enabled` 才起，别处什么也不做。 */
   startHotkey(): void;
-  /** 关掉 MCP 连接和对话渠道。数据库留给进程退出时关。 */
+  /** 关掉编排器（等正在跑的一轮）、MCP 连接和对话渠道。数据库留给进程退出时关。 */
   close(): Promise<void>;
 }
 
@@ -177,6 +184,23 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     }),
   );
 
+  // MCP 工具绑定在 hub 这个执行环境上，harness 分发工具时要用
+  const harness = use('harness', () => createYoyoHarness(context, { logger, ...(mcp ? { executors: [mcp] } : {}) }));
+  const orchestrator = use('orchestrator', () =>
+    createYoyoOrchestrator({
+      config,
+      paths,
+      logger,
+      repos,
+      clipboard,
+      search,
+      context,
+      harness,
+      director,
+      model,
+    }),
+  );
+
   let channel: Promise<Channel> | null = null;
   let closed = false;
 
@@ -198,7 +222,9 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     model,
     tools,
     context,
+    harness,
     director,
+    orchestrator,
     openChannel() {
       if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
       if (!channel) {
@@ -218,6 +244,11 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     async close() {
       if (closed) return;
       closed = true;
+      try {
+        await orchestrator.close();
+      } catch (error) {
+        logger.warn(`编排器没关好：${errorText(error)}`);
+      }
       const opened = channel;
       channel = null;
       try {

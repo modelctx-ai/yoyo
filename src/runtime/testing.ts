@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs';
 
 import type {
   ActivityRecord,
+  Line,
   ClipEntry,
   Contact,
   MemePack,
@@ -24,6 +25,7 @@ import type {
   UrlOpener,
   WebSearch,
 } from '../ports/index.ts';
+import type { Director } from './director.ts';
 
 export interface MemoryLogger extends Logger {
   readonly lines: string[];
@@ -204,4 +206,36 @@ export function fakeSearch(calls: CallLog, result: string | Error): WebSearch {
 
 export function fakeOpener(calls: CallLog): UrlOpener {
   return { open: (url) => void calls.push(`open:${url}`) };
+}
+
+export const LINE: Line = { text: '我在呢', tone: 'lively', cue: '[happy]', action: '照镜子', kind: 'whisper' };
+
+/** 只记调用的导演：`choose` 给 LINE，`speak` 记 `speak:<文字>`，`hear` 记 `hear` 并当作听到「我在」。 */
+export function fakeDirector(calls: string[], overrides: Partial<Director> = {}): Director {
+  return {
+    choose: async () => LINE,
+    dress: (line) => line,
+    speak: async (line) => void calls.push(`speak:${line.text}`),
+    hear: async () => {
+      calls.push('hear');
+      return '我在';
+    },
+    remind: async (item) => void calls.push(`remind:${item.title}`),
+    bake: async () => void calls.push('bake'),
+    claim: (text) => void calls.push(`claim:${text}`),
+    playForeign: async (text) => {
+      calls.push(`foreign:${text}`);
+      return true;
+    },
+    refreshMemes: async () => {
+      calls.push('memes');
+      return null;
+    },
+    syncPetChat: async () => void calls.push('sync'),
+    compactIfNeeded: async () => {
+      calls.push('compact');
+      return false;
+    },
+    ...overrides,
+  };
 }

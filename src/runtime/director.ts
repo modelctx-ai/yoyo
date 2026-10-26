@@ -7,13 +7,11 @@ import type { Context, LanguageModel } from '@modelctx-ai/ctx';
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
-import { recordLine, recordUser, storePetChat } from '../brain/context.ts';
-import { generateReply, generateWhisper } from '../brain/compose.ts';
+import { recordLine, storePetChat } from '../brain/context.ts';
 import { reminderLine, saveFired } from '../features/alarms/schedule.ts';
 import { confirmSend } from '../features/listen/confirm.ts';
-import { listenSeconds, wantsReply } from '../features/listen/listen.ts';
+import { listenSeconds } from '../features/listen/listen.ts';
 import { decorateMeme, refreshMemes } from '../features/memes/memes.ts';
-import { shouldSearch } from '../features/search/question.ts';
 import {
   buildOffWorkWeather,
   offWorkWeatherDue,
@@ -24,7 +22,7 @@ import { LINES, REPEAT_WINDOW_MS, pickLine } from '../features/whisper/catalog.t
 import { activityLabel, bubbleMs } from '../kernel/line.ts';
 import { localDateKey } from '../kernel/time.ts';
 import { TONE_CUES, toneForHour } from '../kernel/tone.ts';
-import type { Line, MemePack, ScheduleItem, Tone } from '../kernel/types.ts';
+import type { Line, MemePack, ScheduleItem } from '../kernel/types.ts';
 import type {
   AudioPlayer,
   Logger,
@@ -62,18 +60,21 @@ export interface DirectorDeps {
   readonly fetch?: typeof fetch;
 }
 
-export interface PerformResult {
-  readonly line: Line;
-  /** 用户这次有没有开口（取消发送也算）。 */
-  readonly talked: boolean;
-}
-
+/**
+ * 导演：舞台上的动作。说（合成、占锁、投喂、播放、记下）、听、提醒、预合成、压缩。
+ * 要不要、什么时候跑一轮模型由编排器决定，导演不调模型生成。
+ */
 export interface Director {
-  perform(now?: Date): Promise<PerformResult | null>;
-  listenNow(now?: Date): Promise<{ readonly talked: boolean }>;
+  /** 工作日傍晚先报一次天气，否则抽一句 3 小时内没说过的预制台词；都说过了返回 null。 */
+  choose(now?: Date): Promise<Line | null>;
+  /** 碎碎念大约四成配一张表情包；天气和提醒不配。 */
+  dress(line: Line): Line;
+  /** 先在锁外合成，再占锁投喂、点播、配音、播放；说出口以后记进窗口和上下文。 */
+  speak(line: Line, now?: Date): Promise<void>;
+  /** 侧耳听一句，交给主人确认。null：没听到；''：取消了。 */
+  hear(): Promise<string | null>;
   remind(item: ScheduleItem, now?: Date): Promise<void>;
   bake(): Promise<void>;
-  choose(now?: Date): Promise<Line | null>;
   claim(text: string): void;
   playForeign(text: string): Promise<boolean>;
   refreshMemes(now?: Date, options?: { readonly force?: boolean }): Promise<MemePack | null>;
@@ -98,7 +99,6 @@ export function createDirector(deps: DirectorDeps): Director {
   const clock = deps.now ?? (() => new Date());
   const rand = deps.rand ?? Math.random;
   const confirm = deps.confirm ?? ((text: string) => confirmSend(text, { open: (url) => deps.opener.open(url) }));
-  const secrets = [config.llm.apiKey].filter(Boolean);
   const owned = new Set<string>();
 
   function own(text: string): void {
@@ -111,7 +111,7 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   /** 先合成（锁外），再占住舞台投喂、点播；占着舞台时记行为、配音、播语音、记进窗口和上下文。 */
-  async function speak(line: Line, now: Date): Promise<void> {
+  async function speak(line: Line, now = clock()): Promise<void> {
     own(line.text);
     const file = await synthesizer.synthesize(line.text, line.cue);
     const stage = {
@@ -146,11 +146,7 @@ export function createDirector(deps: DirectorDeps): Director {
     }
     const tone = toneForHour(now.getHours());
     const said = repos.spoken.recent(now.getTime(), REPEAT_WINDOW_MS);
-    const line = pickLine(LINES, tone, said, now.getTime(), rand);
-    if (line) return line;
-    if (!model) return null;
-    logger.info('预制台词用完了，按最近的对话和任务写一句');
-    return generateWhisper(context, { tone, model, secrets });
+    return pickLine(LINES, tone, said, now.getTime(), rand) ?? null;
   }
 
   async function capture(): Promise<string> {
@@ -171,28 +167,6 @@ export function createDirector(deps: DirectorDeps): Director {
     }
   }
 
-  async function answer(heard: string, tone: Tone, now: Date, llm: LanguageModel): Promise<void> {
-    let searchText = '';
-    // 打开工具时由模型自己决定搜不搜，不再先按问句搜一遍。
-    if (search && !config.llm.tools && shouldSearch(heard)) {
-      try {
-        searchText = await search.search(heard);
-        if (searchText) repos.activity.record({ type: 'search', query: heard });
-      } catch (error) {
-        logger.warn(`搜索没做成：${errorText(error)}`);
-      }
-    }
-    await recordUser(context, heard, now.getTime());
-    const reply = await generateReply(context, {
-      tone,
-      model: llm,
-      secrets,
-      tools: config.llm.tools,
-      ...(searchText ? { searchText } : {}),
-    });
-    await speak(reply, now);
-  }
-
   /** 听写结果先确认。返回 null 表示没听到；空字符串表示取消了。 */
   async function accept(heard: string): Promise<string | null> {
     if (heard.length < 2) return null;
@@ -207,37 +181,8 @@ export function createDirector(deps: DirectorDeps): Director {
     return accepted;
   }
 
-  async function listenNow(now = clock()): Promise<{ readonly talked: boolean }> {
-    repos.activity.record({ type: 'listen-request' });
-    const accepted = await accept(await capture());
-    if (accepted === null) {
-      logger.info('没听到');
-      return { talked: false };
-    }
-    if (accepted && model) await answer(accepted, toneForHour(now.getHours()), now, model);
-    return { talked: true };
-  }
-
-  async function perform(now = clock()): Promise<PerformResult | null> {
-    const chosen = await choose(now);
-    if (!chosen) {
-      logger.info('这 3 小时里的碎碎念都说过了，这次先停');
-      repos.activity.record({ type: 'whisper-skip' });
-      return null;
-    }
-    const line = decorateMeme(chosen, repos.memes.read(), rand);
-    await speak(line, now);
-    if (!model) return { line, talked: false };
-    try {
-      if (!wantsReply(chosen, config.listen)) return { line, talked: false };
-      const accepted = await accept(await capture());
-      if (accepted === null) return { line, talked: false };
-      if (accepted) await answer(accepted, chosen.tone, now, model);
-      return { line, talked: true };
-    } catch (error) {
-      logger.warn(`没听成：${errorText(error)}`);
-    }
-    return { line, talked: false };
+  async function hear(): Promise<string | null> {
+    return accept(await capture());
   }
 
   async function remind(item: ScheduleItem, now = clock()): Promise<void> {
@@ -296,11 +241,12 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   return {
-    perform,
-    listenNow,
+    choose,
+    dress: (line) => decorateMeme(line, repos.memes.read(), rand),
+    speak,
+    hear,
     remind,
     bake,
-    choose,
     claim,
     playForeign,
     refreshMemes: (now = clock(), options = {}) => refreshMemes({ repos, search }, now, options),

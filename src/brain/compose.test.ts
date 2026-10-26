@@ -4,9 +4,11 @@ import { describe, test } from 'vite-plus/test';
 import {
   createContext,
   createMemoryStore,
+  createOrchestrator,
   createToolRegistry,
   defineSource,
   tool,
+  type Context,
   type ContextSource,
   type LanguageModel,
   type ToolRegistry,
@@ -15,9 +17,20 @@ import { APICallError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 
-import type { Line } from '../kernel/types.ts';
-import { generateReply, generateWhisper, parseWhisper } from './compose.ts';
+import type { Line, Tone } from '../kernel/types.ts';
+import { REPLY_AGENT, WHISPER_AGENT } from './agents.ts';
+import {
+  generateReply,
+  generateWhisper,
+  parseWhisper,
+  replyRequest,
+  whisperRequest,
+  type ComposeOptions,
+  type ReplyOptions,
+  type Runs,
+} from './compose.ts';
 import { recordLine, recordUser, yoyoProjection } from './context.ts';
+import { createYoyoHarness } from './harness.ts';
 import {
   COMPACT_INSTRUCTIONS,
   TONE_HINT,
@@ -56,20 +69,36 @@ const FACTS: readonly ContextSource[] = [
   defineSource('clipboard', () => '粘贴板：npm test'),
 ];
 
+/** 每个上下文配一个编排器（ctx 的进程内队列 + yoyo 的 harness）和一个缺省模型。 */
+const rigs = new WeakMap<Context, { readonly runs: Runs; readonly model: LanguageModel }>();
+
 /** 碎碎念、用户这句、回复各一条，事实是当前任务和粘贴板。 */
-async function seeded(options: { model?: LanguageModel; tools?: ToolRegistry; sources?: readonly ContextSource[] }) {
+async function seeded(options: { model: LanguageModel; tools?: ToolRegistry; sources?: readonly ContextSource[] }) {
   const context = createContext({
     store: createMemoryStore(),
     session: 'pet:main',
     projection: yoyoProjection,
     sources: options.sources ?? FACTS,
-    ...(options.model ? { model: options.model } : {}),
     ...(options.tools ? { tools: options.tools } : {}),
   });
+  rigs.set(context, { runs: createOrchestrator({ harness: createYoyoHarness(context) }), model: options.model });
   await recordLine(context, spoken('whisper', '先把这一小步做完'), 1);
   await recordUser(context, '看一下测试', 2);
   await recordLine(context, spoken('reply', '好，我盯着'), 3);
   return context;
+}
+
+type Call<T> = Partial<T> & { readonly tone: Tone };
+
+/** 经编排器跑碎碎念这一轮；模型缺省用 seeded 时给的那个。 */
+function whisper(context: Context, options: Call<ComposeOptions>): Promise<Line> {
+  const rig = rigs.get(context)!;
+  return generateWhisper(context, rig.runs, { model: rig.model, ...options });
+}
+
+function reply(context: Context, options: Call<ReplyOptions>): Promise<Line> {
+  const rig = rigs.get(context)!;
+  return generateReply(context, rig.runs, { model: rig.model, ...options });
 }
 
 function alarmTools(calls: string[]): ToolRegistry {
@@ -155,7 +184,7 @@ describe('brain/compose generateWhisper', () => {
   test('指令是人设加语气，历史是上下文视图，最后一条是事实加请求；不给工具，不写日志', async () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('「[happy] 先把测试跑一遍再说」') });
     const context = await seeded({ model, tools: alarmTools([]) });
-    const line = await generateWhisper(context, { tone: 'brisk' });
+    const line = await whisper(context, { tone: 'brisk' });
     assert.deepEqual(line, {
       text: '先把测试跑一遍再说',
       tone: 'brisk',
@@ -181,26 +210,26 @@ describe('brain/compose generateWhisper', () => {
   test('没有事实时最后一条只有请求', async () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('这会儿好安静呀，我陪着你') });
     const context = await seeded({ model, sources: [] });
-    await generateWhisper(context, { tone: 'calm' });
+    await whisper(context, { tone: 'calm' });
     assert.deepEqual(model.doGenerateCalls[0]!.prompt.at(-1)?.content, [{ type: 'text', text: '请再说一句碎碎念。' }]);
   });
 
   test('没有可用的句子、或者和历史里的句子重复，就报错', async () => {
     const empty = await seeded({ model: new MockLanguageModelV4({ doGenerate: textResult('嗯') }) });
-    await assert.rejects(generateWhisper(empty, { tone: 'brisk' }), { message: '模型没有返回可用的碎碎念' });
+    await assert.rejects(whisper(empty, { tone: 'brisk' }), { message: '模型没有返回可用的碎碎念' });
     const repeated = await seeded({
       model: new MockLanguageModelV4({ doGenerate: textResult('[happy] 先把这一小步做完') }),
     });
-    await assert.rejects(generateWhisper(repeated, { tone: 'brisk' }), { message: '模型重复了最近说过的句子' });
+    await assert.rejects(whisper(repeated, { tone: 'brisk' }), { message: '模型重复了最近说过的句子' });
     const echoed = await seeded({ model: new MockLanguageModelV4({ doGenerate: textResult('好，我盯着') }) });
-    await assert.rejects(generateWhisper(echoed, { tone: 'brisk' }), { message: '模型重复了最近说过的句子' });
+    await assert.rejects(whisper(echoed, { tone: 'brisk' }), { message: '模型重复了最近说过的句子' });
   });
 
-  test('调用方给的模型优先于上下文的缺省模型', async () => {
+  test('这一轮用 agent 里给的模型', async () => {
     const fallback = new MockLanguageModelV4({ doGenerate: textResult('不该用到我这个模型') });
     const chosen = new MockLanguageModelV4({ doGenerate: textResult('我偷偷伸了个懒腰') });
     const context = await seeded({ model: fallback });
-    assert.equal((await generateWhisper(context, { tone: 'lively', model: chosen })).text, '我偷偷伸了个懒腰');
+    assert.equal((await whisper(context, { tone: 'lively', model: chosen })).text, '我偷偷伸了个懒腰');
     assert.equal(fallback.doGenerateCalls.length, 0);
     assert.equal(chosen.doGenerateCalls.length, 1);
   });
@@ -211,7 +240,7 @@ describe('brain/compose generateReply', () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('台北今天晴，28 度，出门记得防晒。') });
     const context = await seeded({ model });
     await recordUser(context, '台北今天天气怎么样', 4);
-    const line = await generateReply(context, { tone: 'warm', searchText: ' 台北晴，28 度 ' });
+    const line = await reply(context, { tone: 'warm', searchText: ' 台北晴，28 度 ' });
     assert.deepEqual(line, {
       text: '台北今天晴，28 度，出门记得防晒。',
       tone: 'warm',
@@ -235,7 +264,7 @@ describe('brain/compose generateReply', () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('在呢，你说。') });
     const context = await seeded({ model });
     await recordUser(context, '在吗', 4);
-    await generateReply(context, { tone: 'warm', searchText: '' });
+    await reply(context, { tone: 'warm', searchText: '' });
     assert.deepEqual(model.doGenerateCalls[0]!.prompt.at(-1)?.content, [{ type: 'text', text: '在吗' }]);
   });
 
@@ -246,7 +275,7 @@ describe('brain/compose generateReply', () => {
     });
     const context = await seeded({ model, tools: alarmTools(calls) });
     await recordUser(context, '我明天有什么安排', 4);
-    const line = await generateReply(context, { tone: 'warm', tools: true });
+    const line = await reply(context, { tone: 'warm', tools: true });
     assert.equal(line.text, '明早八点要开周会哦');
     assert.deepEqual(calls, ['list_alarms']);
     assert.equal(model.doGenerateCalls.length, 2);
@@ -258,7 +287,7 @@ describe('brain/compose generateReply', () => {
     assert.equal((await context.entries()).length, 4, '工具调用也不写日志');
 
     const plain = new MockLanguageModelV4({ doGenerate: textResult('明天好像没有安排') });
-    await generateReply(context, { tone: 'warm', model: plain });
+    await reply(context, { tone: 'warm', model: plain });
     assert.equal(plain.doGenerateCalls[0]!.tools, undefined);
   });
 
@@ -268,13 +297,13 @@ describe('brain/compose generateReply', () => {
       doGenerate: async () => toolCallResult(`c${(step += 1)}`, 'list_alarms', {}),
     });
     const context = await seeded({ model, tools: alarmTools([]) });
-    await assert.rejects(generateReply(context, { tone: 'warm', tools: true }), { message: '模型没有返回可用的回复' });
+    await assert.rejects(reply(context, { tone: 'warm', tools: true }), { message: '模型没有返回可用的回复' });
     assert.equal(model.doGenerateCalls.length, 4);
   });
 
   test('没有可用的回复就报错', async () => {
     const context = await seeded({ model: new MockLanguageModelV4({ doGenerate: textResult('   ') }) });
-    await assert.rejects(generateReply(context, { tone: 'calm' }), { message: '模型没有返回可用的回复' });
+    await assert.rejects(reply(context, { tone: 'calm' }), { message: '模型没有返回可用的回复' });
   });
 });
 
@@ -293,13 +322,11 @@ describe('brain/compose 模型报错', () => {
       },
     });
     const context = await seeded({ model });
-    const error = await generateWhisper(context, { tone: 'brisk', secrets: ['sk-secret-123'] }).catch(
-      (e: unknown) => e,
-    );
+    const error = await whisper(context, { tone: 'brisk', secrets: ['sk-secret-123'] }).catch((e: unknown) => e);
     assert.ok(error instanceof Error);
     assert.equal(error.message, '模型接口返回 401：{"error":"bad key ***"}');
     assert.equal(error.cause, failure);
-    await assert.rejects(generateReply(context, { tone: 'brisk', secrets: ['sk-secret-123'] }), {
+    await assert.rejects(reply(context, { tone: 'brisk', secrets: ['sk-secret-123'] }), {
       message: '模型接口返回 401：{"error":"bad key ***"}',
     });
   });
@@ -310,7 +337,7 @@ describe('brain/compose 模型报错', () => {
         throw new APICallError({ message: 'Forbidden', url: 'u', requestBodyValues: {}, statusCode: 403 });
       },
     });
-    await assert.rejects(generateWhisper(await seeded({ model: bare }), { tone: 'calm' }), {
+    await assert.rejects(whisper(await seeded({ model: bare }), { tone: 'calm' }), {
       message: '模型接口返回 403',
     });
     const broken = new MockLanguageModelV4({
@@ -318,8 +345,47 @@ describe('brain/compose 模型报错', () => {
         throw new Error('socket hang up');
       },
     });
-    await assert.rejects(generateReply(await seeded({ model: broken }), { tone: 'calm' }), {
+    await assert.rejects(reply(await seeded({ model: broken }), { tone: 'calm' }), {
       message: '模型没回：socket hang up',
     });
+  });
+
+  test('编排器关了：照样报一句模型没回', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('不该用到') });
+    const context = await seeded({ model });
+    const runs = createOrchestrator({ harness: createYoyoHarness(context) });
+    await runs.close();
+    await assert.rejects(generateWhisper(context, runs, { tone: 'calm', model }), {
+      message: '模型没回：Orchestrator is closed.',
+    });
+    assert.equal(model.doGenerateCalls.length, 0);
+  });
+});
+
+describe('brain/compose 一轮的请求', () => {
+  test('碎碎念和回复各是一个 agent 配置：除了模型都是 JSON，不写日志，跑在上下文的会话上', async () => {
+    const model = new MockLanguageModelV4({ doGenerate: textResult('不该用到') });
+    const context = await seeded({ model });
+    const whisperRun = await whisperRequest(context, { tone: 'calm', model });
+    assert.equal(whisperRun.session, 'pet:main');
+    assert.equal(whisperRun.record, false);
+    assert.equal(whisperRun.agent.model, model);
+    const { model: _whisperModel, ...whisperSpec } = whisperRun.agent;
+    assert.deepEqual(JSON.parse(JSON.stringify(whisperSpec)), {
+      ...WHISPER_AGENT,
+      instructions: whisperInstructions('calm'),
+    });
+    assert.equal(whisperRun.prompt, '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。');
+
+    const replyRun = await replyRequest(context, { tone: 'warm', model, tools: true, searchText: '晴' });
+    const { model: _replyModel, ...replySpec } = replyRun.agent;
+    assert.deepEqual(JSON.parse(JSON.stringify(replySpec)), {
+      ...REPLY_AGENT,
+      instructions: `${replyInstructions('warm')}\n\n当前任务：修天气地点\n粘贴板：npm test`,
+      tools: true,
+      maxSteps: 4,
+    });
+    assert.equal(replyRun.prompt, '搜索结果：\n晴');
+    assert.equal(replyRun.record, false);
   });
 });
