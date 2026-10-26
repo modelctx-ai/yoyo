@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, type LocalToolRegistry, type ToolOutput } from '@modelctx-ai/ctx';
+import {
+  createContext,
+  createMemoryStore,
+  createOrchestrator,
+  type LocalToolRegistry,
+  type ToolOutput,
+} from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import type { ActivityRecord, ScheduleItem } from '../kernel/types.ts';
 import type { Repos, WebSearch } from '../ports/index.ts';
 import { generateReply } from './compose.ts';
 import { recordUser, yoyoProjection } from './context.ts';
+import { createYoyoHarness } from './harness.ts';
 import { createYoyoTools } from './tools.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
@@ -232,11 +239,11 @@ describe('brain/tools', () => {
       store: createMemoryStore(),
       session: 'pet:main',
       projection: yoyoProjection,
-      model,
       tools: createYoyoTools({ repos, search: null, now: () => NOW }),
     });
     await recordUser(context, '明天早上八点提醒我开周会', 1);
-    const line = await generateReply(context, { tone: 'warm', tools: true });
+    const runs = createOrchestrator({ harness: createYoyoHarness(context) });
+    const line = await generateReply(context, runs, { tone: 'warm', model, tools: true });
     assert.equal(line.text, '好，明早八点叫你开周会。');
     assert.deepEqual(
       repos.schedule.list().map((item) => `${item.date} ${item.time} ${item.title}`),

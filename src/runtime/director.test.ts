@@ -19,11 +19,13 @@ import { silentSynthesizer } from '../adapters/voice/silent.ts';
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
+import { createYoyoHarness } from '../brain/harness.ts';
 import { LINES, REPEAT_WINDOW_MS } from '../features/whisper/catalog.ts';
 import { TONE_CUES } from '../kernel/tone.ts';
 import type { PetChatMessage, ScheduleItem } from '../kernel/types.ts';
 import type { Repos } from '../ports/index.ts';
 import { createDirector, type Director } from './director.ts';
+import { createYoyoOrchestrator, type YoyoOrchestrator } from './orchestrator.ts';
 import {
   fakeHost,
   fakeOpener,
@@ -84,6 +86,8 @@ interface Rig {
   readonly context: Context;
   readonly recorder: FakeRecorder;
   readonly director: Director;
+  /** 碎碎念、听一句这两段经它：模型的每一轮由它交给 harness。 */
+  readonly orchestrator: YoyoOrchestrator;
   readonly confirmed: string[];
   readonly now: Date;
 }
@@ -106,9 +110,12 @@ function rig(options: RigOptions = {}): Rig {
     ...options.config,
   });
   const recorder = fakeRecorder(calls, options.recordError);
+  const paths = resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') });
+  const search = options.search === undefined ? null : fakeSearch(calls, options.search);
+  const model = options.model ?? null;
   const director = createDirector({
     config,
-    paths: resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') }),
+    paths,
     logger,
     host: fakeHost(calls, options.host),
     synthesizer: options.silent ? silentSynthesizer : fakeSynthesizer(calls),
@@ -116,11 +123,11 @@ function rig(options: RigOptions = {}): Rig {
     sfx: fakeSfx(calls),
     recorder,
     transcriber: fakeTranscriber(calls, () => options.heard ?? ''),
-    search: options.search === undefined ? null : fakeSearch(calls, options.search),
+    search,
     opener: fakeOpener(calls),
     repos,
     context,
-    model: options.model ?? null,
+    model,
     now: () => now,
     rand: options.rand ?? (() => 0.99),
     confirm:
@@ -131,7 +138,20 @@ function rig(options: RigOptions = {}): Rig {
       }),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  return { calls, logger, repos, context, recorder, director, confirmed, now };
+  const orchestrator = createYoyoOrchestrator({
+    config,
+    paths,
+    logger,
+    repos,
+    clipboard: { read: () => '' },
+    search,
+    context,
+    harness: createYoyoHarness(context),
+    director,
+    model,
+    clock: () => now.getTime(),
+  });
+  return { calls, logger, repos, context, recorder, director, orchestrator, confirmed, now };
 }
 
 function types(repos: Repos): string[] {
@@ -176,10 +196,10 @@ function noLines(repos: Repos, at: number): void {
   for (const line of LINES) repos.spoken.remember(line.text, at - 60_000, REPEAT_WINDOW_MS);
 }
 
-describe('director', () => {
+describe('director：说、听、提醒（碎碎念和听一句经编排器）', () => {
   test('预制台词：先在锁外合成，再占锁、投喂、点播、配音、播放、放锁；行为、窗口和上下文都记下', async () => {
-    const { calls, repos, context, director, logger, now } = rig();
-    const result = await director.perform();
+    const { calls, repos, context, orchestrator, logger, now } = rig();
+    const result = await orchestrator.whisper();
     assert.ok(result);
     const { line } = result;
     assert.equal(result.talked, false, '没配模型就不听');
@@ -205,8 +225,8 @@ describe('director', () => {
   });
 
   test('speech.autoplay 关掉时只出字，不播语音', async () => {
-    const { calls, director } = rig({ config: { speech: { apiKey: 'k', referenceId: 'r', autoplay: false } } });
-    await director.perform();
+    const { calls, orchestrator } = rig({ config: { speech: { apiKey: 'k', referenceId: 'r', autoplay: false } } });
+    await orchestrator.whisper();
     assert.equal(
       calls.some((call) => call.startsWith('play:')),
       false,
@@ -215,9 +235,9 @@ describe('director', () => {
   });
 
   test('碎碎念有时带上一张表情包', async () => {
-    const { calls, repos, director } = rig({ rand: () => 0 });
+    const { calls, repos, orchestrator } = rig({ rand: () => 0 });
     repos.memes.write({ fetchedAt: SATURDAY.toISOString(), query: 'q', items: [{ url: 'https://example.com/a.png' }] });
-    const result = await director.perform();
+    const result = await orchestrator.whisper();
     assert.equal(result?.line.imageUrl, 'https://example.com/a.png');
     assert.ok(calls.includes(`broadcast:${result?.line.text} https://example.com/a.png`));
     assert.equal(repos.activity.list(100)[0]?.['meme'], 'https://example.com/a.png');
@@ -230,9 +250,9 @@ describe('director', () => {
       return jsonResponse(forecast());
     }) as typeof fetch;
     const model = mockModel('不该用到');
-    const { repos, context, director, calls, now } = rig({ now: FRIDAY_EVENING, fetch: fetcher, model });
+    const { repos, context, director, orchestrator, calls, now } = rig({ now: FRIDAY_EVENING, fetch: fetcher, model });
     repos.kv.set('place', TAIPEI);
-    const result = await director.perform();
+    const result = await orchestrator.whisper();
     assert.equal(result?.line.kind, 'weather');
     assert.match(result?.line.text ?? '', /^快下班啦。台北/);
     assert.equal(result?.talked, false);
@@ -255,9 +275,9 @@ describe('director', () => {
     const fetcher = (async () => {
       throw new Error('网络断了');
     }) as typeof fetch;
-    const { repos, director, logger } = rig({ now: FRIDAY_EVENING, fetch: fetcher });
+    const { repos, orchestrator, logger } = rig({ now: FRIDAY_EVENING, fetch: fetcher });
     repos.kv.set('place', TAIPEI);
-    const result = await director.perform();
+    const result = await orchestrator.whisper();
     assert.equal(result?.line.kind, 'whisper');
     assert.ok(logger.lines.some((line) => line.startsWith('天气没查到')));
     assert.equal(repos.kv.get('weather-date'), null);
@@ -286,8 +306,8 @@ describe('director', () => {
 
   test('主动听：听到 → 确认 → 先记用户这句，再回复并说出来；录音文件删掉', async () => {
     const model = mockModel('好呀，我陪你一起喝水');
-    const { calls, repos, context, director, recorder, confirmed, logger } = rig({ model, heard: '提醒我喝水' });
-    const result = await director.listenNow();
+    const { calls, repos, context, orchestrator, recorder, confirmed, logger } = rig({ model, heard: '提醒我喝水' });
+    const result = await orchestrator.listen();
     assert.deepEqual(result, { talked: true });
     assert.deepEqual(confirmed, ['提醒我喝水']);
     assert.ok(calls.includes('cue:碎碎念-对屏碎碎念'));
@@ -309,7 +329,7 @@ describe('director', () => {
   test('像提问就先搜一下，结果交给模型；打开工具时交给模型自己搜', async () => {
     const model = mockModel('台北今天晴，二十五度');
     const asked = rig({ model, heard: '今天台北天气怎么样？', search: '台北 晴 25 度' });
-    await asked.director.listenNow();
+    await asked.orchestrator.listen();
     assert.ok(asked.calls.includes('search:今天台北天气怎么样？'));
     assert.ok(types(asked.repos).includes('search'));
     assert.ok(promptText(model).includes('台北 晴 25 度'));
@@ -320,7 +340,7 @@ describe('director', () => {
       search: '台北 晴 25 度',
       config: { llm: { baseUrl: 'https://llm.example/v1', apiKey: 'k', model: 'mock', tools: true } },
     });
-    await tooled.director.listenNow();
+    await tooled.orchestrator.listen();
     assert.equal(
       tooled.calls.some((call) => call.startsWith('search:')),
       false,
@@ -329,12 +349,12 @@ describe('director', () => {
 
   test('搜索失败只记一行，照样回复', async () => {
     const model = mockModel('我没查到，先陪着你');
-    const { director, logger, context, repos } = rig({
+    const { orchestrator, logger, context, repos } = rig({
       model,
       heard: '最新新闻是什么？',
       search: new Error('anysearch 退出 1'),
     });
-    assert.deepEqual(await director.listenNow(), { talked: true });
+    assert.deepEqual(await orchestrator.listen(), { talked: true });
     assert.ok(logger.lines.includes('搜索没做成：anysearch 退出 1'));
     assert.equal(types(repos).includes('search'), false);
     assert.deepEqual(shape(await context.entries()), ['user:最新新闻是什么？', 'assistant:我没查到，先陪着你']);
@@ -342,8 +362,8 @@ describe('director', () => {
 
   test('确认页取消：记一笔 confirm-cancel，也算说过话，不回复', async () => {
     const model = mockModel('不该用到');
-    const { repos, director, logger, context } = rig({ model, heard: '算了不说了', confirm: async () => '' });
-    assert.deepEqual(await director.listenNow(), { talked: true });
+    const { repos, orchestrator, logger, context } = rig({ model, heard: '算了不说了', confirm: async () => '' });
+    assert.deepEqual(await orchestrator.listen(), { talked: true });
     assert.ok(logger.lines.includes('听写没有发出'));
     const cancel = repos.activity.list(100).find((event) => event.type === 'confirm-cancel');
     assert.equal(cancel?.['text'], '算了不说了');
@@ -352,26 +372,26 @@ describe('director', () => {
   });
 
   test('没听清：不确认也不回复', async () => {
-    const { director, logger, confirmed } = rig({ model: mockModel('不该用到'), heard: '嗯' });
-    assert.deepEqual(await director.listenNow(), { talked: false });
+    const { orchestrator, logger, confirmed } = rig({ model: mockModel('不该用到'), heard: '嗯' });
+    assert.deepEqual(await orchestrator.listen(), { talked: false });
     assert.ok(logger.lines.includes('没听到'));
     assert.deepEqual(confirmed, []);
   });
 
   test('侧耳听的动作没播成只告警，照样听', async () => {
-    const { director, logger } = rig({
+    const { orchestrator, logger } = rig({
       heard: '在吗在吗',
       host: { cue: async () => Promise.reject(new Error('动作不在池内')) },
     });
-    assert.deepEqual(await director.listenNow(), { talked: true });
+    assert.deepEqual(await orchestrator.listen(), { talked: true });
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(logger.lines.includes('侧耳听没播成（碎碎念-对屏碎碎念）：动作不在池内'));
   });
 
   test('碎碎念念完听回应：听到就回复，算说过话', async () => {
     const model = mockModel('那我们就歇五分钟');
-    const { director, context, calls } = rig({ model, heard: '我有点累了', config: { listen: { enabled: true } } });
-    const result = await director.perform();
+    const { orchestrator, context, calls } = rig({ model, heard: '我有点累了', config: { listen: { enabled: true } } });
+    const result = await orchestrator.whisper();
     assert.equal(result?.talked, true);
     assert.ok(calls.includes('record:5'));
     const entries = shape(await context.entries());
@@ -380,19 +400,19 @@ describe('director', () => {
   });
 
   test('碎碎念之后没听成只记一行，不算说过话', async () => {
-    const { director, logger } = rig({
+    const { orchestrator, logger } = rig({
       model: mockModel('不该用到'),
       recordError: new Error('麦克风被占用'),
       config: { listen: { enabled: true } },
     });
-    const result = await director.perform();
+    const result = await orchestrator.whisper();
     assert.equal(result?.talked, false);
     assert.ok(logger.lines.includes('没听成：麦克风被占用'));
   });
 
   test('没写 listen 就不听，和旧代码一样', async () => {
-    const { director, calls } = rig({ model: mockModel('不该用到'), heard: '我在' });
-    const result = await director.perform();
+    const { orchestrator, calls } = rig({ model: mockModel('不该用到'), heard: '我在' });
+    const result = await orchestrator.whisper();
     assert.equal(result?.talked, false);
     assert.equal(
       calls.some((call) => call.startsWith('record:')),
@@ -401,8 +421,8 @@ describe('director', () => {
   });
 
   test('没配语音（合成出空路径）时只出字，不播放；bake 和朗读桌宠回复也不做', async () => {
-    const { director, calls, logger, repos } = rig({ silent: true });
-    const result = await director.perform();
+    const { director, orchestrator, calls, logger, repos } = rig({ silent: true });
+    const result = await orchestrator.whisper();
     assert.ok(result);
     const { line } = result;
     assert.deepEqual(calls, ['lock', `broadcast:${line.text}`, `anim:${line.action}`, `sfx:${line.action}`, 'release']);
@@ -414,8 +434,8 @@ describe('director', () => {
   });
 
   test('listen.enabled 关掉时碎碎念念完不听', async () => {
-    const { director, calls } = rig({ model: mockModel('不该用到'), config: { listen: { enabled: false } } });
-    const result = await director.perform();
+    const { orchestrator, calls } = rig({ model: mockModel('不该用到'), config: { listen: { enabled: false } } });
+    const result = await orchestrator.whisper();
     assert.equal(result?.talked, false);
     assert.equal(
       calls.some((call) => call.startsWith('record:')),
@@ -427,7 +447,7 @@ describe('director', () => {
     const model = mockModel('主人写了好久代码，喝口水吧');
     const generated = rig({ model, config: { listen: { enabled: false } } });
     noLines(generated.repos, generated.now.getTime());
-    const result = await generated.director.perform();
+    const result = await generated.orchestrator.whisper();
     assert.equal(result?.line.kind, 'generated');
     assert.equal(result?.line.text, '主人写了好久代码，喝口水吧');
     assert.equal(result?.line.cue, TONE_CUES.lively);
@@ -437,14 +457,14 @@ describe('director', () => {
 
     const silent = rig();
     noLines(silent.repos, silent.now.getTime());
-    assert.equal(await silent.director.perform(), null);
+    assert.equal(await silent.orchestrator.whisper(), null);
     assert.ok(silent.logger.lines.includes('这 3 小时里的碎碎念都说过了，这次先停'));
     assert.deepEqual(types(silent.repos), ['whisper-skip']);
     assert.deepEqual(silent.calls, []);
   });
 
   test('桌宠自己的对话回复念一遍；yoyo 自己投喂的和 claim 过的不念', async () => {
-    const { director, calls, repos, logger } = rig({
+    const { director, orchestrator, calls, repos, logger } = rig({
       config: { speech: { apiKey: 'k', referenceId: 'r', tone: 'calm' } },
     });
     assert.equal(await director.playForeign('  今天也辛苦啦  '), true);
@@ -457,7 +477,7 @@ describe('director', () => {
     director.claim('启动时就在气泡里的话');
     assert.equal(await director.playForeign('启动时就在气泡里的话'), false);
 
-    const result = await director.perform();
+    const result = await orchestrator.whisper();
     assert.equal(await director.playForeign(result?.line.text ?? ''), false);
     assert.equal(await director.playForeign('   '), false);
   });

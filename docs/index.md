@@ -17,7 +17,7 @@ okf_version: "0.2"
 
 ## 技术
 
-* [架构](tech/architecture.md) - 分层和依赖方向、各目录做什么、怎么用 ctx 和 dsh-pet、三条数据流、怎么扩展。
+* [架构](tech/architecture.md) - 分层和依赖方向、各目录做什么、编排器和导演各管什么、和 ctx 组件的对应、怎么用 ctx 和 dsh-pet、三条数据流、怎么扩展。
 * [开发](tech/development.md) - 工具链、脚本、和 ctx 联调、CI、调试、文档约定。
 * [命令原则](tech/cli-principles.md) - 命令怎么分层、怎么被发现、默认输出为什么短。
 * [运行时原则](tech/runtime-principles.md) - 桌宠边界、碎碎念让路、记录、粘贴板和联系人各自守什么。

@@ -27,7 +27,9 @@ describe('container', () => {
     assert.equal(app.model, null);
     assert.equal(app.tools, undefined);
     assert.equal(app.context.session, 'pet:main');
-    assert.equal(typeof app.director.perform, 'function');
+    assert.equal(typeof app.director.speak, 'function');
+    assert.equal(typeof app.harness.run, 'function');
+    assert.equal(typeof app.orchestrator.whisper, 'function');
     await app.close();
     await app.close();
     await assert.rejects(app.openChannel(), /已经关闭/);
@@ -49,7 +51,7 @@ describe('container', () => {
   });
 
   test('overrides 换掉任意一项，null 也算', async () => {
-    const director = { perform: async () => null } as unknown as Director;
+    const director = { choose: async () => null } as unknown as Director;
     const app = await createApp(parseConfig({ stage: 'console', llm: LLM }), tempPaths(), {
       logger: memoryLogger(),
       model: null,
@@ -87,7 +89,7 @@ describe('container', () => {
     // 导演用真时钟：先记下今天报过天气，免得赶上下班时间去联网查
     app.repos.kv.set('weather-date', localDateKey(new Date()));
     logger.lines.length = 0;
-    const result = await app.director.perform();
+    const result = await app.orchestrator.whisper();
     assert.ok(result);
     assert.equal(logger.lines[0], `[${result.line.action}] ${result.line.text}`);
     assert.equal(existsSync(paths.speechCacheDir), false, '没有合成');

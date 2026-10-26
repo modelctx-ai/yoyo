@@ -3,7 +3,7 @@ import { describe, test } from 'vite-plus/test';
 
 import { DatabaseSync } from 'node:sqlite';
 
-import { createToolRegistry, tool } from '@modelctx-ai/ctx';
+import { createOrchestrator, createToolRegistry, tool } from '@modelctx-ai/ctx';
 import type { McpConnector, McpServerConfig } from '@modelctx-ai/ctx-mcp';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
@@ -12,6 +12,7 @@ import { parseConfig } from '../app/config.ts';
 import type { Logger } from '../ports/index.ts';
 import { generateReply } from './compose.ts';
 import { createYoyoContext, recordUser } from './context.ts';
+import { createYoyoHarness } from './harness.ts';
 import { connectMcp, mcpServerOf } from './mcp.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
@@ -120,7 +121,9 @@ describe('brain/mcp', () => {
       model,
     });
     await recordUser(context, '台北天气怎么样', 1);
-    const line = await generateReply(context, { tone: 'warm', tools: true });
+    // MCP 工具绑定在 hub 上：harness 分发工具时要有这个执行环境
+    const runs = createOrchestrator({ harness: createYoyoHarness(context, { executors: [hub] }) });
+    const line = await generateReply(context, runs, { tone: 'warm', model, tools: true });
     assert.equal(line.text, '台北今天是晴天哦。');
     assert.deepEqual(calls, ['台北']);
     await hub.close();

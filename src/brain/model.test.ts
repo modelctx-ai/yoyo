@@ -3,11 +3,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, createOrchestrator } from '@modelctx-ai/ctx';
 
 import { parseConfig, type LlmConfig } from '../app/config.ts';
 import { generateWhisper } from './compose.ts';
 import { recordUser, yoyoProjection } from './context.ts';
+import { createYoyoHarness } from './harness.ts';
 import { createLanguageModel } from './model.ts';
 
 function llm(fields: Record<string, unknown>): LlmConfig {
@@ -91,7 +92,8 @@ describe('brain/model', () => {
       assert.ok(model);
       const context = createContext({ store: createMemoryStore(), session: 'pet:main', projection: yoyoProjection });
       await recordUser(context, '我在写周报', 1);
-      const line = await generateWhisper(context, { tone: 'warm', model });
+      const runs = createOrchestrator({ harness: createYoyoHarness(context) });
+      const line = await generateWhisper(context, runs, { tone: 'warm', model });
       assert.equal(line.text, '肩膀放松一点，再接着写');
       const call = seen.at(-1)!;
       assert.equal(call.path, '/v1/chat/completions');
@@ -107,8 +109,9 @@ describe('brain/model', () => {
     test('接口报错时文案和旧代码一样，密钥不出现', async () => {
       status = 401;
       const model = createLanguageModel(llm({ baseUrl, apiKey: 'sk-real-key', model: 'demo' }));
-      const context = createContext({ store: createMemoryStore(), session: 'pet:main', model: model! });
-      await assert.rejects(generateWhisper(context, { tone: 'warm', secrets: ['sk-real-key'] }), {
+      const context = createContext({ store: createMemoryStore(), session: 'pet:main' });
+      const runs = createOrchestrator({ harness: createYoyoHarness(context) });
+      await assert.rejects(generateWhisper(context, runs, { tone: 'warm', model: model!, secrets: ['sk-real-key'] }), {
         message: '模型接口返回 401：{"error":{"message":"invalid api key ***"}}',
       });
     });

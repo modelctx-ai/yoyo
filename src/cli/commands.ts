@@ -82,7 +82,7 @@ export function contextRow(entry: Entry): string | null {
   return null;
 }
 
-/** 导演在跑就交给它；没在跑就当场做。 */
+/** 导演在跑就经收件箱交给它的编排器；没在跑就当场组装一份，由编排器当场做。 */
 async function handoff(env: CommandEnv, type: InboxRequest): Promise<void> {
   if (directorAlive(env.paths.pidFile)) {
     enqueue(env.paths.inboxFile, type);
@@ -92,8 +92,8 @@ async function handoff(env: CommandEnv, type: InboxRequest): Promise<void> {
   assertDirectorReady(env.config());
   const app = await env.app();
   try {
-    if (type === 'listen') await app.director.listenNow();
-    else await app.director.perform();
+    if (type === 'listen') await app.orchestrator.listen();
+    else await app.orchestrator.whisper();
   } finally {
     await app.close();
   }
