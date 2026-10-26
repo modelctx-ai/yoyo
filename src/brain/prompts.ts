@@ -1,5 +1,3 @@
-import type { Fact } from '@modelctx-ai/ctx';
-
 import type { Tone } from '../kernel/types.ts';
 
 export const TONE_HINT: Readonly<Record<Tone, string>> = {
@@ -26,9 +24,9 @@ export function whisperInstructions(tone: Tone): string {
   return WHISPER_PERSONA + TONE_HINT[tone];
 }
 
-/** 碎碎念的最后一条临时用户消息：事实各占一行，最后请她再说一句。 */
-export function whisperPrompt(facts: readonly Fact[]): string {
-  return [...facts.map((fact) => fact.text), '请再说一句碎碎念。'].join('\n');
+/** 碎碎念的请求。事实由 agent 的 `context` 接在它前面。 */
+export function whisperPrompt(): string {
+  return '请再说一句碎碎念。';
 }
 
 export function replyInstructions(tone: Tone): string {

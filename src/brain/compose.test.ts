@@ -156,15 +156,8 @@ describe('brain/prompts', () => {
     assert.match(replyInstructions('calm'), /有搜索结果时只用里面的事实，没有就不要编新闻或数字。/);
   });
 
-  test('碎碎念提示：事实各占一行，最后一行请她再说一句', () => {
-    assert.equal(whisperPrompt([]), '请再说一句碎碎念。');
-    assert.equal(
-      whisperPrompt([
-        { source: 'task', text: '当前任务：修天气地点' },
-        { source: 'clipboard', text: '粘贴板：npm test' },
-      ]),
-      '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。',
-    );
+  test('碎碎念的请求只有一句，事实由 agent 的 context 接在前面', () => {
+    assert.equal(whisperPrompt(), '请再说一句碎碎念。');
   });
 
   test('搜索结果为空就不带', () => {
@@ -200,7 +193,7 @@ describe('brain/compose generateWhisper', () => {
     );
     assert.deepEqual(call.prompt[1]?.content, [{ type: 'text', text: '碎碎念：\n先把这一小步做完' }]);
     assert.deepEqual(call.prompt.at(-1)?.content, [
-      { type: 'text', text: '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。' },
+      { type: 'text', text: '当前任务：修天气地点\n粘贴板：npm test\n\n请再说一句碎碎念。' },
     ]);
     assert.equal(call.temperature, 0.8);
     assert.equal(call.tools, undefined);
@@ -372,7 +365,7 @@ describe('brain/compose 一轮的请求', () => {
   test('碎碎念和回复各是一个 agent 配置：除了模型都是 JSON，不写日志，跑在上下文的会话上', async () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('不该用到') });
     const context = await seeded({ model });
-    const whisperRun = await whisperRequest(context, { tone: 'calm', model });
+    const whisperRun = whisperRequest(context, { tone: 'calm', model });
     assert.equal(whisperRun.session, 'pet:main');
     assert.equal(whisperRun.record, false);
     assert.equal(whisperRun.agent.model, model);
@@ -381,16 +374,18 @@ describe('brain/compose 一轮的请求', () => {
       ...WHISPER_AGENT,
       instructions: whisperInstructions('calm'),
     });
-    assert.equal(whisperRun.prompt, '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。');
+    assert.deepEqual(whisperRun.agent.context, { facts: { placement: 'prompt' } });
+    assert.equal(whisperRun.prompt, '请再说一句碎碎念。');
 
-    const replyRun = await replyRequest(context, { tone: 'warm', model, tools: true, searchText: '晴' });
+    const replyRun = replyRequest(context, { tone: 'warm', model, tools: true, searchText: '晴' });
     const { model: _replyModel, ...replySpec } = replyRun.agent;
     assert.deepEqual(JSON.parse(JSON.stringify(replySpec)), {
       ...REPLY_AGENT,
-      instructions: `${replyInstructions('warm')}\n\n当前任务：修天气地点\n粘贴板：npm test`,
+      instructions: replyInstructions('warm'),
       tools: true,
       maxSteps: 4,
     });
+    assert.deepEqual(replyRun.agent.context, { facts: { placement: 'instructions' } });
     assert.equal(replyRun.prompt, '搜索结果：\n晴');
     assert.equal(replyRun.record, false);
   });
@@ -429,7 +424,8 @@ describe('brain/compose 交给模型的内容', () => {
         system(whisperInstructions('brisk')),
         ...HISTORY,
         said('assistant', '碎碎念：\n再来一句'),
-        said('user', '当前任务：修天气地点\n粘贴板：npm test\n请再说一句碎碎念。'),
+        // 原来事实和请求之间是一个换行，builder 接提示时是一个空行
+        said('user', '当前任务：修天气地点\n粘贴板：npm test\n\n请再说一句碎碎念。'),
       ],
       tools: undefined,
       temperature: 0.8,

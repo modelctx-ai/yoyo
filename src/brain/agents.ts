@@ -1,4 +1,4 @@
-import { renderFacts, type AgentSpec, type CallSettings, type Fact, type ModelRef } from '@modelctx-ai/ctx';
+import type { AgentSpec, CallSettings, ModelRef } from '@modelctx-ai/ctx';
 
 import type { Tone } from '../kernel/types.ts';
 import { replyInstructions, whisperInstructions } from './prompts.ts';
@@ -11,20 +11,22 @@ import { replyInstructions, whisperInstructions } from './prompts.ts';
 /** 一轮最多等 30 秒，失败重试一次。 */
 const SETTINGS: CallSettings = { timeoutMs: 30_000, maxRetries: 1 };
 
-/** 碎碎念：不给工具，一步。 */
+/** 碎碎念：不给工具，一步。事实放进最后一条临时用户消息。 */
 export const WHISPER_AGENT = {
   name: 'whisper',
   tools: false,
   maxSteps: 1,
   settings: { ...SETTINGS, temperature: 0.8 },
+  context: { facts: { placement: 'prompt' } },
 } as const satisfies Omit<AgentSpec, 'model'>;
 
-/** 回复：缺省不给工具；`llm.tools` 打开时给全部工具，最多 4 步。 */
+/** 回复：缺省不给工具；`llm.tools` 打开时给全部工具，最多 4 步。事实接在指令后面。 */
 export const REPLY_AGENT = {
   name: 'reply',
   tools: false,
   maxSteps: 1,
   settings: { ...SETTINGS, temperature: 0.7 },
+  context: { facts: { placement: 'instructions' } },
 } as const satisfies Omit<AgentSpec, 'model'>;
 
 const REPLY_TOOL_STEPS = 4;
@@ -33,17 +35,11 @@ export function whisperAgent(tone: Tone, model: ModelRef): AgentSpec {
   return { ...WHISPER_AGENT, model, instructions: whisperInstructions(tone) };
 }
 
-/** 回复的事实（当前任务、粘贴板）接在指令后面。 */
-export function replyAgent(
-  tone: Tone,
-  model: ModelRef,
-  options: { readonly tools?: boolean; readonly facts?: readonly Fact[] } = {},
-): AgentSpec {
-  const facts = options.facts && options.facts.length > 0 ? renderFacts(options.facts) : '';
+export function replyAgent(tone: Tone, model: ModelRef, options: { readonly tools?: boolean } = {}): AgentSpec {
   return {
     ...REPLY_AGENT,
     model,
-    instructions: [replyInstructions(tone), facts].filter((part) => part.trim() !== '').join('\n\n'),
+    instructions: replyInstructions(tone),
     ...(options.tools ? { tools: true, maxSteps: REPLY_TOOL_STEPS } : {}),
   };
 }
