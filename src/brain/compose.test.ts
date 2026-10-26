@@ -60,7 +60,7 @@ const FACTS: readonly ContextSource[] = [
 async function seeded(options: { model?: LanguageModel; tools?: ToolRegistry; sources?: readonly ContextSource[] }) {
   const context = createContext({
     store: createMemoryStore(),
-    thread: 'pet:main',
+    session: 'pet:main',
     projection: yoyoProjection,
     sources: options.sources ?? FACTS,
     ...(options.model ? { model: options.model } : {}),
@@ -73,7 +73,7 @@ async function seeded(options: { model?: LanguageModel; tools?: ToolRegistry; so
 }
 
 function alarmTools(calls: string[]): ToolRegistry {
-  return createToolRegistry().add(
+  return createToolRegistry().addTool(
     'list_alarms',
     tool({
       description: '列出闹钟',

@@ -19,4 +19,5 @@ overrides:
   '@modelctx-ai/ctx-gateway': link:../ctx/packages/gateway
   '@modelctx-ai/ctx-mcp': link:../ctx/packages/mcp
   '@modelctx-ai/ctx-models': link:../ctx/packages/models
+  '@modelctx-ai/ctx-protocol': link:../ctx/packages/protocol
   '@modelctx-ai/ctx-sqlite': link:../ctx/packages/sqlite

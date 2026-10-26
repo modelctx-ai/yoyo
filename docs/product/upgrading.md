@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: 从旧版升级
-description: 从 JavaScript 版升级时要知道的变化；数据和配置都原样可用。
+description: 从 JavaScript 版或上一版升级时要知道的变化；数据和配置都原样可用。
 tags: [product, upgrade]
 status: stable
 ---
@@ -22,3 +22,15 @@ status: stable
 | 右键对话 | 桌宠拿到的是每次启动新生成的本机令牌，不再是真的 `llm.apiKey`                                                              |
 | 粘贴板   | 最近一条现在真的交给模型了。以前的说明一直这么写，旧代码收集了却没交给模型。不想要就把 `clipboard.enabled` 设成 `false` |
 | 语音缓存 | 文件名不变，不用重新合成                                                                                                   |
+
+# 从上一版升级（ctx 0.2）
+
+yoyo 改用 ctx 0.2。先更新 ctx 并重新构建，再装一次依赖：
+
+```sh
+git -C ../ctx pull
+pnpm -C ../ctx install && pnpm -C ../ctx build
+pnpm install
+```
+
+对话记忆的存储格式随 ctx 0.2 有一处改名。第一次打开数据时（常驻进程或任何读写对话记忆的命令）自动改好，以前的记忆原样都在，不用做什么。改失败就原样回滚，下次再试。改过以后，旧版 yoyo 读不了这份对话记忆。

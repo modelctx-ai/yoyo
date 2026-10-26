@@ -89,7 +89,7 @@ describe('brain/model', () => {
       status = 200;
       const model = createLanguageModel(llm({ baseUrl, apiKey: 'sk-real-key', model: 'demo' }));
       assert.ok(model);
-      const context = createContext({ store: createMemoryStore(), thread: 'pet:main', projection: yoyoProjection });
+      const context = createContext({ store: createMemoryStore(), session: 'pet:main', projection: yoyoProjection });
       await recordUser(context, '我在写周报', 1);
       const line = await generateWhisper(context, { tone: 'warm', model });
       assert.equal(line.text, '肩膀放松一点，再接着写');
@@ -107,7 +107,7 @@ describe('brain/model', () => {
     test('接口报错时文案和旧代码一样，密钥不出现', async () => {
       status = 401;
       const model = createLanguageModel(llm({ baseUrl, apiKey: 'sk-real-key', model: 'demo' }));
-      const context = createContext({ store: createMemoryStore(), thread: 'pet:main', model: model! });
+      const context = createContext({ store: createMemoryStore(), session: 'pet:main', model: model! });
       await assert.rejects(generateWhisper(context, { tone: 'warm', secrets: ['sk-real-key'] }), {
         message: '模型接口返回 401：{"error":{"message":"invalid api key ***"}}',
       });

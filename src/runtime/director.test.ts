@@ -10,7 +10,7 @@ import {
   createMemoryStore,
   userEntry,
   type Context,
-  type ContextEntry,
+  type Entry,
   type LanguageModel,
 } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
@@ -18,7 +18,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { silentSynthesizer } from '../adapters/voice/silent.ts';
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
-import { threadFor, yoyoProjection } from '../brain/context.ts';
+import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { LINES, REPEAT_WINDOW_MS } from '../features/whisper/catalog.ts';
 import { TONE_CUES } from '../kernel/tone.ts';
 import type { PetChatMessage, ScheduleItem } from '../kernel/types.ts';
@@ -96,7 +96,7 @@ function rig(options: RigOptions = {}): Rig {
   const repos = memoryRepos({ now: () => now });
   const context = createContext({
     store: createMemoryStore({ now: () => now.getTime() }),
-    thread: threadFor('main'),
+    session: sessionFor('main'),
     projection: yoyoProjection,
   });
   const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
@@ -138,7 +138,7 @@ function types(repos: Repos): string[] {
   return repos.activity.list(100).map((event) => event.type);
 }
 
-function shape(entries: readonly ContextEntry[]): string[] {
+function shape(entries: readonly Entry[]): string[] {
   return entries.map((entry) => {
     if (entry.type === 'message') {
       const { content } = entry.message;

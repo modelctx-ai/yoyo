@@ -70,7 +70,7 @@ flowchart TB
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
-| `src/brain` | ctx 接线：`context.ts`（线程、投影、旧表迁移、写入）、`sources.ts`、`prompts.ts`、`compose.ts`（生成碎碎念和回复）、`model.ts`、`tools.ts`、`mcp.ts`、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`prompts.ts`、`compose.ts`（生成碎碎念和回复）、`model.ts`、`tools.ts`、`mcp.ts`、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `director.ts`（说、听、提醒、预合成、压缩）、`daemon.ts`（常驻循环）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
@@ -97,25 +97,25 @@ flowchart TB
 
 # 怎么用 ctx
 
-三个仓库怎么分工、契约是什么，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/repos.md`；ctx 自己的概念（条目、投影、来源、记录、压缩、网关）见同一处的 `docs/architecture.md`。这里只写 yoyo 的用法。[^context] [^compose]
+三个仓库怎么分工、契约是什么，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/repos.md`；ctx 自己的概念（会话、条目、投影、来源、记录、压缩、执行环境、网关）见同一处的 `docs/concepts.md` 和 `docs/architecture.md`。这里只写 yoyo 的用法。[^context] [^compose]
 
 | 方面 | 做法 | 代码 |
 | --- | --- | --- |
 | 存储 | `createSqliteStore({ database, prefix: 'ctx_' })` 复用已经打开的 `yoyo.db`，表是 `ctx_entries`、`ctx_meta` | `createYoyoContext` |
-| 线程 | 每只宠物一条：`pet:<pet.id>` | `threadFor` |
+| 会话 | 每只宠物一个：`pet:<pet.id>` | `sessionFor` |
 | 投影 | `whisper` 事件 `fold`：连续的碎碎念渲染成一条助手消息「碎碎念：\n…」；摘要渲染成「前面对话的摘要：\n…」；用户话和回复原样带上，不截断。配了 `context.maxTokens` 才按估算 token 裁剪 | `yoyoProjection` |
 | 写入 | 回复、提醒、天气记成助手消息；碎碎念（预制的和模型写的）记成 `whisper` 事件；听到的话记成用户消息。经这个上下文写的条目 `source` 是 `yoyo` | `recordLine`、`recordUser` |
 | 来源 | `task`：桌宠的工作状态加本地任务的前 5 条；`clipboard`：最近一次复制的前 160 字，`clipboard.enabled` 关掉时不挂 | `taskSource`、`clipboardSource` |
 | 碎碎念 | 指令是人设加语气；历史是上下文视图；事实放进最后一条临时用户消息，末尾「请再说一句碎碎念。」。`temperature` 0.8，不给工具。和视图里已有的句子重复就报错，这一次不说 | `generateWhisper` |
 | 回复 | 指令是回复人设加语气，事实追加在指令后；有搜索结果时最后加一条「搜索结果：\n…」。`temperature` 0.7；`llm.tools` 打开时给工具，最多 4 步 | `generateReply` |
-| 记录 | 生成都用 `record: false`，30 秒超时。合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `compose.ts`、`director.ts` |
+| 记录 | 生成都用 `record: false`，30 秒超时：用户这句、回复和 `ctx.run.*` 都不写。合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `compose.ts`、`director.ts` |
 | 报错 | `describeError(error, { secrets: [llm.apiKey] })`；有状态码时「模型接口返回 <状态码>：<正文片段>」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过 | `storePetChat` |
 | 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。只支持 `openai-compatible` | `startChannel`、`connectChannel` |
-| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，再加 `mcpServers` 的工具 | `createYoyoTools`、`connectMcp` |
-| 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
+| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文 | `createYoyoTools`、`connectMcp` |
+| 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。压缩另记的 `ctx.compacted` 和别的框架事件 `ctx.*` 投影里看不见，不计入阈值，`yoyo context tail` 也不列。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 模型 | `createModel({ provider, baseUrl, apiKey, model })`；没配齐就是 `null`：只用预制台词，碎碎念说完也不听 | `createLanguageModel` |
-| 迁移 | 打开上下文时，旧表 `context_items` 在一个事务里迁进线程，改名成 `context_items_migrated`；失败回滚，下次再试 | `migrateLegacyContext` |
+| 迁移 | 打开上下文时，先在 `createSqliteStore` 建表之前把 ctx 0.1 的 `ctx_entries.thread` 列改名成 `session`（两个索引名字不变，定义跟着改；`ctx_meta` 的 schema 仍是 `1`）；再把旧表 `context_items` 迁进会话，改名成 `context_items_migrated`。各在一个事务里，失败回滚，下次再试 | `migrateSessionColumn`、`migrateLegacyContext` |
 
 # 怎么用 dsh-pet
 
