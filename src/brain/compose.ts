@@ -1,7 +1,10 @@
 import {
   describeError,
+  redact,
   textOf,
   type Context,
+  type ErrorDescription,
+  type ErrorInfo,
   type ModelRef,
   type Orchestrator,
   type RunRequest,
@@ -49,50 +52,34 @@ export interface ComposeOptions {
 export type Runs = Pick<Orchestrator, 'submit'>;
 
 /** 模型接口的错误变成一句中文，有状态码时和旧代码一样带上正文片段。 */
-function modelErrorText(error: unknown, secrets: readonly string[] | undefined): string {
-  const { message, status, detail } = describeError(error, { secrets: secrets ?? [] });
+function modelErrorText({ message, status, detail }: ErrorDescription): string {
   if (status !== undefined) return `模型接口返回 ${status}${detail ? `：${detail}` : ''}`;
   return `模型没回：${message}`;
 }
 
-/**
- * 记下模型抛的原始错误。`RunResult.error` 只有消息，没有状态码和正文，报错文案要用原来的错误。
- * 只包 `doGenerate`、`doStream`，别的原样转给模型。
- */
-function watched(model: ModelRef, onError: (error: unknown) => void): ModelRef {
-  if (typeof model === 'string') return model;
-  return new Proxy(model, {
-    get(target, key, receiver) {
-      const value: unknown = Reflect.get(target, key, receiver);
-      if ((key !== 'doGenerate' && key !== 'doStream') || typeof value !== 'function') return value;
-      return async (...args: unknown[]) => {
-        try {
-          return await (value as (...rest: unknown[]) => Promise<unknown>).apply(target, args);
-        } catch (error) {
-          onError(error);
-          throw error;
-        }
-      };
-    },
-  });
+/** `RunResult.error` 的描述：抹掉密钥、压成一行、截短，和 `describeError` 对抛出来的错误做的一样。 */
+function describeInfo(info: ErrorInfo, secrets: readonly string[]): ErrorDescription {
+  const clean = (text: string): string => redact(text, secrets).replace(/\s+/g, ' ').trim().slice(0, 180);
+  const detail = clean(info.responseBody ?? '');
+  return {
+    message: clean(info.message),
+    ...(info.statusCode !== undefined ? { status: info.statusCode } : {}),
+    ...(detail ? { detail } : {}),
+  };
 }
 
 /** 交给编排器跑一轮，等它跑完，返回最后一步的文字。出错或被取消就抛一句中文。 */
 async function run(runs: Runs, request: RunRequest, secrets: readonly string[] | undefined): Promise<string> {
-  let failure: unknown;
-  const model = watched(request.agent.model, (error) => {
-    failure = error;
-  });
   let result: RunResult;
   try {
-    const handle = await runs.submit({ ...request, agent: { ...request.agent, model } });
+    const handle = await runs.submit(request);
     result = await handle.done;
   } catch (error) {
-    throw new Error(modelErrorText(error, secrets), { cause: error });
+    throw new Error(modelErrorText(describeError(error, { secrets: secrets ?? [] })), { cause: error });
   }
   if (result.stopReason === 'error' || result.stopReason === 'aborted') {
-    const cause = failure ?? new Error(result.error?.message ?? `这一轮停在 ${result.stopReason}`);
-    throw new Error(modelErrorText(cause, secrets), { cause });
+    const info = result.error ?? { message: `这一轮停在 ${result.stopReason}` };
+    throw new Error(modelErrorText(describeInfo(info, secrets ?? [])), { cause: info });
   }
   return result.text;
 }
