@@ -10,11 +10,13 @@ import {
   type MemoryStore,
 } from '@modelctx-ai/ctx';
 import { createMemoryStore } from '@modelctx-ai/ctx-memory';
+import { createScriptedDecisionModel } from '@modelctx-ai/ctx-protocol/testing';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { parseConfig } from '../app/config.ts';
+import type { Line } from '../kernel/types.ts';
 import { generateReply, generateWhisper } from './compose.ts';
-import { recordUser, yoyoProjection } from './context.ts';
+import { recordLine, recordUser, storePetChat, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
 import {
   MEMORY_SOURCE,
@@ -171,5 +173,45 @@ describe('brain/memory 来源', () => {
     assert.ok(names.includes('memory_core'), names.join(','));
     assert.ok(names.includes('memory_facts'));
     assert.deepEqual(await openMemoryStore(db).core.get(), { text: CORE, at: 5 });
+  });
+});
+
+function line(kind: Line['kind'], text: string): Line {
+  return { text, kind, tone: 'warm', cue: '[relaxed]', action: '碎碎念-对屏碎碎念' };
+}
+
+describe('brain/memory 门控', () => {
+  test('只看消息：用户话、回复、桌宠对话进门控；碎碎念、天气、提醒不进', async () => {
+    const sessions = createSessionStore();
+    const context = createContext({ store: sessions, session: SESSION, projection: yoyoProjection });
+    const decision = createScriptedDecisionModel({ noul: 0.9, score: 1 });
+    const { memory, store } = createYoyoMemory({
+      store: createMemoryStore(),
+      sessions,
+      decision,
+      config: parseConfig({ memory: { enabled: true } }).memory,
+    });
+    await recordLine(context, line('whisper', '碎碎念不进'), 1);
+    await recordLine(context, line('weather', '傍晚有雨，天气不进'), 2);
+    await recordUser(context, '我换到项目 Y 了', 3);
+    await recordLine(context, line('reply', '好，记住了，项目 Y'), 4);
+    await recordLine(context, line('reminder', '该开周会了，提醒不进'), 5);
+    await storePetChat(context, [{ role: 'user', content: '右键对话说的也进', ts: 6 }]);
+
+    const notes = await memory.gate(SESSION);
+    assert.equal(decision.requests.length, 1);
+    const state = JSON.stringify(decision.requests[0]!.state);
+    for (const kept of ['我换到项目 Y 了', '好，记住了，项目 Y', '右键对话说的也进'])
+      assert.ok(state.includes(kept), state);
+    for (const dropped of ['不进']) assert.ok(!state.includes(dropped), state);
+    assert.equal(notes.length, 1);
+    assert.deepEqual([notes[0]!.from, notes[0]!.upTo], [3, 6]);
+    assert.equal(notes[0]!.settledAt, undefined, '过了阈值，待处理');
+    assert.equal(await store.notes.head(SESSION), 6);
+
+    // 只剩天气：没有新条目，什么都不写，也不调决策模型
+    await recordLine(context, line('weather', '明天晴，天气不进'), 7);
+    assert.deepEqual(await memory.gate(SESSION), []);
+    assert.equal(decision.requests.length, 1);
   });
 });

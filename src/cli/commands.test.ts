@@ -175,6 +175,100 @@ describe('commands', () => {
     assert.deepEqual(await run('memory', 'core'), [`更新于 ${NOW.toISOString()}`, '主人叫小王，最近在写 yoyo。']);
   });
 
+  test('memory facts、history、forget：只读写本地库；history 列原文和取代关系', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('memory', 'facts'), ['还没有记住的事']);
+    const context = await createYoyoContext({ db: env.db(), petId: 'main' });
+    await context.append(userEntry('我在做项目 X', { at: NOW.getTime() - 86_400_000 }));
+    await context.append(assistantEntry('好，项目 X', { at: NOW.getTime() - 86_400_000 }));
+    await context.append(userEntry('我换到项目 Y 了', { at: NOW.getTime() }));
+    const store = openMemoryStore(env.db());
+    const base = { subject: 'user', topic: 'work', confidence: 0.9, salience: 0.8 } as const;
+    const x = await store.facts.add({
+      ...base,
+      text: '主人在做项目 X',
+      validFrom: NOW.getTime() - 86_400_000,
+      sources: [{ session: 'pet:main', from: 1, upTo: 2 }],
+    });
+    const y = await store.facts.add({
+      ...base,
+      text: '主人在做项目 Y',
+      validFrom: NOW.getTime(),
+      sources: [{ session: 'pet:main', from: 3, upTo: 3 }],
+    });
+    await store.facts.close(x.id, NOW.getTime(), { supersededBy: y.id });
+    const cat = await store.facts.add({
+      ...base,
+      topic: 'taste',
+      text: '主人喜欢猫的表情包',
+      validFrom: NOW.getTime() - 3 * 86_400_000,
+      sources: [{ session: 'pet:main', from: 1, upTo: 1 }],
+    });
+    await store.facts.touch([cat.id], NOW.getTime());
+
+    assert.deepEqual(await run('memory', 'facts'), [
+      `${cat.id}\ttaste\t主人喜欢猫的表情包\t2026-10-21 起\t召回 1 次`,
+      `${y.id}\twork\t主人在做项目 Y\t2026-10-24 起\t召回 0 次`,
+    ]);
+    assert.deepEqual(await run('memory', 'facts', '--topic', 'work'), [
+      `${y.id}\twork\t主人在做项目 Y\t2026-10-24 起\t召回 0 次`,
+    ]);
+    assert.deepEqual(await run('memory', 'facts', '--topic', 'people'), ['主题 people 下还没有记住的事']);
+
+    assert.deepEqual(await run('memory', 'history', y.id), [
+      `${y.id}\twork\t主人在做项目 Y`,
+      '成立：2026-10-24 起',
+      `取代了：${x.id}\t主人在做项目 X`,
+      '原文：',
+      'pet:main#3\tuser\t我换到项目 Y 了',
+    ]);
+    assert.deepEqual(await run('memory', 'history', x.id), [
+      `${x.id}\twork\t主人在做项目 X`,
+      '成立：2026-10-23 起，到 2026-10-24',
+      `被取代：${y.id}\t主人在做项目 Y`,
+      '原文：',
+      'pet:main#1\tuser\t我在做项目 X',
+      'pet:main#2\tassistant\t好，项目 X',
+    ]);
+    assert.deepEqual(await run('memory', 'history'), ['要给事实的 id：yoyo memory history <id>']);
+    assert.deepEqual(await run('memory', 'history', 'nope'), ['没有这条事实：nope']);
+
+    assert.deepEqual(await run('memory', 'forget', cat.id), [`忘掉了 ${cat.id}，下一次整理时画像跟着改`]);
+    assert.deepEqual(await run('memory', 'forget', cat.id), [`没有这条事实或程序：${cat.id}`]);
+    assert.equal(
+      (await store.facts.list()).some((fact) => fact.id === cat.id),
+      false,
+      '真删除，不是归档',
+    );
+    const forgot = env.repos().activity.list(5).at(-1);
+    assert.deepEqual([forgot?.type, forgot?.['id'], forgot?.text], ['memory-forget', cat.id, undefined]);
+  });
+
+  test('memory consolidate：不用模型，只做衰减和画像的缺省渲染，笔记留给常驻进程', async () => {
+    const { run, env } = cli({
+      config: { llm: { apiKey: 'sk-unused', model: 'm', baseUrl: 'http://127.0.0.1:9/v1' } },
+    });
+    const context = await createYoyoContext({ db: env.db(), petId: 'main' });
+    await context.append(userEntry('记住，我不喜欢狗的表情包', { at: NOW.getTime() }));
+    const store = openMemoryStore(env.db());
+    await store.notes.add([{ session: 'pet:main', from: 1, upTo: 1, at: NOW.getTime(), salience: 0.9 }]);
+    await store.facts.add({
+      subject: 'user',
+      text: '主人在台北',
+      topic: 'routine',
+      validFrom: NOW.getTime(),
+      confidence: 0.9,
+      salience: 0.8,
+      sources: [{ session: 'pet:main', from: 1, upTo: 1 }],
+    });
+    assert.deepEqual(await run('memory', 'consolidate'), [
+      '整理了 0 条笔记：新增 0 条事实，并入 0，取代 0，归档 0；程序新增 0，确认 0；画像重写了',
+      '还有 1 条笔记要用模型提取，留给常驻进程夜里整理',
+    ]);
+    assert.match((await run('memory', 'core')).join('\n'), /主人在台北/);
+    assert.equal(env.repos().activity.list(5).at(-1)?.type, 'memory-consolidate');
+  });
+
   test('chat sync：导演没在跑就提示；在跑就用记下的渠道接上', async () => {
     const calls: string[] = [];
     const { run, env, paths } = cli({

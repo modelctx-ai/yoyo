@@ -138,12 +138,16 @@ export async function migrateLegacyContext(db: DatabaseSync, store: SessionStore
   }
 }
 
-/** 说出口的一句写进上下文：回复、提醒、天气是助手消息，碎碎念是碎碎念事件。 */
+/**
+ * 说出口的一句写进上下文：回复、提醒、天气是助手消息，碎碎念是碎碎念事件。`meta.kind` 记下台词的类别，
+ * 记忆的门控按它剔掉天气和提醒。
+ */
 export async function recordLine(context: Context, line: Line, at: number): Promise<void> {
+  const options = { at, meta: { kind: line.kind } };
   const entry =
     contextRoleOf(line) === 'assistant'
-      ? assistantEntry(line.text, { at })
-      : eventEntry('whisper', { text: line.text, at });
+      ? assistantEntry(line.text, options)
+      : eventEntry('whisper', { ...options, text: line.text });
   await context.append(entry);
 }
 

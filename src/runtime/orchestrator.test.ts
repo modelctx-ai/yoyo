@@ -7,10 +7,14 @@ import { describe, test } from 'vite-plus/test';
 import {
   createContext,
   createMemoryStore,
+  type ConsolidateReport,
   type Context,
   type LanguageModel,
+  type Memory,
+  type Note,
   type OrchestratorEvent,
 } from '@modelctx-ai/ctx';
+import { createMemoryStore as createNoteStore } from '@modelctx-ai/ctx-memory';
 import { createScriptedModel, describeOrchestratorContract } from '@modelctx-ai/ctx/testing';
 import { MockLanguageModelV4 } from 'ai/test';
 
@@ -18,15 +22,19 @@ import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
+import type { YoyoMemory } from '../brain/memory.ts';
 import type { ScheduleItem } from '../kernel/types.ts';
 import type { Clipboard } from '../ports/index.ts';
 import type { Director } from './director.ts';
 import { drain, enqueue } from './inbox.ts';
 import {
   COMPACT_EVERY_MS,
+  CONSOLIDATED_KEY,
+  CONSOLIDATE_IDLE_MS,
   MEME_RETRY_MS,
   WHISPER_RETRY_MS,
   compactDue,
+  consolidateDue,
   createYoyoOrchestrator,
   memeDue,
   memeIdle,
@@ -59,6 +67,7 @@ function orchestratorRig(
     readonly state?: Partial<ScheduleState>;
     readonly clipboard?: Clipboard;
     readonly model?: LanguageModel | null;
+    readonly memory?: YoyoMemory;
   } = {},
 ): OrchestratorRig {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
@@ -83,6 +92,7 @@ function orchestratorRig(
     harness: createYoyoHarness(context),
     director: fakeDirector(calls, options.director),
     model: options.model ?? null,
+    ...(options.memory ? { memory: options.memory } : {}),
     clock: () => clock.now,
     state: { nextWhisper: T0, ...options.state },
   });
@@ -206,7 +216,10 @@ describe('orchestrator 一拍', () => {
     const { orchestrator, logger, clock, state } = orchestratorRig({
       state: { nextWhisper: T0 + 2 * MEME_RETRY_MS },
       director: {
-        syncPetChat: async () => void calls.push('sync'),
+        syncPetChat: async () => {
+          calls.push('sync');
+          return 0;
+        },
         refreshMemes: async () => {
           calls.push('memes');
           if (failing) throw new Error('anysearch 退出 1');
@@ -319,6 +332,7 @@ describe('orchestrator 一拍', () => {
           calls.push('sync');
           if (slow) await gate.promise;
           else throw new Error('数据库锁住了');
+          return 0;
         },
       },
     });
@@ -399,5 +413,238 @@ describe('orchestrator 跑模型', () => {
       /closed/,
       'close 以后不收',
     );
+  });
+});
+
+const REPORT: ConsolidateReport = {
+  notes: 2,
+  facts: { added: 1, merged: 0, superseded: 1, archived: 0 },
+  procedures: { added: 0, confirmed: 0 },
+  escalated: 0,
+  core: true,
+};
+
+interface FakeMemory extends YoyoMemory {
+  readonly gates: string[];
+  readonly consolidations: number[];
+  /** 下一次 gate 卡住，直到 resolve。 */
+  hold(): { resolve(): void };
+  fail(what: 'gate' | 'consolidate', error: Error): void;
+}
+
+/** 只记调用的记忆：笔记存储是真的，gate、consolidate 可以卡住或失败。 */
+function fakeMemory(): FakeMemory {
+  const store = createNoteStore();
+  const gates: string[] = [];
+  const consolidations: number[] = [];
+  let held: PromiseWithResolvers<void> | null = null;
+  const failures: { gate?: Error; consolidate?: Error } = {};
+  const memory = {
+    name: 'memory',
+    async gate(session: string): Promise<Note[]> {
+      gates.push(session);
+      if (held) await held.promise;
+      if (failures.gate) throw failures.gate;
+      return [];
+    },
+    async consolidate(options?: { readonly now?: number }): Promise<ConsolidateReport> {
+      consolidations.push(options?.now ?? 0);
+      if (failures.consolidate) throw failures.consolidate;
+      return REPORT;
+    },
+  } as unknown as Memory;
+  return {
+    memory,
+    store,
+    gates,
+    consolidations,
+    hold() {
+      held = Promise.withResolvers<void>();
+      const current = held;
+      return {
+        resolve: () => {
+          held = null;
+          current.resolve();
+        },
+      };
+    },
+    fail(what, error) {
+      failures[what] = error;
+    },
+  };
+}
+
+async function pendingNote(memory: YoyoMemory): Promise<void> {
+  await memory.store.notes.add([{ session: 'pet:main', from: 1, upTo: 1, at: T0, salience: 0.9 }]);
+}
+
+/** 让后台的门控、整理跑完。 */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+/** 2026-10-24 的本地时刻。 */
+function at(hour: number, minute = 0): Date {
+  return new Date(2026, 9, 24, hour, minute);
+}
+
+describe('orchestrator 记忆', () => {
+  test('整理的条件：到了时间、今天没整理过、主人 30 分钟没说话', () => {
+    const quiet = 0;
+    assert.equal(consolidateDue('03:00', at(2, 59), quiet, null), false, '没到点');
+    assert.equal(consolidateDue('03:00', at(3, 0), quiet, null), true);
+    assert.equal(consolidateDue('03:00', at(9, 30), quiet, null), true, '夜里没机会，过了点照样整理');
+    assert.equal(consolidateDue('03:00', at(3, 0), quiet, '2026-10-24'), false, '今天整理过');
+    assert.equal(consolidateDue('03:00', at(3, 0), quiet, '2026-10-23'), true);
+    const now = at(3, 30).getTime();
+    assert.equal(consolidateDue('03:00', at(3, 30), now - CONSOLIDATE_IDLE_MS + 1, null), false, '主人刚说过话');
+    assert.equal(consolidateDue('03:00', at(3, 30), now - CONSOLIDATE_IDLE_MS, null), true);
+    assert.equal(consolidateDue('4:30', at(4, 29), quiet, null), false);
+    assert.equal(consolidateDue('坏的', at(4, 29), quiet, null), false);
+  });
+
+  test('没写过用户话或回复就不门控；桌宠对话并进新条目才门控，不等它跑完', async () => {
+    let fresh = 0;
+    const memory = fakeMemory();
+    const { orchestrator, clock } = orchestratorRig({
+      memory,
+      state: { nextWhisper: T0 + 600_000 },
+      director: { syncPetChat: async () => fresh },
+    });
+    await orchestrator.tick();
+    assert.deepEqual(memory.gates, [], '这一拍什么都没写');
+
+    fresh = 2;
+    const held = memory.hold();
+    clock.now += 1000;
+    await orchestrator.tick();
+    assert.deepEqual(memory.gates, ['pet:main'], '拍子没等门控就走完了');
+
+    clock.now += 1000;
+    await orchestrator.tick();
+    assert.equal(memory.gates.length, 1, '上一次没完就跳过这次');
+
+    held.resolve();
+    await settle();
+    fresh = 0;
+    clock.now += 1000;
+    await orchestrator.tick();
+    assert.equal(memory.gates.length, 2, '跳过的那次留到下一拍补上');
+    await settle();
+    clock.now += 1000;
+    await orchestrator.tick();
+    assert.equal(memory.gates.length, 2, '补上以后没有新写的就不再跑');
+    await orchestrator.close();
+  });
+
+  test('听到一句并回复：记下用户话以后门控；出错只记一行，密钥抹掉', async () => {
+    const memory = fakeMemory();
+    memory.fail('gate', new Error('decide failed: key sk-memory-1\nretry later'));
+    const { orchestrator, logger, paths } = orchestratorRig({
+      memory,
+      config: { llm: { apiKey: 'sk-memory-1' } },
+      model: createScriptedModel([{ type: 'text', text: '好的，我记住了' }]),
+      state: { nextWhisper: T0 + 600_000 },
+    });
+    enqueue(paths.inboxFile, 'listen');
+    await orchestrator.tick();
+    await settle();
+    assert.deepEqual(memory.gates, ['pet:main']);
+    assert.ok(logger.lines.includes('记忆门控没做成：decide failed: key *** retry later'), logger.lines.join('\n'));
+    await orchestrator.close();
+  });
+
+  test('没开记忆：拍子里不门控也不整理', async () => {
+    const { orchestrator, repos } = orchestratorRig({
+      director: { syncPetChat: async () => 3 },
+      state: { nextWhisper: T0 + 600_000 },
+    });
+    await orchestrator.tick();
+    assert.equal(repos.kv.get(CONSOLIDATED_KEY), null);
+  });
+
+  test('到点、主人不在、有待处理的笔记才整理；成功记一件做过的事，今天不再整理', async () => {
+    const memory = fakeMemory();
+    let fresh = 0;
+    const { orchestrator, clock, state, repos, logger } = orchestratorRig({
+      memory,
+      config: { memory: { consolidateAt: '15:10' } },
+      state: { nextWhisper: T0 + 24 * 3600_000 },
+      director: { syncPetChat: async () => fresh },
+    });
+    await orchestrator.tick();
+    await settle();
+    assert.deepEqual(memory.consolidations, [], '15:00 还没到 15:10');
+
+    clock.now = T0 + 10 * 60_000;
+    await orchestrator.tick();
+    await settle();
+    assert.deepEqual(memory.consolidations, [], '没有待处理的笔记');
+
+    // 门控写下待处理的笔记以后又会去看
+    await pendingNote(memory);
+    state.lastTalk = clock.now - 60_000;
+    const gate = memory.memory.gate.bind(memory.memory);
+    memory.memory.gate = async (session) => {
+      await gate(session);
+      return memory.store.notes.list({ pending: true });
+    };
+    fresh = 1;
+    clock.now += 1000;
+    await orchestrator.tick();
+    await settle();
+    fresh = 0;
+    assert.equal(memory.gates.length, 1);
+    assert.deepEqual(memory.consolidations, [], '主人一分钟前还在说话');
+
+    clock.now = state.lastTalk + CONSOLIDATE_IDLE_MS;
+    await orchestrator.tick();
+    await settle();
+    assert.deepEqual(memory.consolidations, [clock.now]);
+    assert.equal(repos.kv.get(CONSOLIDATED_KEY), '2026-10-24');
+    const done = repos.activity.list(5).at(-1);
+    assert.equal(done?.type, 'memory-consolidate');
+    assert.deepEqual([done?.['notes'], done?.['added'], done?.['superseded'], done?.['core']], [2, 1, 1, true]);
+    assert.ok(logger.lines.includes('没配 llm：记忆整理只做衰减归档和画像的缺省渲染，反思和画像重写跳过'));
+    assert.ok(logger.lines.includes('记忆整理了 2 条笔记：新增 1 条事实，并入 0，取代 1，归档 0'));
+
+    clock.now += 3600_000;
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 1, '今天整理过了');
+
+    clock.now = new Date(2026, 9, 25, 15, 30).getTime();
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 2, '第二天照样整理');
+    await orchestrator.close();
+  });
+
+  test('整理失败只记一行，今天不再试，第二天再试', async () => {
+    const memory = fakeMemory();
+    memory.fail('consolidate', new Error('extract failed'));
+    await pendingNote(memory);
+    const { orchestrator, clock, logger, repos } = orchestratorRig({
+      memory,
+      model: createScriptedModel([]),
+      state: { nextWhisper: T0 + 24 * 3600_000 },
+    });
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 1);
+    assert.ok(logger.lines.includes('记忆没整理成：extract failed'));
+    assert.ok(!logger.lines.some((line) => line.startsWith('没配 llm')), '有模型就不警告');
+    assert.equal(repos.kv.get(CONSOLIDATED_KEY), null);
+
+    clock.now += 60_000;
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 1, '今天不再试');
+
+    clock.now += 24 * 3600_000;
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 2);
+    await orchestrator.close();
   });
 });

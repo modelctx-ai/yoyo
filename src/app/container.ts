@@ -234,6 +234,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       harness,
       director,
       model,
+      memory,
       ...(factSources ? { factSources } : {}),
     }),
   );

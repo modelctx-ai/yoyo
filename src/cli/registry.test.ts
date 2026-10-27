@@ -23,6 +23,7 @@ const domains: Domain[] = [
       { name: 'history', summary: '最近复制', run: noop },
     ],
   },
+
   {
     name: 'contact',
     aliases: ['contract'],
@@ -115,6 +116,23 @@ describe('cli', () => {
       assert.equal(run.verb.name, 'now');
       assert.deepEqual(run.flags, { seconds: '3' });
     }
+  });
+
+  test('动作后面的位置参数交给动作；inspect 列出写法', () => {
+    const memory: Domain = {
+      name: 'memory',
+      summary: '桌宠记住的事',
+      verbs: [{ name: 'forget', summary: '删一条', usage: '<id>', flags: ['force'], run: noop }],
+    };
+    const run = dispatch([memory], ['memory', 'forget', 'f-1', '--force']);
+    assert.equal(run.kind, 'run');
+    if (run.kind === 'run') {
+      assert.deepEqual(run.args, ['f-1']);
+      assert.deepEqual(run.flags, { force: true });
+    }
+    const plain = dispatch(domains, ['alarm', 'list']);
+    assert.deepEqual(plain.kind === 'run' && plain.args, []);
+    assert.match(inspectText(memory), /forget +删一条\n +<id> --force/);
   });
 
   test('--key 后面没有值就记成 true', () => {

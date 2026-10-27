@@ -1,5 +1,6 @@
 import {
   createOrchestrator,
+  redact,
   type Context,
   type Harness,
   type LanguageModel,
@@ -14,11 +15,13 @@ import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateReply, generateWhisper } from '../brain/compose.ts';
 import { recordUser } from '../brain/context.ts';
+import type { YoyoMemory } from '../brain/memory.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
 import { shouldSearch } from '../features/search/question.ts';
 import { nextWhisperAt } from '../kernel/pace.ts';
+import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
 import type { Line, Tone } from '../kernel/types.ts';
 import type { Clipboard, Logger, Repos, WebSearch } from '../ports/index.ts';
@@ -34,6 +37,13 @@ export const COMPACT_EVERY_MS = 10 * 60 * 1000;
 export const WHISPER_RETRY_MS = 60_000;
 /** 找表情包失败以后，隔这么久再找。 */
 export const MEME_RETRY_MS = 10 * 60 * 1000;
+
+/** 主人这么久没说话，才整理记忆。 */
+export const CONSOLIDATE_IDLE_MS = 30 * 60 * 1000;
+/** 整理一次记忆最多等这么久。 */
+export const CONSOLIDATE_TIMEOUT_MS = 10 * 60 * 1000;
+/** kv 里记下最近一次夜里整理成功的本地日期。 */
+export const CONSOLIDATED_KEY = 'memory-consolidated';
 
 /** 两句日常碎碎念的间隔：至少一分钟，缺省 5 分钟。 */
 export function whisperIntervalMs(intervalSec: number): number {
@@ -72,6 +82,17 @@ export function compactDue(config: Pick<Config, 'context'>, now: number, lastChe
   return lastCheck === null || now - lastCheck >= COMPACT_EVERY_MS;
 }
 
+/**
+ * 记忆该不该整理了：本地时间到了 `consolidateAt`，今天还没整理过（`doneOn` 是整理过的日期），
+ * 主人 30 分钟没说话。待处理的笔记有没有由调用方再看。
+ */
+export function consolidateDue(at: string, now: Date, lastTalk: number, doneOn: string | null): boolean {
+  const start = minutesOf(at);
+  if (start === null || now.getHours() * 60 + now.getMinutes() < start) return false;
+  if (doneOn === localDateKey(now)) return false;
+  return now.getTime() - lastTalk >= CONSOLIDATE_IDLE_MS;
+}
+
 export interface ScheduleState {
   /** 下一句日常碎碎念的时间（毫秒）。 */
   nextWhisper: number;
@@ -103,6 +124,8 @@ export interface YoyoOrchestratorDeps {
   readonly model: LanguageModel | null;
   /** 两个 agent 各收哪些来源；不给就都收全部来源。 */
   readonly factSources?: FactSources;
+  /** `memory.enabled` 打开时才有：拍子末尾门控，夜里整理。 */
+  readonly memory?: YoyoMemory | null;
   /** 毫秒时钟，缺省 `Date.now`。 */
   readonly clock?: () => number;
   /** 一开始的排期，缺省马上说第一句。 */
@@ -120,7 +143,10 @@ export interface YoyoOrchestrator extends Orchestrator {
   whisper(now?: Date): Promise<PerformResult | null>;
   /** 马上听一句，听到就回复。 */
   listen(now?: Date): Promise<{ readonly talked: boolean }>;
-  /** 一拍：粘贴板、桌宠对话、收件箱、到点提醒、空闲找图、碎碎念让路、上下文压缩。上一拍没走完就跳过。 */
+  /**
+   * 一拍：粘贴板、桌宠对话、收件箱、到点提醒、空闲找图、碎碎念让路、上下文压缩，打开记忆时再加门控和夜里的整理。
+   * 上一拍没走完就跳过。门控和整理在后台跑，不等。
+   */
   tick(): Promise<void>;
   /** 每秒一拍，直到 `signal` 中止或 `close`。中止时正在跑的模型也一起取消。 */
   start(signal?: AbortSignal): void;
@@ -129,6 +155,7 @@ export interface YoyoOrchestrator extends Orchestrator {
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {
   const { config, paths, logger, repos, clipboard, search, context, harness, director, model, factSources } = deps;
+  const memory = deps.memory ?? null;
   const clock = deps.clock ?? Date.now;
   const runs = createOrchestrator({ harness, store: context.store, logger });
   const secrets = [config.llm.apiKey].filter(Boolean);
@@ -146,6 +173,80 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   let started = false;
   let closed = false;
   let timer: NodeJS.Timeout | undefined;
+  /** 记忆的后台活：停下或关闭时取消。 */
+  const memoryWork = new AbortController();
+  /** 写过用户话或回复、还没门控过。门控跳过时留着，下一拍再跑。 */
+  let wrote = false;
+  let gating: Promise<void> | null = null;
+  let consolidating: Promise<void> | null = null;
+  /** 可能有待处理的笔记：启动时不知道，门控写下待处理的笔记以后又有了。 */
+  let mayHaveNotes = true;
+  /** 这个进程里整理失败过的日期：当天不再试。 */
+  let failedOn: string | null = null;
+
+  /** 记忆出错只记一行：抹掉密钥，压成一行，截短。 */
+  function memoryError(what: string, error: unknown): void {
+    const text = redact(errorText(error), secrets).replace(/\s+/g, ' ').trim().slice(0, 180);
+    logger.warn(`${what}：${text}`);
+  }
+
+  /** 这一拍写过用户话或回复就门控一次，不等它；上一次还没完就跳过这次。 */
+  function gateMemory(): void {
+    if (!memory || !wrote || gating || memoryWork.signal.aborted) return;
+    wrote = false;
+    gating = (async () => {
+      const notes = await memory.memory.gate(context.session, { signal: memoryWork.signal });
+      if (notes.some((note) => note.settledAt === undefined)) mayHaveNotes = true;
+    })()
+      .catch((error: unknown) => memoryError('记忆门控没做成', error))
+      .finally(() => {
+        gating = null;
+      });
+  }
+
+  /** 到了整理的时间、主人不在、有待处理的笔记，就在后台整理一次，最多 10 分钟。 */
+  function consolidateMemory(): void {
+    if (!memory || consolidating || !mayHaveNotes || memoryWork.signal.aborted) return;
+    const now = new Date(clock());
+    const day = localDateKey(now);
+    const doneOn = failedOn === day ? day : repos.kv.get(CONSOLIDATED_KEY);
+    if (!consolidateDue(config.memory.consolidateAt, now, state.lastTalk, doneOn)) return;
+    consolidating = (async () => {
+      const pending = await memory.store.notes.list({ pending: true, limit: 1 });
+      if (pending.length === 0) {
+        mayHaveNotes = false;
+        return;
+      }
+      if (!model) logger.warn('没配 llm：记忆整理只做衰减归档和画像的缺省渲染，反思和画像重写跳过');
+      const signal = AbortSignal.any([memoryWork.signal, AbortSignal.timeout(CONSOLIDATE_TIMEOUT_MS)]);
+      try {
+        const report = await memory.memory.consolidate({ now: clock(), signal });
+        repos.kv.set(CONSOLIDATED_KEY, day);
+        const { facts, procedures } = report;
+        repos.activity.record({
+          type: 'memory-consolidate',
+          notes: report.notes,
+          added: facts.added,
+          merged: facts.merged,
+          superseded: facts.superseded,
+          archived: facts.archived,
+          rules: procedures.added,
+          confirmed: procedures.confirmed,
+          core: report.core,
+        });
+        logger.info(
+          `记忆整理了 ${report.notes} 条笔记：新增 ${facts.added} 条事实，并入 ${facts.merged}，取代 ${facts.superseded}，归档 ${facts.archived}`,
+        );
+      } catch (error) {
+        failedOn = day;
+        throw error;
+      }
+    })()
+      .catch((error: unknown) => memoryError('记忆没整理成', error))
+      .finally(() => {
+        consolidating = null;
+      });
+  }
 
   /** 预制台词都说过了：有模型就按最近的对话和任务写一句。 */
   async function written(now: Date): Promise<Line | null> {
@@ -178,6 +279,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   async function reply(heard: string, tone: Tone, now: Date, llm: LanguageModel): Promise<void> {
     const searchText = await lookUp(heard);
     await recordUser(context, heard, now.getTime());
+    wrote = true;
     const line = await generateReply(context, orchestrator, {
       tone,
       model: llm,
@@ -228,7 +330,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     busy = true;
     try {
       if (config.clipboard.enabled) notePaste(repos, clipboard.read());
-      await director.syncPetChat();
+      if ((await director.syncPetChat()) > 0) wrote = true;
       for (const message of drain(paths.inboxFile)) {
         if (message.type === 'listen') await listen();
         else await whisper();
@@ -273,6 +375,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
           logger.error(`上下文没压缩成：${errorText(error)}`);
         }
       }
+      gateMemory();
+      consolidateMemory();
     } catch (error) {
       logger.error(errorText(error));
     } finally {
@@ -288,6 +392,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       () => {
         clearTimeout(timer);
         stopping.abort(new Error('yoyo 停下了'));
+        memoryWork.abort(new Error('yoyo 停下了'));
       },
       { once: true },
     );
@@ -308,6 +413,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     async close() {
       closed = true;
       clearTimeout(timer);
+      // 门控和整理在后台：取消，等它们收尾（出错已经记过）
+      memoryWork.abort(new Error('yoyo 关闭了'));
+      await Promise.all([gating, consolidating]);
       await runs.close();
     },
     whisper,
