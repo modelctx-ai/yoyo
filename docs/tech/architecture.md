@@ -138,6 +138,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | `Harness` | ctx 的参考实现（AI SDK 循环）。碎碎念和回复是同一个 harness 跑的两个 `AgentSpec` | `createYoyoHarness`、`agents.ts` |
 | 编排 `Orchestrator` | yoyo 的编排器：协议的几样交给 ctx 的进程内队列（同一会话串行），加上拍子、让路、收件箱、到点 | `createYoyoOrchestrator` |
 | 模型 | ctx-models 按 `llm` 配置造的 AI SDK 模型，进程内对象放在 `AgentSpec.model` 里 | `createLanguageModel` |
+| 记忆 `MemoryStore`（提案） | `yoyo.db` 里 `memory_` 前缀的表；来源 `memory` 给两个 agent 带画像和召回的事实，`recall` 工具只给回复；门控在拍子末尾，巩固在夜里。主题、节律、命令见[记忆](memory.md) | 计划：`brain/memory.ts` |
 
 # 怎么用 ctx
 

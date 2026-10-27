@@ -2,6 +2,7 @@
 
 ## 2026-10-27
 
+* **Creation**: 补上记忆（提案，`status: proposed`）：机制在 ctx（`docs/memory.md`、ADR 0006），这里只写 yoyo 决定的事。桌宠记什么（六个主题：owner、work、people、routine、taste、fix）；哪些条目进门控（用户话、回复、右键对话并进来的；碎碎念、天气、提醒不进）；门控在拍子末尾异步跑；画像和召回经来源 `memory` 给两个 agent，位置和现有事实一样（碎碎念 `prompt`、回复 `instructions`），`recall` 工具只给回复且要 `llm.tools`；巩固在 `memory.consolidateAt`（缺省 03:00）且 30 分钟没对话时跑；存在 `yoyo.db` 的 `memory_*` 表；`config.json` 的 `memory` 一节；`yoyo memory` 命令（core、facts、history、rules、forget、consolidate、tail）；运行时原则五条；分期 M0–M3 和各期依赖的 ctx 包。索引加这一篇；架构的「和 ctx 组件的对应」加记忆一行。
 * **Update**: 架构「怎么用 dsh-pet」的 `POST /menu/item` 注明 `target: 'desktop'` 是照 dsh-pet 源码用的，`openapi.yaml` 里还没写。其余接口对照 dsh-pet `dfc0396` 核对过，都一致。
 * **Update**: 开发的「和 ctx 联调」补三条：要的是 ctx `main`（0.3.x），`link:` 不看版本范围；核心包的 `zod` peer 由 yoyo 的 `zod` 满足；`ai` 只在测试里用。CI 写明 ctx 取 `main` 最新提交、不固定版本。ctx 0.3 里删掉的弃用别名（`thread`、`ContextStore`、`add(name, tool)` 等）yoyo 都没用到，不用改。
 
