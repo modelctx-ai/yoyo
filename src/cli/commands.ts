@@ -1,14 +1,23 @@
 import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { compareEntries, textOf, type ConsolidateReport, type Entry, type MemoryFact } from '@modelctx-ai/ctx';
+import {
+  compareEntries,
+  textOf,
+  type ConsolidateReport,
+  type Entry,
+  type MemoryFact,
+  type Note,
+  type Procedure,
+} from '@modelctx-ai/ctx';
+import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import { assertDirectorReady, llmReady, loadConfig, parseConfig, type Config } from '../app/config.ts';
 import { createApp, createPetHost, createPlatformClipboard, type App, type AppOverrides } from '../app/container.ts';
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
-import { allFacts, createYoyoMemory, evidenceOf, openMemoryStore } from '../brain/memory.ts';
+import { allFacts, createYoyoMemory, evidenceOf, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
@@ -74,6 +83,10 @@ function oneLine(text: string, max: number): string {
   return text.replace(/\s+/g, ' ').slice(0, max);
 }
 
+function entryText(entry: Entry): string {
+  return entry.type === 'message' ? textOf(entry.message) : '';
+}
+
 /** `context tail` 的一行：消息按角色，碎碎念记成 whisper。其余条目不列。 */
 export function contextRow(entry: Entry): string | null {
   if (entry.type === 'message') {
@@ -91,6 +104,31 @@ function day(at: number): string {
 /** `memory facts` 的一行：id、主题、一句话、从何时起、被召回几次。 */
 export function factRow(fact: MemoryFact): string {
   return `${fact.id}\t${fact.topic ?? '-'}\t${oneLine(fact.text, 80)}\t${day(fact.validFrom)} 起\t召回 ${fact.recalls.length} 次`;
+}
+
+/** `memory rules` 的一行：id、主题、触发条件和动作、确认次数。确认够了才交给模型。 */
+export function ruleRow(procedure: Procedure): string {
+  const state = procedure.confirmations >= MEMORY_DEFAULTS.confirmations ? '生效' : '待确认';
+  return `${procedure.id}\t${procedure.topic ?? '-'}\t${oneLine(procedure.when, 40)} → ${oneLine(procedure.do, 40)}\t确认 ${procedure.confirmations} 次\t${state}`;
+}
+
+/** 笔记的状态：门控没过的那段写下时就标成处理过（settledAt 等于 at）。 */
+function noteState(note: Note): string {
+  if (note.settledAt === undefined) return '待整理';
+  return note.settledAt === note.at ? '不记' : '已整理';
+}
+
+/** `memory tail` 的一行：什么时候、哪段话、显著性、主题、类别、处理了没，加这段第一句话。 */
+export function noteRow(note: Note, first: string | undefined): string {
+  return [
+    new Date(note.at).toISOString(),
+    `${note.session}#${note.from}-${note.upTo}`,
+    note.salience.toFixed(2),
+    note.topic ?? '-',
+    note.kind ?? '-',
+    noteState(note),
+    ...(first ? [oneLine(first, 40)] : []),
+  ].join('\t');
 }
 
 export function consolidateText(report: ConsolidateReport): string {
@@ -324,6 +362,37 @@ export function buildDomains(env: CommandEnv): Domain[] {
               .filter((row): row is string => row !== null);
             env.out(rows.length > 0 ? '原文：' : '原文：日志里已经没有了');
             for (const row of rows) env.out(row);
+          },
+        },
+        {
+          name: 'rules',
+          summary: '夜里从教训里归纳出的程序',
+          async run() {
+            const rules = await openMemoryStore(env.db()).procedures.list({ active: true });
+            if (rules.length === 0) return env.out('还没有程序');
+            for (const rule of rules) env.out(ruleRow(rule));
+          },
+        },
+        {
+          name: 'tail',
+          summary: '最近 12 条笔记',
+          async run() {
+            // NoteQuery 只能取最早的 N 条，最近的要全读出来再截
+            const notes = (await openMemoryStore(env.db()).notes.list()).slice(-12);
+            if (notes.length === 0) return env.out('还没有笔记');
+            const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+            const firsts = new Map<string, string>();
+            for (const session of new Set(notes.map((note) => note.session))) {
+              const from = Math.min(...notes.filter((note) => note.session === session).map((note) => note.from));
+              const entries = await context.store.list(session, { after: from - 1, types: ['message'] });
+              for (const note of notes.filter((item) => item.session === session)) {
+                const entry = entries.find(
+                  (item) => item.seq >= note.from && item.seq <= note.upTo && !ungated(item) && entryText(item),
+                );
+                if (entry) firsts.set(note.id, entryText(entry));
+              }
+            }
+            for (const note of notes) env.out(noteRow(note, firsts.get(note.id)));
           },
         },
         {

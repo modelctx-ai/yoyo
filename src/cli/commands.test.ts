@@ -269,6 +269,43 @@ describe('commands', () => {
     assert.equal(env.repos().activity.list(5).at(-1)?.type, 'memory-consolidate');
   });
 
+  test('memory rules、tail：生效的程序和最近的笔记', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('memory', 'rules'), ['还没有程序']);
+    assert.deepEqual(await run('memory', 'tail'), ['还没有笔记']);
+    const store = openMemoryStore(env.db());
+    const evidence = [{ session: 'pet:main', from: 1, upTo: 1 }];
+    const once = await store.procedures.add({ topic: 'fix', when: '报天气', do: '用摄氏度', evidence, at: 1 });
+    const twice = await store.procedures.add({ topic: 'fix', when: '称呼主人', do: '别叫老板', evidence, at: 2 });
+    await store.procedures.confirm(twice.id, [{ session: 'pet:main', from: 2, upTo: 2 }]);
+    const retired = await store.procedures.add({ when: '早上', do: '先报天气', evidence, at: 3 });
+    await store.procedures.retire(retired.id, 4);
+    assert.deepEqual(await run('memory', 'rules'), [
+      `${once.id}\tfix\t报天气 → 用摄氏度\t确认 1 次\t待确认`,
+      `${twice.id}\tfix\t称呼主人 → 别叫老板\t确认 2 次\t生效`,
+    ]);
+
+    const context = await createYoyoContext({ db: env.db(), petId: 'main' });
+    await context.append(assistantEntry('傍晚有雨', { at: 1, meta: { kind: 'weather' } }));
+    await context.append(userEntry('别叫我老板', { at: 2 }));
+    await context.append(userEntry('今天好累', { at: 3 }));
+    const at = NOW.getTime();
+    await store.notes.add([
+      { session: 'pet:main', from: 1, upTo: 2, at, salience: 0.82, kind: 'fail', topic: 'fix' },
+      { session: 'pet:main', from: 3, upTo: 3, at, salience: 0.31, settledAt: at },
+    ]);
+    const [first] = await store.notes.list();
+    await store.notes.add([{ session: 'pet:main', from: 3, upTo: 3, at: at + 1, salience: 0.7, topic: 'owner' }]);
+    await store.notes.settle([(await store.notes.list()).at(-1)!.id], at + 2);
+    assert.equal(first?.settledAt, undefined);
+    const iso = NOW.toISOString();
+    assert.deepEqual(await run('memory', 'tail'), [
+      `${iso}\tpet:main#1-2\t0.82\tfix\tfail\t待整理\t别叫我老板`,
+      `${iso}\tpet:main#3-3\t0.31\t-\t-\t不记\t今天好累`,
+      `${new Date(at + 1).toISOString()}\tpet:main#3-3\t0.70\towner\t-\t已整理\t今天好累`,
+    ]);
+  });
+
   test('chat sync：导演没在跑就提示；在跑就用记下的渠道接上', async () => {
     const calls: string[] = [];
     const { run, env, paths } = cli({

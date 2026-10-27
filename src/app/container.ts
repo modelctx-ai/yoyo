@@ -147,13 +147,6 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   const search = use('search', () => createSearch(config.anysearch));
   const model = use('model', () => createLanguageModel(config.llm));
 
-  let mcp: McpHub | null = null;
-  let tools = overrides.tools;
-  if (!tools && config.llm.tools) {
-    tools = createYoyoTools({ repos, search });
-    mcp = await connectMcp(config.mcpServers, tools, logger);
-  }
-
   let context: Context;
   // 记忆只读会话日志；日志由下面的上下文打开，用到时 context 已经建好
   const memory = use('memory', () =>
@@ -167,6 +160,18 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         })
       : null,
   );
+
+  let mcp: McpHub | null = null;
+  let tools = overrides.tools;
+  if (!tools && config.llm.tools) {
+    tools = createYoyoTools({ repos, search });
+    mcp = await connectMcp(config.mcpServers, tools, logger);
+  }
+  // recall 工具绑定在记忆这个执行环境上。只有回复给工具（碎碎念是 tools: false），所以只有回复用得到
+  const recaller = tools && config.llm.tools && memory ? memory.memory : null;
+  if (tools && recaller) for (const definition of await recaller.tools()) tools.add(definition);
+  // 非本地工具的执行环境：MCP hub 和记忆，上下文和 harness 分发工具时都要用
+  const executors = [...(mcp ? [mcp] : []), ...(recaller ? [recaller] : [])];
 
   const base: ContextSource[] = [
     taskSource({ host, repos }),
@@ -187,8 +192,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         sources,
         logger,
         ...(tools ? { tools } : {}),
-        // MCP 工具绑定在 hub 这个执行环境上，要交给上下文
-        ...(mcp ? { executors: [mcp] } : {}),
+        ...(executors.length > 0 ? { executors } : {}),
         ...(model ? { model } : {}),
         ...(config.context.maxTokens ? { maxTokens: config.context.maxTokens } : {}),
       }));
@@ -217,8 +221,9 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     }),
   );
 
-  // MCP 工具绑定在 hub 这个执行环境上，harness 分发工具时要用
-  const harness = use('harness', () => createYoyoHarness(context, { logger, ...(mcp ? { executors: [mcp] } : {}) }));
+  const harness = use('harness', () =>
+    createYoyoHarness(context, { logger, ...(executors.length > 0 ? { executors } : {}) }),
+  );
   // 碎碎念和回复都是 `record: false`：运行不写 `ctx.run.*`，不占会话，崩溃也没有断掉的运行要恢复，所以这里不配 `owner`，也不 `recover`。
   // 以后打开 `record` 时要做两件事：createYoyoOrchestrator 里的 createOrchestrator 配 `owner: 'yoyo'`（常驻进程和命令行共用一个库），
   // 并在 `start()` 和第一次 `submit` 之前 `await orchestrator.recover()`，否则崩溃留下的未结束运行会让会话一直 `session_busy`。

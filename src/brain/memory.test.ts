@@ -215,3 +215,49 @@ describe('brain/memory 门控', () => {
     assert.equal(decision.requests.length, 1);
   });
 });
+
+describe('brain/memory 整理', () => {
+  test('衰减归档和画像重写由 ctx 的 consolidate 做：用 config.memory 的归档阈值，有模型才重写画像', async () => {
+    const day = 86_400_000;
+    const now = 400 * day;
+    const sessions = createSessionStore();
+    const make = (config: Record<string, unknown>, model?: MockLanguageModelV4) =>
+      createYoyoMemory({
+        store: createMemoryStore(),
+        sessions,
+        config: parseConfig({ memory: { enabled: true, ...config } }).memory,
+        ...(model ? { model } : {}),
+        now: () => now,
+      });
+    /** 两天前的一条（激活度约 0.25）和刚记下的一条（约 1.96）。 */
+    const seed = async ({ store }: YoyoMemory) => {
+      const base = { subject: 'user', confidence: 0.9, sources: [{ session: SESSION, from: 1, upTo: 1 }] };
+      await store.facts.add({ ...base, text: '主人在台北', topic: 'routine', validFrom: now - 2 * day, salience: 0.6 });
+      await store.facts.add({
+        ...base,
+        text: '主人最近在写 yoyo',
+        topic: 'work',
+        validFrom: now - day / 10,
+        salience: 0.9,
+      });
+    };
+
+    const rewrite = new MockLanguageModelV4({ doGenerate: textResult('主人在台北，最近在写 yoyo。') });
+    const loose = make({ decay: { archiveAt: 0.1 } }, rewrite);
+    await seed(loose);
+    const kept = await loose.memory.consolidate({ now });
+    assert.equal(kept.facts.archived, 0, '归档阈值 0.1：都留着');
+    assert.equal(kept.core, true);
+    assert.equal((await loose.store.core.get())?.text, '主人在台北，最近在写 yoyo。', '有模型就让它重写画像');
+
+    const usual = make({});
+    await seed(usual);
+    const report = await usual.memory.consolidate({ now });
+    assert.equal(report.facts.archived, 1, '缺省阈值 0.55：两天前的那条归档');
+    assert.deepEqual(
+      (await usual.store.facts.list({ open: true })).map((fact) => fact.text),
+      ['主人最近在写 yoyo'],
+    );
+    assert.equal((await usual.store.core.get())?.text, '主人最近在写 yoyo', '没有模型：画像是缺省渲染');
+  });
+});
