@@ -15,6 +15,7 @@ overrides:
   '@modelctx-ai/ctx': link:../ctx/packages/core
   '@modelctx-ai/ctx-gateway': link:../ctx/packages/gateway
   '@modelctx-ai/ctx-mcp': link:../ctx/packages/mcp
+  '@modelctx-ai/ctx-memory': link:../ctx/packages/memory
   '@modelctx-ai/ctx-models': link:../ctx/packages/models
   '@modelctx-ai/ctx-protocol': link:../ctx/packages/protocol
   '@modelctx-ai/ctx-sqlite': link:../ctx/packages/sqlite
@@ -32,6 +33,9 @@ importers:
       '@modelctx-ai/ctx-mcp':
         specifier: link:../ctx/packages/mcp
         version: link:../ctx/packages/mcp
+      '@modelctx-ai/ctx-memory':
+        specifier: link:../ctx/packages/memory
+        version: link:../ctx/packages/memory
       '@modelctx-ai/ctx-models':
         specifier: link:../ctx/packages/models
         version: link:../ctx/packages/models

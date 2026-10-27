@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
 
 import { cacheFile } from '../adapters/voice/fish.ts';
-import { assertDirectorReady, loadConfig, parseConfig, speechReady } from './config.ts';
+import { MEMORY_TOPICS, assertDirectorReady, loadConfig, parseConfig, speechReady } from './config.ts';
 
 /** 第一版的 config.example.json（af306de）。 */
 const FIRST = {
@@ -136,6 +136,53 @@ describe('config', () => {
     assert.deepEqual(config.anysearch.command, ['node', 'cli.js', '8080']);
     assert.equal((config as Record<string, unknown>)['extra'], 1);
     assert.equal(parseConfig({ anysearch: { command: 'node cli.js' } }).anysearch.command, undefined);
+  });
+
+  test('memory：缺省关着，六个主题，theta 0.6，衰减 0.5 / 0.55，画像 600，夜里 03:00；模型不配就没有', () => {
+    const { memory } = parseConfig(FIRST);
+    assert.deepEqual(memory, {
+      enabled: false,
+      topics: MEMORY_TOPICS,
+      gate: { theta: 0.6 },
+      decay: { d: 0.5, archiveAt: 0.55 },
+      core: { budgetTokens: 600 },
+      consolidateAt: '03:00',
+    });
+    assert.deepEqual(Object.keys(MEMORY_TOPICS), ['owner', 'work', 'people', 'routine', 'taste', 'fix']);
+    assert.equal(parseConfig({ memory: null }).memory.enabled, false);
+    assert.equal(parseConfig({ memory: 'yes' }).memory.consolidateAt, '03:00');
+  });
+
+  test('memory 写错按缺省值：主题去掉空项，一项不剩用缺省；数超出范围、时间写错都按缺省', () => {
+    const { memory } = parseConfig({
+      memory: {
+        enabled: 'true',
+        topics: { owner: ' 主人 ', work: 3, people: '', ' ': '空名字' },
+        gate: { theta: '1.5' },
+        decay: { d: -1, archiveAt: '0.4' },
+        core: { budgetTokens: '800' },
+        consolidateAt: '25:00',
+        decision: 'clef',
+        extraction: { provider: 'cloudflare', model: 'clairic', accountId: 'acc', apiKey: 'cf-key' },
+      },
+    });
+    assert.equal(memory.enabled, true);
+    assert.deepEqual(memory.topics, { owner: '主人', work: '3' });
+    assert.equal(memory.gate.theta, 0.6);
+    assert.deepEqual(memory.decay, { d: 0.5, archiveAt: 0.4 });
+    assert.equal(memory.core.budgetTokens, 800);
+    assert.equal(memory.consolidateAt, '03:00');
+    assert.equal(memory.decision, undefined);
+    assert.deepEqual(memory.extraction, {
+      provider: 'cloudflare',
+      model: 'clairic',
+      baseUrl: '',
+      apiKey: 'cf-key',
+      accountId: 'acc',
+    });
+    assert.deepEqual(parseConfig({ memory: { topics: { a: '' } } }).memory.topics, MEMORY_TOPICS);
+    assert.equal(parseConfig({ memory: { consolidateAt: '4:30' } }).memory.consolidateAt, '4:30');
+    assert.equal(parseConfig({ memory: { gate: { theta: '' } } }).memory.gate.theta, 0.6);
   });
 
   test('speech.model 和 referenceId 不去空白，语音缓存的文件名和旧代码一样', () => {

@@ -235,7 +235,10 @@ export function fakeDirector(calls: string[], overrides: Partial<Director> = {})
       calls.push('memes');
       return null;
     },
-    syncPetChat: async () => void calls.push('sync'),
+    syncPetChat: async () => {
+      calls.push('sync');
+      return 0;
+    },
     compactIfNeeded: async () => {
       calls.push('compact');
       return false;

@@ -43,6 +43,13 @@
   "context": {
     "keep": 40
   },
+  "memory": {
+    "enabled": false,
+    "gate": { "theta": 0.6 },
+    "decay": { "d": 0.5, "archiveAt": 0.55 },
+    "core": { "budgetTokens": 600 },
+    "consolidateAt": "03:00"
+  },
   "mcpServers": {},
   "sandbox": {
     "enabled": false,

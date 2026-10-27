@@ -46,9 +46,11 @@ sources:
 
 # 和 ctx 联调
 
-ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的六个包链到 `../ctx/packages/*`，读的是 ctx 的 `dist/`：`@modelctx-ai/ctx`（`core`）、`ctx-protocol`（`protocol`，核心包把它当 peer）、`ctx-sqlite`、`ctx-mcp`、`ctx-gateway`、`ctx-models`。`ctx-exec`、`ctx-remote` 用不到，不链。改了 ctx 要在 ctx 里重新 `pnpm build`。ctx 发布以后删掉 `overrides`，同样的 `^0.3.0` 从 npm 解析。[^workspace]
+ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的七个包链到 `../ctx/packages/*`，读的是 ctx 的 `dist/`：`@modelctx-ai/ctx`（`core`）、`ctx-protocol`（`protocol`，核心包把它当 peer）、`ctx-sqlite`、`ctx-mcp`、`ctx-gateway`、`ctx-models`、`ctx-memory`（`memory`）。`ctx-exec`、`ctx-remote` 用不到，不链。改了 ctx 要在 ctx 里重新 `pnpm build`。ctx 发布以后删掉 `overrides`，同样的 `^0.3.0` 从 npm 解析。[^workspace]
 
 * 要的是 ctx `main`（0.3.x）。`link:` 不看版本范围，`../ctx` 停在旧版也装得上，要到类型检查或打开 `yoyo.db` 时才报错；拉了 ctx 记得重新构建。
+* 记忆要 ctx 的 `memory` 包、`ctx-sqlite` 的 `createSqliteMemoryStore` 和 `ctx-models` 的 System One 工厂（ctx 的记忆实现，ADR 0006）。它们合进 ctx `main` 之前，`../ctx` 要切到带记忆的分支再构建，否则 `packages/memory` 不在，`pnpm install` 就链不上；CI 取的是 ctx `main`，在那之前也会红。
+* `ctx-memory` 和 `ctx-models` 一样把 `ai` 当 peer，链接时由 ctx 自己的 `node_modules` 满足。
 * 核心包另把 `zod` 当 peer，yoyo 自己依赖的 `zod` 4 满足它。
 * `ai` 只是开发依赖：测试里用 `ai/test` 的 `MockLanguageModelV4` 和 `APICallError`。运行时的 AI SDK 类型和函数都从 `@modelctx-ai/ctx` 拿，不直接引 `ai`。
 

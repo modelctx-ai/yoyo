@@ -10,6 +10,7 @@
 - **开口说话**：每句台词都有配音，动作也配一段轻轻的音效。
 - **听你回应**：说完听你几秒，听写后先给你确认，再回复；像在提问就先搜一下。
 - **右键对话更聪明**：桌宠自己的对话框用上 yoyo 的完整记忆。
+- **记住你**（可选）：夜里把值得记的话整理成画像和记得的事，碎碎念和回复时带上；随时能看、能删。
 - **闹钟和日程**：每天、工作日、每周或某一天，到点就提醒。
 - **天气**：工作日傍晚报一次接下来几小时的天气。
 - **表情包**：空闲时自己找一套图，碎碎念时配上一张。
@@ -38,7 +39,7 @@ pnpm start
 | [安装与运行](docs/product/getting-started.md) | [开发](docs/tech/development.md)              |
 | [日常使用](docs/product/usage.md)             | [命令原则](docs/tech/cli-principles.md)       |
 | [配置](docs/product/configuration.md)         | [运行时原则](docs/tech/runtime-principles.md) |
-| [数据](docs/product/data.md)                  |                                               |
+| [数据](docs/product/data.md)                  | [记忆](docs/tech/memory.md)                   |
 | [从旧版升级](docs/product/upgrading.md)       |                                               |
 
 图标素材的许可见 [assets/NOTICE](assets/NOTICE)。

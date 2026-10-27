@@ -46,6 +46,13 @@ status: stable
 | `context.maxTokens`                        | 不写                                             | 交给模型的历史上限（估算 token）；不写就整段带上                                                    |
 | `context.compactAt`                        | 不写                                             | 历史超过这么多估算 token 时，把较早的部分压成摘要；不写就不压缩。`pnpm yoyo context compact` 手动压 |
 | `context.keep`                             | `40`                                             | 压缩时原样保留最近几条消息                                                                          |
+| `memory.enabled`                           | `false`                                          | 记住主人：画像和记得的事交给模型，夜里整理。关着什么都不建，见[记忆](#记忆)                         |
+| `memory.topics`                            | 六个主题                                         | 记哪些主题：名字 → 说明；写错的项丢掉，一项不剩用缺省                                               |
+| `memory.gate.theta`                        | `0.6`                                            | 值不值得记的门槛，0 到 1；会按最近一周的笔记自动调                                                  |
+| `memory.decay.d`、`memory.decay.archiveAt` | `0.5`、`0.55`                                    | 忘得多快（正数）、低于多少归档（0 到 1）                                                            |
+| `memory.core.budgetTokens`                 | `600`                                            | 画像多长（估算 token）                                                                              |
+| `memory.consolidateAt`                     | `03:00`                                          | 每天过了这个本地时间、主人 30 分钟没说话，就整理一次                                                |
+| `memory.decision`、`memory.extraction`     | 不写                                             | System One 的决策、提取模型；不写就用内置的判断和 `llm` 的模型，见[记忆](#记忆)                     |
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
 | `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
 
@@ -176,6 +183,29 @@ sandbox:
 * 缺省能读的文件服务器照样能读，包括写着密钥的 `config.json` 和对话记忆所在的 `yoyo.db`。不想让它读，就写进 `filesystem.denyRead`。
 * 服务器 `env` 里的密钥照样交给它。
 * 它能连的域名上，它想发什么都能发。
+
+# 记忆
+
+打开 `memory.enabled`，yoyo 会把你说过的、值得记的话夜里整理成「记得的事」和一段画像，碎碎念和回复时带上；`llm.tools` 也打开时，回复还能自己翻记忆。缺省关着。
+
+```json
+{
+  "memory": {
+    "enabled": true,
+    "topics": { "owner": "主人的偏好、作息、称呼", "work": "手头的项目和工具链" },
+    "consolidateAt": "03:00",
+    "decision": { "provider": "cloudflare", "model": "clef-flash", "accountId": "<账号 ID>", "apiKey": "<令牌>" },
+    "extraction": { "provider": "cloudflare", "model": "clairic", "accountId": "<账号 ID>", "apiKey": "<令牌>" }
+  }
+}
+```
+
+* 缺省的六个主题是 `owner`（偏好、作息、称呼）、`work`（项目、工具链）、`people`（提到的人）、`routine`（日程习惯、地点）、`taste`（喜欢的梗、表情包风格）、`fix`（纠正过 yoyo 的说法）。
+* `decision`、`extraction` 可以不写：不写时判断哪些话值得记用内置的规则，夜里提取交给 `llm` 的模型。`provider` 是 `cloudflare` 时要写 `accountId`；写得不对启动时记一行，退回不写的样子。
+* 没配 `llm` 也没配 `extraction`：话照样记下，但夜里只做遗忘和画像的简单整理，要提取的留着，等配好模型再整理。
+* 密钥和 `llm.apiKey` 一样只留在本机，报错和记录里都抹掉。
+
+主人怎么看、怎么删，见[日常使用](usage.md#记忆)。
 
 # 环境变量
 

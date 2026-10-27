@@ -10,7 +10,10 @@ export interface Verb {
   readonly name: string;
   readonly summary: string;
   readonly flags?: readonly string[];
-  run(flags: Flags): void | Promise<void>;
+  /** 位置参数的写法，只给 inspect 看，例如 `<id>`。 */
+  readonly usage?: string;
+  /** `args` 是动作后面的位置参数，例如 `yoyo memory forget <id>` 里的 id。 */
+  run(flags: Flags, args: readonly string[]): void | Promise<void>;
 }
 
 export interface Domain {
@@ -23,7 +26,13 @@ export interface Domain {
 
 export type DispatchResult =
   | { readonly kind: 'text'; readonly text: string }
-  | { readonly kind: 'run'; readonly domain: Domain; readonly verb: Verb; readonly flags: Flags };
+  | {
+      readonly kind: 'run';
+      readonly domain: Domain;
+      readonly verb: Verb;
+      readonly flags: Flags;
+      readonly args: readonly string[];
+    };
 
 export function parseArgs(argv: readonly string[]): { position: string[]; flags: Record<string, string | true> } {
   const position: string[] = [];
@@ -72,7 +81,7 @@ export function domainText(domain: Domain): string {
 
 export function inspectText(domain: Domain): string {
   const usage = domain.verbs.map((verb) => {
-    const flags = (verb.flags ?? []).map((flag) => `--${flag}`).join(' ');
+    const flags = [verb.usage ?? '', ...(verb.flags ?? []).map((flag) => `--${flag}`)].filter(Boolean).join(' ');
     return `${line(verb.name, verb.summary)}${flags ? `\n           ${flags}` : ''}`;
   });
   return [`${domain.name}  ${domain.summary}`, '', ...usage, '', domain.detail ?? ''].join('\n').trim();
@@ -122,10 +131,10 @@ export function dispatch(domains: readonly Domain[], argv: readonly string[]): D
   if (!domain) return { kind: 'text', text: `没有 ${head}。试 yoyo find ${head}` };
   if (!verbName) {
     const [only] = domain.verbs;
-    if (domain.verbs.length === 1 && only?.name === 'now') return { kind: 'run', domain, verb: only, flags };
+    if (domain.verbs.length === 1 && only?.name === 'now') return { kind: 'run', domain, verb: only, flags, args: [] };
     return { kind: 'text', text: domainText(domain) };
   }
   const verb = domain.verbs.find((item) => item.name === verbName);
   if (!verb) return { kind: 'text', text: domainText(domain) };
-  return { kind: 'run', domain, verb, flags };
+  return { kind: 'run', domain, verb, flags, args: position.slice(2) };
 }

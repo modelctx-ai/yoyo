@@ -31,6 +31,9 @@ sources:
   - id: channel
     resource: src/brain/channel.ts
     title: 对话渠道
+  - id: memory
+    resource: src/brain/memory.ts
+    title: 记忆接线
   - id: orchestrator
     resource: src/runtime/orchestrator.ts
     title: 编排器
@@ -82,7 +85,7 @@ flowchart TB
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
-| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
@@ -93,7 +96,7 @@ flowchart TB
 
 # 常驻进程
 
-`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），最后建上下文、harness、导演和编排器。[^container]
+`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），`memory.enabled` 打开才建记忆（`llm.tools` 也打开时把 `recall` 加进工具），最后建上下文、harness、导演和编排器。[^container]
 
 四样东西各管一件事：
 
@@ -125,22 +128,25 @@ flowchart LR
 5. 离下一句日常碎碎念还有 20 秒以上，就让导演去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
 6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。
 7. 配了 `context.compactAt` 时，每 10 分钟最多让导演看一次要不要压缩；压一次最多等 60 秒，超时这次就不压。
+8. 打开记忆时：这一拍写过用户话或回复（听到一句、桌宠对话并进新条目），就在后台门控一次，不等；上一次还没完就留到下一拍。
+9. 打开记忆时：过了 `memory.consolidateAt`、今天没整理过、30 分钟没对话、有待处理的笔记，就在后台整理一次，最多 10 分钟。见[记忆](memory.md)。
 
 停下时（SIGINT、SIGTERM）先停拍子，正在跑的模型一起取消，再关应用：编排器不再收新的一轮、等手上的结束，然后关 MCP 和对话渠道。`--once` 由编排器说一句，`--bake` 由导演预合成，做完就关。
 
 # 和 ctx 组件的对应
 
-ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/concepts.md`。yoyo 里各是什么：[^orchestrator] [^harness] [^agents]
+ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/concepts.md`。yoyo 里各是什么：[^orchestrator] [^harness] [^agents] [^memory]
 
 | ctx 组件 | yoyo 里是什么 | 代码 |
 | --- | --- | --- |
 | 会话 `SessionStore` | `~/.yoyo/yoyo.db` 里的 `ctx_entries`（ctx-sqlite），每只宠物一个会话 `pet:<id>` | `createYoyoContext`、`sessionFor` |
-| 上下文 `ContextBuilder` | ctx 的参考实现，配 `yoyoProjection`（碎碎念事件折成一条助手消息）和两个来源（工作状态、粘贴板）。事实怎么收、放哪由每个 agent 的 `context` 定，builder 照做 | `yoyoProjection`、`taskSource`、`clipboardSource` |
-| 工具 `ToolRegistry` | `llm.tools` 打开才有：`web_search`、`weather_forecast`、`list_alarms`、`add_alarm`，加 `mcpServers` 的工具 | `createYoyoTools`、`connectMcp` |
-| 执行环境 `Executor` | 注册表自带的进程内函数执行环境；每台 MCP 服务器经 ctx-mcp 的 hub。打开 `sandbox` 时，stdio 服务器的进程由沙箱程序（srt）启动，hub 只看到改写后的命令 | `createYoyoHarness` 的 `executors` |
+| 上下文 `ContextBuilder` | ctx 的参考实现，配 `yoyoProjection`（碎碎念事件折成一条助手消息）和来源（工作状态、粘贴板，打开记忆时加两个记忆来源）。事实怎么收、放哪由每个 agent 的 `context` 定，builder 照做 | `yoyoProjection`、`taskSource`、`clipboardSource` |
+| 工具 `ToolRegistry` | `llm.tools` 打开才有：`web_search`、`weather_forecast`、`list_alarms`、`add_alarm`，加 `mcpServers` 的工具，打开记忆时加 `recall` | `createYoyoTools`、`connectMcp` |
+| 执行环境 `Executor` | 注册表自带的进程内函数执行环境；每台 MCP 服务器经 ctx-mcp 的 hub，打开 `sandbox` 时 stdio 服务器的进程由沙箱程序（srt）启动，hub 只看到改写后的命令；打开记忆和 `llm.tools` 时还有记忆本身（`recall`） | `createYoyoHarness` 的 `executors` |
 | `Harness` | ctx 的参考实现（AI SDK 循环）。碎碎念和回复是同一个 harness 跑的两个 `AgentSpec` | `createYoyoHarness`、`agents.ts` |
 | 编排 `Orchestrator` | yoyo 的编排器：协议的几样交给 ctx 的进程内队列（同一会话串行），加上拍子、让路、收件箱、到点 | `createYoyoOrchestrator` |
 | 模型 | ctx-models 按 `llm` 配置造的 AI SDK 模型，进程内对象放在 `AgentSpec.model` 里 | `createLanguageModel` |
+| 记忆 `MemoryStore`、`Memory` | `memory.enabled` 打开才有：`yoyo.db` 里 `memory_` 前缀的表（ctx-sqlite）；ctx-memory 的 `createMemory`。来源 `memory`（回复）和 `memory-whisper`（碎碎念）带画像和召回的事实，`recall` 工具只给回复；门控在拍子末尾，巩固在夜里，都在后台。主题、节律、命令见[记忆](memory.md) | `createYoyoMemory`、`memorySources` |
 
 # 怎么用 ctx
 
@@ -151,18 +157,18 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | 存储 | `createSqliteStore({ database, prefix: 'ctx_' })` 复用已经打开的 `yoyo.db`，表是 `ctx_entries`、`ctx_meta` | `createYoyoContext` |
 | 会话 | 每只宠物一个：`pet:<pet.id>` | `sessionFor` |
 | 投影 | `whisper` 事件 `fold`：连续的碎碎念渲染成一条助手消息「碎碎念：\n…」；摘要渲染成「前面对话的摘要：\n…」；用户话和回复原样带上，不截断。配了 `context.maxTokens` 才按估算 token 裁剪 | `yoyoProjection` |
-| 写入 | 回复、提醒、天气记成助手消息；碎碎念（预制的和模型写的）记成 `whisper` 事件；听到的话记成用户消息。经这个上下文写的条目 `source` 是 `yoyo` | `recordLine`、`recordUser` |
-| 来源 | `task`：桌宠的工作状态加本地任务的前 5 条；`clipboard`：最近一次复制的前 160 字，`clipboard.enabled` 关掉时不挂 | `taskSource`、`clipboardSource` |
+| 写入 | 回复、提醒、天气记成助手消息；碎碎念（预制的和模型写的）记成 `whisper` 事件；听到的话记成用户消息。`recordLine` 在 `meta.kind` 记下台词类别（记忆按它剔掉天气和提醒）。经这个上下文写的条目 `source` 是 `yoyo` | `recordLine`、`recordUser` |
+| 来源 | `task`：桌宠的工作状态加本地任务的前 5 条；`clipboard`：最近一次复制的前 160 字，`clipboard.enabled` 关掉时不挂；`memory`、`memory-whisper`：`memory.enabled` 打开才挂，见[记忆](memory.md#画像和召回放哪) | `taskSource`、`clipboardSource`、`memorySources` |
 | agent | 碎碎念和回复各是一个 `AgentSpec`，放在 `agents.ts`：名字、工具、步数、参数（`temperature`、30 秒超时、重试一次）和 `context`（事实放哪）是 JSON；人设加语气、模型每一轮填进去 | `WHISPER_AGENT`、`REPLY_AGENT` |
 | 一轮 | `compose.ts` 拼成 `RunRequest`（`session`、`agent`、`prompt`、`record: false`、`signal`），交给编排器 `submit`，等 `done`；这一刻的事实由 harness 里的 builder 按 agent 的 `context` 收 | `whisperRequest`、`replyRequest` |
 | 碎碎念 | 指令是人设加语气；历史是上下文视图；事实放进最后一条临时用户消息（`context.facts.placement` 是 `prompt`），空一行，末尾「请再说一句碎碎念。」。`temperature` 0.8，不给工具。和视图里已有的句子重复就报错，这一次不说 | `generateWhisper` |
 | 回复 | 指令是回复人设加语气，事实追加在指令后（`placement` 是 `instructions`）；有搜索结果时最后加一条「搜索结果：\n…」。`temperature` 0.7；`llm.tools` 打开时给工具，最多 4 步 | `generateReply` |
-| 事实 | 两个 agent 放的位置不一样，写在各自的 `AgentSpec.context.facts` 里：碎碎念 `placement: 'prompt'`，回复 `placement: 'instructions'`。来源和投影用缺省（全部来源、`default` 投影）。harness 直接用上下文的 builder，不再包一层 | `WHISPER_AGENT`、`REPLY_AGENT`、`createYoyoHarness` |
+| 事实 | 两个 agent 放的位置不一样，写在各自的 `AgentSpec.context.facts` 里：碎碎念 `placement: 'prompt'`，回复 `placement: 'instructions'`。投影用缺省（`default`）；来源缺省全部，打开记忆时组装根给两份名单（`FactSources`），碎碎念收 `memory-whisper`、回复收 `memory`，其余来源两边都收。harness 直接用上下文的 builder，不再包一层 | `WHISPER_AGENT`、`REPLY_AGENT`、`createYoyoHarness` |
 | 记录 | 每一轮都是 `record: false`：用户这句、回复和 `ctx.run.*` 都不写。听到的话在跑回复之前由编排器 `recordUser`；合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `orchestrator.ts`、`director.ts` |
 | 报错 | `stopReason` 是 `error` 或 `aborted` 就报错。`RunResult.error`（`ErrorInfo`）带 `statusCode` 和 `responseBody`，`compose.ts` 抹掉 `llm.apiKey`、压成一行、截到 180 字，和 `describeError` 对抛出来的错误做的一样；有状态码时「模型接口返回 <状态码>：<正文片段>」，否则「模型没回：…」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过。导入的条目 `at` 是过去，日志里排在写入的位置，投影和 `yoyo context tail` 按 `(at, seq)` 排回原来的位置（`compareEntries`） | `storePetChat` |
 | 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。只支持 `openai-compatible` | `startChannel`、`connectChannel` |
-| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness | `createYoyoTools`、`connectMcp` |
+| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness；打开记忆时再加 `recall`，执行环境是记忆 | `createYoyoTools`、`connectMcp`、`createApp` |
 | 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。压缩另记的 `ctx.compacted` 和别的框架事件 `ctx.*` 投影里看不见，不计入阈值，`yoyo context tail` 也不列。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 旧摘要 | 摘要的 `covers` 在 ctx 0.3 里按 `seq` 算，升级前写的旧摘要（`v` 是 0）可能盖住了后写进来的旧记录。常驻进程启动时、开拍子之前找一次：有，而且有模型，就用 `COMPACT_INSTRUCTIONS` 重新压一次，新摘要取代旧摘要；没有模型记一条警告，下次启动再做。命令行不做，出错不挡启动 | `recompactLossySummaries`、`runDaemon` |
 | 模型 | `createModel({ provider, baseUrl, apiKey, model })`；没配齐就是 `null`：只用预制台词，碎碎念说完也不听 | `createLanguageModel` |
@@ -421,3 +427,4 @@ YOYO_HOME=/tmp/yoyo-dev YOYO_CONFIG=/tmp/yoyo-dev/config.json pnpm once
 [^director]: 导演
 [^daemon]: 常驻循环
 [^client]: dsh-pet 客户端
+[^memory]: 记忆接线
