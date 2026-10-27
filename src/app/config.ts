@@ -126,6 +126,81 @@ const context = z.looseObject({
   keep: count(40),
 });
 
+/** 0 到 1 之间的数，可以写成字符串；空着、不是数、超出范围按缺省值。 */
+function unit(fallback: number) {
+  return z
+    .preprocess((value) => (value === '' ? undefined : value), z.coerce.number().min(0).max(1))
+    .catch(fallback)
+    .default(fallback);
+}
+
+/** 正数，可以写成字符串。 */
+function positive(fallback: number) {
+  return z.coerce.number().positive().catch(fallback).default(fallback);
+}
+
+/** 本地时间 `HH:MM`；写错按缺省值。 */
+function clockTime(fallback: string) {
+  return z.preprocess((value) => {
+    const time = textOf(value)?.trim();
+    return time && /^([01]?\d|2[0-3]):[0-5]\d$/.test(time) ? time : undefined;
+  }, z.string().default(fallback));
+}
+
+/** 桌宠记什么：主题名 → 说明，给门控的主题选择题用。记忆是关于主人的，不是关于世界的。 */
+export const MEMORY_TOPICS: Readonly<Record<string, string>> = {
+  owner: '主人的偏好、作息、称呼、不喜欢的话题',
+  work: '手头的项目、工具链、最近在折腾什么',
+  people: '提到的人和关系',
+  routine: '日程习惯、常去的地方、天气要看哪里',
+  taste: '喜欢的梗、表情包风格、觉得好笑的事',
+  fix: '主人纠正过 yoyo 的说法、不要再做的事',
+};
+
+/** 主题表：名字和说明都要是非空的文字，写错的项丢掉；一项都不剩就用缺省的六个。 */
+const topics = z.preprocess(
+  (value) => {
+    if (!isRecord(value)) return undefined;
+    const entries = Object.entries(value)
+      .map(([name, about]) => [name.trim(), textOf(about)?.trim() ?? ''] as const)
+      .filter(([name, about]) => name && about);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  },
+  z.record(z.string(), z.string()).default(() => ({ ...MEMORY_TOPICS })),
+);
+
+/**
+ * System One 的决策或提取模型，`ctx-models` 的 `SystemOneSpec` 的写法。`provider` 和 `model` 都写了才算配了，
+ * 否则当没配，用 ctx 的缺省；`cloudflare` 还要 `accountId`，到建模型时再查。
+ */
+const systemOne = z.preprocess(
+  (value) => (isRecord(value) ? value : undefined),
+  z
+    .looseObject({
+      provider: text(),
+      model: text(),
+      baseUrl: text(),
+      apiKey: text(),
+      accountId: text(),
+    })
+    .optional(),
+);
+
+const memory = z.looseObject({
+  /** 缺省关闭：关着就什么都不建，没有记忆表、来源、工具，拍子里也没有门控和巩固。 */
+  enabled: flag(false),
+  /** 门控和并入判断。不配用 ctx 的启发式。 */
+  decision: systemOne,
+  /** 夜里提取。不配就让 `llm` 的模型提取；`llm` 也没配就不提取。 */
+  extraction: systemOne,
+  topics,
+  gate: z.preprocess(objectOrNothing, z.looseObject({ theta: unit(0.6) }).prefault({})),
+  decay: z.preprocess(objectOrNothing, z.looseObject({ d: positive(0.5), archiveAt: unit(0.55) }).prefault({})),
+  core: z.preprocess(objectOrNothing, z.looseObject({ budgetTokens: count(600) }).prefault({})),
+  /** 每天到这个本地时间以后，主人 30 分钟没说话，就整理一次。 */
+  consolidateAt: clockTime('03:00'),
+});
+
 export const configSchema = z.looseObject({
   /** `dsh-pet` 驱动桌宠；`console` 只在终端打印，用来在没有桌宠的机器上调试。 */
   stage: z.enum(['dsh-pet', 'console']).catch('dsh-pet').default('dsh-pet'),
@@ -139,6 +214,7 @@ export const configSchema = z.looseObject({
   clipboard: z.preprocess(objectOrNothing, toggle.prefault({})),
   hotkey: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),
+  memory: z.preprocess(objectOrNothing, memory.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
   mcpServers: z.preprocess(objectOrNothing, z.record(z.string(), z.unknown()).default({})),
 });
@@ -152,6 +228,8 @@ export type AsrConfig = Config['asr'];
 export type AnysearchConfig = Config['anysearch'];
 export type ContextConfig = Config['context'];
 export type McpServersConfig = Config['mcpServers'];
+export type MemoryConfig = Config['memory'];
+export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
 
 function describeIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join('.') || '(根)'}：${issue.message}`).join('；');

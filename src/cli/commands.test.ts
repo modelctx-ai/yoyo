@@ -9,6 +9,7 @@ import { assistantEntry, eventEntry, userEntry } from '@modelctx-ai/ctx';
 import type { AppOverrides } from '../app/container.ts';
 import { resolvePaths, type Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
+import { openMemoryStore } from '../brain/memory.ts';
 import { localDateKey } from '../kernel/time.ts';
 import { directorAlive, drain, writePid } from '../runtime/inbox.ts';
 import {
@@ -56,7 +57,7 @@ function cli(options: { readonly config?: unknown; readonly overrides?: AppOverr
       const start = lines.length;
       const result = dispatch(domains, argv);
       if (result.kind === 'text') lines.push(result.text);
-      else await result.verb.run(result.flags);
+      else await result.verb.run(result.flags, result.args);
       return lines.slice(start);
     },
   };
@@ -165,6 +166,13 @@ describe('commands', () => {
   test('context compact：没配模型就说一句', async () => {
     const { run } = cli({ config: {} });
     assert.deepEqual(await run('context', 'compact'), ['还没配好 llm，压缩要用模型']);
+  });
+
+  test('memory core：没有画像就说一句；有就打印更新时间和画像，不要 config.json', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('memory', 'core'), ['还没有画像']);
+    await openMemoryStore(env.db()).core.set('主人叫小王，最近在写 yoyo。', NOW.getTime());
+    assert.deepEqual(await run('memory', 'core'), [`更新于 ${NOW.toISOString()}`, '主人叫小王，最近在写 yoyo。']);
   });
 
   test('chat sync：导演没在跑就提示；在跑就用记下的渠道接上', async () => {

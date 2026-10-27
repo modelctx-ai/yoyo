@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
+
+import { MockLanguageModelV4 } from 'ai/test';
 
 import { silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { Director } from '../runtime/director.ts';
-import { memoryLogger } from '../runtime/testing.ts';
+import { fakeDirector, memoryLogger } from '../runtime/testing.ts';
 import { parseConfig } from './config.ts';
 import { createApp } from './container.ts';
 import { resolvePaths, type Paths } from './paths.ts';
@@ -18,6 +21,35 @@ function tempPaths(): Paths {
 }
 
 const LLM = { baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'llm-key', model: 'mock-model' };
+
+function memoryTables(app: { readonly db: DatabaseSync }): string[] {
+  return (
+    app.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'memory_%'").all() as {
+      name: string;
+    }[]
+  )
+    .map((row) => row.name)
+    .toSorted();
+}
+
+function mockText(text: string): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doGenerate: {
+      content: [{ type: 'text', text }],
+      finishReason: { unified: 'stop', raw: 'stop' },
+      usage: {
+        inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+        outputTokens: { total: 1, text: 1, reasoning: 0 },
+      },
+      warnings: [],
+    },
+  });
+}
+
+/** 第几次模型调用里 `<memory>` 出现了几次（指令和消息都算）。 */
+function memoryBlocks(model: MockLanguageModelV4, call: number): number {
+  return JSON.stringify(model.doGenerateCalls[call]!.prompt).split('<memory>').length - 1;
+}
 
 describe('container', () => {
   test('控制台舞台：没配的搜索、模型、工具都留空；close 可以调两次', async () => {
@@ -59,6 +91,47 @@ describe('container', () => {
     });
     assert.equal(app.model, null);
     assert.equal(app.director, director);
+    await app.close();
+  });
+
+  test('memory 缺省关着：没有记忆、记忆表和记忆来源', async () => {
+    const app = await createApp(parseConfig({ stage: 'console', llm: LLM }), tempPaths(), { logger: memoryLogger() });
+    assert.equal(app.memory, null);
+    assert.deepEqual(memoryTables(app), []);
+    assert.deepEqual(await app.context.builder.facts(app.context.session), []);
+    await app.close();
+  });
+
+  test('memory.enabled：记忆表建在 yoyo.db 里，两个记忆来源注册进上下文，两个 agent 各收一份', async () => {
+    const model = mockText('在呢，周三下午开会');
+    const app = await createApp(
+      parseConfig({ stage: 'console', llm: LLM, listen: { enabled: true }, memory: { enabled: true } }),
+      tempPaths(),
+      {
+        logger: memoryLogger(),
+        model,
+        director: fakeDirector([], { choose: async () => null, hear: async () => '周三下午开周会' }),
+      },
+    );
+    assert.ok(app.memory);
+    assert.deepEqual(memoryTables(app), [
+      'memory_core',
+      'memory_facts',
+      'memory_meta',
+      'memory_notes',
+      'memory_procedures',
+    ]);
+    await app.memory.store.core.set('主人叫小王', 1);
+    assert.deepEqual(
+      (await app.context.builder.facts(app.context.session)).map((fact) => fact.source),
+      ['memory', 'memory-whisper'],
+    );
+    // 碎碎念说完听一句、回复：两轮各只带一份记忆
+    await app.orchestrator.whisper();
+    assert.equal(model.doGenerateCalls.length, 2);
+    assert.equal(memoryBlocks(model, 0), 1);
+    assert.equal(memoryBlocks(model, 1), 1);
+    assert.match(JSON.stringify(model.doGenerateCalls[1]!.prompt[0]), /主人叫小王/, '回复接在指令后面');
     await app.close();
   });
 

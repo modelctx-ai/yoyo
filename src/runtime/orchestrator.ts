@@ -11,6 +11,7 @@ import {
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
+import type { FactSources } from '../brain/agents.ts';
 import { generateReply, generateWhisper } from '../brain/compose.ts';
 import { recordUser } from '../brain/context.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
@@ -100,6 +101,8 @@ export interface YoyoOrchestratorDeps {
   readonly harness: Harness;
   readonly director: Director;
   readonly model: LanguageModel | null;
+  /** 两个 agent 各收哪些来源；不给就都收全部来源。 */
+  readonly factSources?: FactSources;
   /** 毫秒时钟，缺省 `Date.now`。 */
   readonly clock?: () => number;
   /** 一开始的排期，缺省马上说第一句。 */
@@ -125,7 +128,7 @@ export interface YoyoOrchestrator extends Orchestrator {
 }
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {
-  const { config, paths, logger, repos, clipboard, search, context, harness, director, model } = deps;
+  const { config, paths, logger, repos, clipboard, search, context, harness, director, model, factSources } = deps;
   const clock = deps.clock ?? Date.now;
   const runs = createOrchestrator({ harness, store: context.store, logger });
   const secrets = [config.llm.apiKey].filter(Boolean);
@@ -149,7 +152,13 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     if (!model) return null;
     logger.info('预制台词用完了，按最近的对话和任务写一句');
     const tone = toneForHour(now.getHours());
-    return generateWhisper(context, orchestrator, { tone, model, secrets, signal: stopping.signal });
+    return generateWhisper(context, orchestrator, {
+      tone,
+      model,
+      secrets,
+      signal: stopping.signal,
+      ...(factSources ? { sources: factSources.whisper } : {}),
+    });
   }
 
   /** 像提问就先搜一下。打开工具时由模型自己决定搜不搜，不再先按问句搜一遍。 */
@@ -175,6 +184,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       secrets,
       tools: config.llm.tools,
       signal: stopping.signal,
+      ...(factSources ? { sources: factSources.reply } : {}),
       ...(searchText ? { searchText } : {}),
     });
     await director.speak(line, now);

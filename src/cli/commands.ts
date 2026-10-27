@@ -8,6 +8,7 @@ import { createApp, createPetHost, createPlatformClipboard, type App, type AppOv
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
+import { openMemoryStore } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
@@ -246,6 +247,24 @@ export function buildDomains(env: CommandEnv): Domain[] {
             const context = await createYoyoContext({ db: env.db(), petId: config.pet.id, model, logger: env.logger });
             const done = await compactContext(context, { keep: config.context.keep, model });
             env.out(done ? `上下文压成摘要：约 ${done.before} → ${done.after} token` : '上下文还不长，不用压缩');
+          },
+        },
+      ],
+    },
+    {
+      name: 'memory',
+      summary: '桌宠记住的事',
+      detail:
+        '只读写本地库，不用模型、不碰桌宠。记忆存在 ~/.yoyo/yoyo.db 的 memory_ 表；config.json 的 memory.enabled 打开以后，常驻进程才记。',
+      verbs: [
+        {
+          name: 'core',
+          summary: '画像和它的更新时间',
+          async run() {
+            const core = await openMemoryStore(env.db()).core.get();
+            if (!core?.text.trim()) return env.out('还没有画像');
+            env.out(`更新于 ${new Date(core.at).toISOString()}`);
+            env.out(core.text);
           },
         },
       ],

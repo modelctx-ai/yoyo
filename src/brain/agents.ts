@@ -31,15 +31,36 @@ export const REPLY_AGENT = {
 
 const REPLY_TOOL_STEPS = 4;
 
-export function whisperAgent(tone: Tone, model: ModelRef): AgentSpec {
-  return { ...WHISPER_AGENT, model, instructions: whisperInstructions(tone) };
+/** 两个 agent 各收哪些来源（按名字）。不给就收 builder 里的全部来源。 */
+export interface FactSources {
+  readonly whisper: readonly string[];
+  readonly reply: readonly string[];
 }
 
-export function replyAgent(tone: Tone, model: ModelRef, options: { readonly tools?: boolean } = {}): AgentSpec {
+export interface AgentOptions {
+  /** 这一轮只收这些来源；不给就全部。 */
+  readonly sources?: readonly string[];
+}
+
+export function whisperAgent(tone: Tone, model: ModelRef, options: AgentOptions = {}): AgentSpec {
+  return {
+    ...WHISPER_AGENT,
+    model,
+    instructions: whisperInstructions(tone),
+    ...(options.sources ? { context: { facts: { ...WHISPER_AGENT.context.facts, sources: options.sources } } } : {}),
+  };
+}
+
+export function replyAgent(
+  tone: Tone,
+  model: ModelRef,
+  options: AgentOptions & { readonly tools?: boolean } = {},
+): AgentSpec {
   return {
     ...REPLY_AGENT,
     model,
     instructions: replyInstructions(tone),
     ...(options.tools ? { tools: true, maxSteps: REPLY_TOOL_STEPS } : {}),
+    ...(options.sources ? { context: { facts: { ...REPLY_AGENT.context.facts, sources: options.sources } } } : {}),
   };
 }
