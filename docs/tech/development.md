@@ -71,6 +71,7 @@ ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的七个�
 * `README.md` 只放产品介绍和快速开始；使用说明在 `docs/product/`，实现和原则在 `docs/tech/`。
 * 产品文档不写源码路径、接口和内部表名；技术文档用 frontmatter 的 `resource`、`sources` 指向源文件。
 * 改了文档，在 [docs/log.md](../log.md) 记一笔。
+* 完整的约定（frontmatter 字段、脚注、`proposed` 到 `stable`、改配置和加命令时要连带改什么）在仓库根目录的 [AGENTS.md](../../AGENTS.md)。
 
 [^vite]: Vite+ 配置
 [^package]: 脚本
