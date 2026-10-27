@@ -21,6 +21,7 @@ okf_version: "0.2"
 * [开发](tech/development.md) - 工具链、脚本、和 ctx 联调、CI、调试、文档约定。
 * [命令原则](tech/cli-principles.md) - 命令怎么分层、怎么被发现、默认输出为什么短。
 * [运行时原则](tech/runtime-principles.md) - 桌宠边界、碎碎念让路、记录、粘贴板和联系人各自守什么。
+* [记忆](tech/memory.md) - 提案：桌宠记什么主题、哪些话进门控、画像和召回放在哪个 agent、夜里什么时候整理、主人怎么看和删、分期。机制在 ctx。
 
 ## 其他
 
