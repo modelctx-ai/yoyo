@@ -7,12 +7,26 @@ import {
   type McpServers,
 } from '@modelctx-ai/ctx-mcp';
 
-import type { McpServersConfig } from '../app/config.ts';
+import type { McpServersConfig, SandboxConfig } from '../app/config.ts';
+import { errorText } from '../app/log.ts';
 import type { Logger } from '../ports/index.ts';
+import {
+  prepareSandbox,
+  sandboxed,
+  wantsSandbox,
+  type PrepareSandboxOptions,
+  type SandboxLauncher,
+} from './sandbox.ts';
+
+export interface McpSandboxOptions extends PrepareSandboxOptions {
+  readonly config: SandboxConfig;
+}
 
 export interface ConnectMcpOptions {
   /** 测试用：换掉真正的连接方式。 */
   readonly connector?: McpConnector;
+  /** `sandbox` 配置和 yoyo 自己的位置（`YOYO_HOME`、`config.json`）。不给或没打开就不加沙箱。 */
+  readonly sandbox?: McpSandboxOptions;
 }
 
 type Fields = Readonly<Record<string, unknown>>;
@@ -89,6 +103,35 @@ export function validMcpServers(servers: McpServersConfig, logger: Logger): McpS
   return out;
 }
 
+/**
+ * `sandbox.enabled` 打开时，把要放进沙箱的 stdio 服务器改成经沙箱程序启动，返回改写后的服务器和放进沙箱的名字。
+ * 沙箱程序找不到、`policy` 读不出或设置写不下时记一行，这些服务器都不启动，不退回到不加沙箱运行；
+ * `url` 的和写了 `"sandbox": false` 的照常连。
+ */
+export function applySandbox(
+  valid: McpServers,
+  raw: McpServersConfig,
+  sandbox: McpSandboxOptions | undefined,
+  logger: Logger,
+): { readonly servers: McpServers; readonly boxed: ReadonlySet<string> } {
+  const names = sandbox?.config.enabled
+    ? Object.keys(valid).filter((name) => wantsSandbox(raw[name], valid[name]!))
+    : [];
+  if (!sandbox || names.length === 0) return { servers: valid, boxed: new Set() };
+  let launcher: SandboxLauncher | null = null;
+  try {
+    launcher = prepareSandbox(sandbox.config, sandbox);
+  } catch (error) {
+    logger.warn(`${errorText(error)}，sandbox.enabled 打开了，这些 MCP 不启动：${names.join('、')}`);
+  }
+  const out: Record<string, McpServerConfig> = { ...valid };
+  for (const name of names) {
+    if (launcher) out[name] = sandboxed(valid[name]!, launcher);
+    else delete out[name];
+  }
+  return { servers: out, boxed: new Set(launcher ? names : []) };
+}
+
 /** 连上 mcpServers 里的服务器，把它们的工具写进注册表。没有可连的服务器就返回 null。 */
 export async function connectMcp(
   servers: McpServersConfig,
@@ -96,7 +139,7 @@ export async function connectMcp(
   logger: Logger,
   options: ConnectMcpOptions = {},
 ): Promise<McpHub | null> {
-  const valid = validMcpServers(servers, logger);
+  const { servers: valid, boxed } = applySandbox(validMcpServers(servers, logger), servers, options.sandbox, logger);
   if (Object.keys(valid).length === 0) return null;
   const hub = createMcpHub(valid, {
     clientName: 'yoyo',
@@ -111,7 +154,8 @@ export async function connectMcp(
   const statuses = await hub.connect();
   hub.registerInto(registry);
   for (const status of statuses) {
-    if (status.state === 'connected') logger.info(`MCP ${status.name} 已连上，${status.tools.length} 个工具`);
+    const where = boxed.has(status.name) ? '（在沙箱里）' : '';
+    if (status.state === 'connected') logger.info(`MCP ${status.name} 已连上${where}，${status.tools.length} 个工具`);
     else if (status.state === 'failed') logger.warn(`MCP ${status.name} 没连上：${status.error}`);
     else logger.info(`MCP ${status.name} 没启用`);
   }

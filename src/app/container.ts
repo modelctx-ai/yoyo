@@ -168,7 +168,9 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
     tools = createYoyoTools({ repos, search });
-    mcp = await connectMcp(config.mcpServers, tools, logger);
+    mcp = await connectMcp(config.mcpServers, tools, logger, {
+      sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
+    });
   }
   // recall 工具绑定在记忆这个执行环境上。只有回复给工具（碎碎念是 tools: false），所以只有回复用得到
   const recaller = tools && config.llm.tools && memory ? memory.memory : null;

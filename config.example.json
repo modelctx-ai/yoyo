@@ -50,5 +50,17 @@
     "core": { "budgetTokens": 600 },
     "consolidateAt": "03:00"
   },
-  "mcpServers": {}
+  "mcpServers": {},
+  "sandbox": {
+    "enabled": false,
+    "command": "srt",
+    "policy": {
+      "network": {
+        "allowedDomains": []
+      },
+      "filesystem": {
+        "allowWrite": []
+      }
+    }
+  }
 }

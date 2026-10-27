@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 
 import { createOrchestrator, createToolRegistry, tool } from '@modelctx-ai/ctx';
-import type { McpConnector, McpServerConfig } from '@modelctx-ai/ctx-mcp';
+import { connectorFor, type McpConnector, type McpServerConfig } from '@modelctx-ai/ctx-mcp';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 
@@ -33,6 +37,47 @@ function recorder(): Logger & { readonly lines: string[] } {
 }
 
 const fake = (text: string) => tool({ description: text, inputSchema: z.object({}), execute: async () => text });
+
+const fixtures = fileURLToPath(new URL('fixtures', import.meta.url));
+const fakeSrt = join(fixtures, 'fake-srt.mjs');
+const whereServer = join(fixtures, 'where-server.mjs');
+
+/** 记下交给 ctx-mcp 的配置；`real` 的再交给 ctx-mcp 真正的连接方式，别的给一个假连接。 */
+function recordingConnector(real: readonly string[] = []) {
+  const seen: Record<string, McpServerConfig> = {};
+  const spawn = connectorFor('yoyo');
+  const connector: McpConnector = async (name, config, options) => {
+    seen[name] = config;
+    if (real.includes(name)) return await spawn(name, config, options);
+    return { tools: async () => ({ ping: fake('p') }), close: async () => {} };
+  };
+  return { seen, connector };
+}
+
+/** 三台服务器：一台要包的 stdio（经假 srt 真的启动）、一台豁免的 via、一台 HTTP。 */
+function setup(sandbox: unknown) {
+  const home = mkdtempSync(join(tmpdir(), 'yoyo-mcp-sandbox-'));
+  const config = parseConfig({
+    sandbox,
+    mcpServers: {
+      boxed: {
+        command: process.execPath,
+        args: [whereServer],
+        cwd: fixtures,
+        env: { MARK: 'm', FAKE_SRT_LOG: join(home, 'srt.log') },
+      },
+      via: { command: 'via', args: ['serve'], sandbox: false },
+      web: { url: 'https://mcp.example/api' },
+    },
+  });
+  const sandboxOptions = {
+    config: config.sandbox,
+    dataDir: join(home, 'data'),
+    configFile: join(home, 'config.json'),
+    env: { PATH: fixtures },
+  };
+  return { home, config, sandboxOptions };
+}
 
 describe('brain/mcp', () => {
   test('没配 mcpServers 就不连，返回 null', async () => {
@@ -179,5 +224,126 @@ describe('brain/mcp', () => {
     assert.equal(mcpServerOf({ command: '  ' }), null);
     assert.equal(mcpServerOf(null), null);
     assert.equal(mcpServerOf(['node']), null);
+  });
+
+  describe('sandbox', () => {
+    test('打开后 stdio 服务器经沙箱程序启动：交给 ctx-mcp 的是改写后的命令，里面的进程照常应答', async () => {
+      const { home, config, sandboxOptions } = setup({
+        enabled: true,
+        command: ['fake-srt.mjs', '--debug'],
+        policy: { network: { allowedDomains: ['api.example.com'] } },
+      });
+      const { seen, connector } = recordingConnector(['boxed']);
+      const logger = recorder();
+      const hub = await connectMcp(config.mcpServers, createToolRegistry(), logger, {
+        connector,
+        sandbox: sandboxOptions,
+      });
+      assert.ok(hub);
+      try {
+        const boxed = seen['boxed'];
+        assert.ok(boxed && 'command' in boxed);
+        const settingsFile = boxed.args?.[2] ?? '';
+        assert.match(settingsFile, /\/data\/sandbox\/settings-[0-9a-f]{16}\.json$/);
+        assert.deepEqual(boxed, {
+          command: fakeSrt,
+          args: ['--debug', '--settings', settingsFile, '--', process.execPath, whereServer],
+          env: { MARK: 'm', FAKE_SRT_LOG: join(home, 'srt.log') },
+          cwd: fixtures,
+        });
+        assert.deepEqual(seen['via'], { command: 'via', args: ['serve'] }, '写了 "sandbox": false 的不包');
+        assert.deepEqual(seen['web'], { url: 'https://mcp.example/api' }, 'url 的不动');
+
+        const [record] = readFileSync(join(home, 'srt.log'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        assert.deepEqual(record.options, ['--debug', '--settings', settingsFile]);
+        assert.deepEqual(record.command, [process.execPath, whereServer]);
+        assert.equal(record.cwd, fixtures, 'cwd 交给沙箱程序');
+        assert.deepEqual(record.settings, {
+          network: { allowedDomains: ['api.example.com'], deniedDomains: [] },
+          filesystem: { denyRead: [], allowWrite: [], denyWrite: [join(home, 'data'), join(home, 'config.json')] },
+        });
+
+        const output = await hub.execute({ id: 'c1', name: 'boxed__where', input: {} }, { session: 's' });
+        assert.deepEqual(output, { type: 'text', text: JSON.stringify({ cwd: fixtures, mark: 'm' }) });
+        assert.ok(logger.lines.includes('info MCP boxed 已连上（在沙箱里），1 个工具'));
+        assert.ok(logger.lines.includes('info MCP via 已连上，1 个工具'));
+      } finally {
+        await hub.close();
+      }
+    });
+
+    test('沙箱程序找不到：要包的服务器都不启动，记一行，不退回到不加沙箱；url 的和豁免的照常连', async () => {
+      const { config, sandboxOptions } = setup({ enabled: true, command: 'no-such-srt' });
+      const { seen, connector } = recordingConnector();
+      const logger = recorder();
+      const hub = await connectMcp(config.mcpServers, createToolRegistry(), logger, {
+        connector,
+        sandbox: sandboxOptions,
+      });
+      assert.ok(hub);
+      assert.deepEqual(Object.keys(seen).toSorted(), ['via', 'web']);
+      assert.deepEqual(
+        logger.lines.filter((line) => line.startsWith('warn')),
+        ['warn 沙箱程序 no-such-srt 找不到，sandbox.enabled 打开了，这些 MCP 不启动：boxed'],
+      );
+      await hub.close();
+    });
+
+    test('policy 的文件读不出或不是 JSON 对象：同样不启动，记一行', async () => {
+      for (const [policy, reason] of [
+        ['missing.json', '读不出（ENOENT）'],
+        ['list.json', '不是 JSON 对象'],
+      ] as const) {
+        const { home, config, sandboxOptions } = setup({ enabled: true, command: 'fake-srt.mjs', policy });
+        writeFileSync(join(home, 'list.json'), '[1]');
+        const { seen, connector } = recordingConnector();
+        const logger = recorder();
+        const hub = await connectMcp(config.mcpServers, createToolRegistry(), logger, {
+          connector,
+          sandbox: sandboxOptions,
+        });
+        assert.ok(hub);
+        assert.deepEqual(Object.keys(seen).toSorted(), ['via', 'web']);
+        assert.deepEqual(
+          logger.lines.filter((line) => line.startsWith('warn')),
+          [
+            `warn sandbox.policy 的文件 ${join(home, policy)} ${reason}，sandbox.enabled 打开了，这些 MCP 不启动：boxed`,
+          ],
+        );
+        await hub.close();
+      }
+    });
+
+    test('没打开、或者没有要包的服务器，就不找程序、不写设置文件', async () => {
+      const { config, sandboxOptions } = setup({ enabled: false, command: 'no-such-srt' });
+      const { seen, connector } = recordingConnector();
+      const logger = recorder();
+      const hub = await connectMcp(config.mcpServers, createToolRegistry(), logger, {
+        connector,
+        sandbox: sandboxOptions,
+      });
+      assert.ok(hub);
+      assert.ok(seen['boxed'] && 'command' in seen['boxed']);
+      assert.equal(seen['boxed'].command, process.execPath);
+      assert.deepEqual(
+        logger.lines.filter((line) => line.startsWith('warn')),
+        [],
+      );
+      await hub.close();
+
+      const remoteOnly = await connectMcp({ web: { url: 'https://mcp.example/api' } }, createToolRegistry(), logger, {
+        connector,
+        sandbox: { ...sandboxOptions, config: { ...sandboxOptions.config, enabled: true } },
+      });
+      assert.ok(remoteOnly);
+      assert.deepEqual(
+        logger.lines.filter((line) => line.startsWith('warn')),
+        [],
+      );
+      await remoteOnly.close();
+    });
   });
 });
