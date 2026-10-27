@@ -126,6 +126,27 @@ const context = z.looseObject({
   keep: count(40),
 });
 
+/** 沙箱程序和它自己的选项：一个字符串当一个程序名，或者词的数组；空的、写错的按缺省 `srt`。 */
+function commandWords(value: unknown): string[] | undefined {
+  const items = typeof value === 'string' ? [value] : Array.isArray(value) ? value.map(textOf) : [];
+  const out = items.map((item) => item?.trim()).filter((item): item is string => Boolean(item));
+  return out.length > 0 ? out : undefined;
+}
+
+const sandbox = z.looseObject({
+  /** 缺省关闭。打开后 mcpServers 里有 `command` 的服务器都在沙箱程序里启动（`"sandbox": false` 的除外）。 */
+  enabled: flag(false),
+  command: z
+    .preprocess(commandWords, z.array(z.string()))
+    .catch(() => ['srt'])
+    .default(() => ['srt']),
+  /** 交给沙箱程序的设置（srt 的 settings 格式），或一个 JSON 文件的路径（相对 config.json 所在目录）。不写就是空设置。 */
+  policy: z.preprocess(
+    (value) => (isRecord(value) ? value : typeof value === 'string' && value.trim() ? value.trim() : undefined),
+    z.union([z.record(z.string(), z.unknown()), z.string()]).optional(),
+  ),
+});
+
 export const configSchema = z.looseObject({
   /** `dsh-pet` 驱动桌宠；`console` 只在终端打印，用来在没有桌宠的机器上调试。 */
   stage: z.enum(['dsh-pet', 'console']).catch('dsh-pet').default('dsh-pet'),
@@ -141,6 +162,8 @@ export const configSchema = z.looseObject({
   context: z.preprocess(objectOrNothing, context.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
   mcpServers: z.preprocess(objectOrNothing, z.record(z.string(), z.unknown()).default({})),
+  /** 把 stdio 的 MCP 服务器放进沙箱程序里启动，见 `brain/sandbox.ts`。 */
+  sandbox: z.preprocess(objectOrNothing, sandbox.prefault({})),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -152,6 +175,7 @@ export type AsrConfig = Config['asr'];
 export type AnysearchConfig = Config['anysearch'];
 export type ContextConfig = Config['context'];
 export type McpServersConfig = Config['mcpServers'];
+export type SandboxConfig = Config['sandbox'];
 
 function describeIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join('.') || '(根)'}：${issue.message}`).join('；');

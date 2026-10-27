@@ -159,6 +159,33 @@ describe('config', () => {
     assert.deepEqual(parseConfig({ mcpServers: servers }).mcpServers, servers);
   });
 
+  test('sandbox：缺省关闭、程序是 srt、没有 policy；写错按缺省；policy 可以是对象或路径', () => {
+    assert.deepEqual(parseConfig(FIRST).sandbox, { enabled: false, command: ['srt'] });
+    assert.deepEqual(parseConfig({ sandbox: null }).sandbox, { enabled: false, command: ['srt'] });
+    assert.deepEqual(parseConfig({ sandbox: 'on' }).sandbox, { enabled: false, command: ['srt'] });
+    assert.deepEqual(parseConfig({ sandbox: { enabled: 'yes', command: '  ', policy: 3 } }).sandbox, {
+      enabled: false,
+      command: ['srt'],
+      policy: undefined,
+    });
+    assert.deepEqual(parseConfig({ sandbox: { enabled: 'true', command: [], policy: [] } }).sandbox, {
+      enabled: true,
+      command: ['srt'],
+      policy: undefined,
+    });
+    assert.deepEqual(parseConfig({ sandbox: { command: ' /opt/srt ', policy: ' ./policy.json ' } }).sandbox, {
+      enabled: false,
+      command: ['/opt/srt'],
+      policy: './policy.json',
+    });
+    const policy = { network: { allowedDomains: ['api.example.com'] }, filesystem: { allowWrite: [] } };
+    assert.deepEqual(parseConfig({ sandbox: { enabled: true, command: ['srt', '--debug', 1, ''], policy } }).sandbox, {
+      enabled: true,
+      command: ['srt', '--debug', '1'],
+      policy,
+    });
+  });
+
   test('驱动桌宠时语音和宠物地址必须填好；控制台舞台不要求语音', () => {
     assert.throws(() => assertDirectorReady(parseConfig(FIRST)), /speech\.apiKey 还空着/);
     assert.throws(
