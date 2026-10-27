@@ -177,7 +177,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | `POST /broadcast` | 投喂台词：`text`、`duration`、表情包 `url`，`anim: false` | `present` |
 | `POST /anim` | 点播动作；开始听时也用，不占锁 | `present`、`cue` |
 | `POST /lock/release` | 放开，失败不抛错 | `present` |
-| `POST /menu/item` | 注册右键 yoyo 分组：「碎碎念」「听一句」，只在桌面端 | `menu` |
+| `POST /menu/item` | 注册右键 yoyo 分组：「碎碎念」「听一句」，带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
 | `GET /menu/events?owner=yoyo&wait=` | 长轮询菜单点击；回 `unknown-owner` 就重新注册 | `menu` |
 | `POST /standalone-ai/settings` | 右键对话改走 yoyo 的网关，`automaticWhispers: false`。独立模式自己的设置接口，挂在服务根上，不在 `openapi.yaml` 里 | `bindChat` |
 
