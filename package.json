@@ -26,6 +26,7 @@
     "@modelctx-ai/ctx": "^0.3.0",
     "@modelctx-ai/ctx-gateway": "^0.3.0",
     "@modelctx-ai/ctx-mcp": "^0.3.0",
+    "@modelctx-ai/ctx-memory": "^0.3.0",
     "@modelctx-ai/ctx-models": "^0.3.0",
     "@modelctx-ai/ctx-protocol": "^0.3.0",
     "@modelctx-ai/ctx-sqlite": "^0.3.0",
