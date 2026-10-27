@@ -185,6 +185,11 @@ describe('brain/context', () => {
       entries.map((entry) => entry.at),
       [100, 101, 102, 103, 104],
     );
+    assert.deepEqual(
+      entries.map((entry) => entry.meta?.['kind']),
+      ['whisper', 'generated', 'reply', 'reminder', 'weather'],
+      'meta.kind 记下台词的类别，记忆的门控按它剔掉天气和提醒',
+    );
   });
 
   test('桌宠对话并进来，同一条不重复，旧句还在', async () => {

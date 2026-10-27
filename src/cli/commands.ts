@@ -1,16 +1,27 @@
 import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
-import { compareEntries, textOf, type Entry } from '@modelctx-ai/ctx';
+import {
+  compareEntries,
+  textOf,
+  type ConsolidateReport,
+  type Entry,
+  type MemoryFact,
+  type Note,
+  type Procedure,
+} from '@modelctx-ai/ctx';
+import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import { assertDirectorReady, llmReady, loadConfig, parseConfig, type Config } from '../app/config.ts';
 import { createApp, createPetHost, createPlatformClipboard, type App, type AppOverrides } from '../app/container.ts';
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
+import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
+import { localDateKey } from '../kernel/time.ts';
 import type { InboxRequest } from '../kernel/types.ts';
 import type { Clipboard, Logger, PetHost, Repos } from '../ports/index.ts';
 import { compactContext } from '../runtime/compact.ts';
@@ -72,6 +83,10 @@ function oneLine(text: string, max: number): string {
   return text.replace(/\s+/g, ' ').slice(0, max);
 }
 
+function entryText(entry: Entry): string {
+  return entry.type === 'message' ? textOf(entry.message) : '';
+}
+
 /** `context tail` 的一行：消息按角色，碎碎念记成 whisper。其余条目不列。 */
 export function contextRow(entry: Entry): string | null {
   if (entry.type === 'message') {
@@ -80,6 +95,48 @@ export function contextRow(entry: Entry): string | null {
   }
   if (entry.type === 'event' && entry.kind === 'whisper' && entry.text) return `whisper\t${oneLine(entry.text, 80)}`;
   return null;
+}
+
+function day(at: number): string {
+  return localDateKey(new Date(at));
+}
+
+/** `memory facts` 的一行：id、主题、一句话、从何时起、被召回几次。 */
+export function factRow(fact: MemoryFact): string {
+  return `${fact.id}\t${fact.topic ?? '-'}\t${oneLine(fact.text, 80)}\t${day(fact.validFrom)} 起\t召回 ${fact.recalls.length} 次`;
+}
+
+/** `memory rules` 的一行：id、主题、触发条件和动作、确认次数。确认够了才交给模型。 */
+export function ruleRow(procedure: Procedure): string {
+  const state = procedure.confirmations >= MEMORY_DEFAULTS.confirmations ? '生效' : '待确认';
+  return `${procedure.id}\t${procedure.topic ?? '-'}\t${oneLine(procedure.when, 40)} → ${oneLine(procedure.do, 40)}\t确认 ${procedure.confirmations} 次\t${state}`;
+}
+
+/** 笔记的状态：门控没过的那段写下时就标成处理过（settledAt 等于 at）。 */
+function noteState(note: Note): string {
+  if (note.settledAt === undefined) return '待整理';
+  return note.settledAt === note.at ? '不记' : '已整理';
+}
+
+/** `memory tail` 的一行：什么时候、哪段话、显著性、主题、类别、处理了没，加这段第一句话。 */
+export function noteRow(note: Note, first: string | undefined): string {
+  return [
+    new Date(note.at).toISOString(),
+    `${note.session}#${note.from}-${note.upTo}`,
+    note.salience.toFixed(2),
+    note.topic ?? '-',
+    note.kind ?? '-',
+    noteState(note),
+    ...(first ? [oneLine(first, 40)] : []),
+  ].join('\t');
+}
+
+export function consolidateText(report: ConsolidateReport): string {
+  const { facts, procedures } = report;
+  return (
+    `整理了 ${report.notes} 条笔记：新增 ${facts.added} 条事实，并入 ${facts.merged}，取代 ${facts.superseded}，归档 ${facts.archived}；` +
+    `程序新增 ${procedures.added}，确认 ${procedures.confirmed}；画像${report.core ? '重写了' : '没变'}`
+  );
 }
 
 /** 导演在跑就经收件箱交给它的编排器；没在跑就当场组装一份，由编排器当场做。 */
@@ -246,6 +303,137 @@ export function buildDomains(env: CommandEnv): Domain[] {
             const context = await createYoyoContext({ db: env.db(), petId: config.pet.id, model, logger: env.logger });
             const done = await compactContext(context, { keep: config.context.keep, model });
             env.out(done ? `上下文压成摘要：约 ${done.before} → ${done.after} token` : '上下文还不长，不用压缩');
+          },
+        },
+      ],
+    },
+    {
+      name: 'memory',
+      summary: '桌宠记住的事',
+      detail:
+        '只读写本地库，不用模型、不碰桌宠。记忆存在 ~/.yoyo/yoyo.db 的 memory_ 表；config.json 的 memory.enabled 打开以后，常驻进程才记。',
+      verbs: [
+        {
+          name: 'core',
+          summary: '画像和它的更新时间',
+          async run() {
+            const core = await openMemoryStore(env.db()).core.get();
+            if (!core?.text.trim()) return env.out('还没有画像');
+            env.out(`更新于 ${new Date(core.at).toISOString()}`);
+            env.out(core.text);
+          },
+        },
+        {
+          name: 'facts',
+          summary: '仍然成立的事实',
+          flags: ['topic'],
+          async run(flags) {
+            const topic = flagText(flags, 'topic');
+            const facts = await allFacts(openMemoryStore(env.db()), { open: true, ...(topic ? { topic } : {}) });
+            if (facts.length === 0) return env.out(topic ? `主题 ${topic} 下还没有记住的事` : '还没有记住的事');
+            for (const fact of facts.toSorted((a, b) => a.validFrom - b.validFrom)) env.out(factRow(fact));
+          },
+        },
+        {
+          name: 'history',
+          summary: '一条事实的来源原文、取代了谁、被谁取代',
+          usage: '<id>',
+          async run(_flags, args) {
+            const [id] = args;
+            if (!id) return env.out('要给事实的 id：yoyo memory history <id>');
+            const facts = await allFacts(openMemoryStore(env.db()));
+            const fact = facts.find((item) => item.id === id);
+            if (!fact) return env.out(`没有这条事实：${id}`);
+            const until = fact.validTo !== undefined ? `，到 ${day(fact.validTo)}` : '';
+            const archived = fact.archivedAt !== undefined ? `，${day(fact.archivedAt)} 归档` : '';
+            env.out(`${fact.id}\t${fact.topic ?? '-'}\t${fact.text}`);
+            env.out(`成立：${day(fact.validFrom)} 起${until}${archived}`);
+            for (const older of facts.filter((item) => item.supersededBy === fact.id)) {
+              env.out(`取代了：${older.id}\t${oneLine(older.text, 80)}`);
+            }
+            const newer = fact.supersededBy ? facts.find((item) => item.id === fact.supersededBy) : undefined;
+            if (newer) env.out(`被取代：${newer.id}\t${oneLine(newer.text, 80)}`);
+            const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+            // 和记忆读到的一样：天气和提醒不算原文
+            const rows = (await evidenceOf(memorySessions(context.store), fact.sources))
+              .map((entry) => {
+                const row = contextRow(entry);
+                return row ? `${entry.session}#${entry.seq}\t${row}` : null;
+              })
+              .filter((row): row is string => row !== null);
+            env.out(rows.length > 0 ? '原文：' : '原文：日志里已经没有了');
+            for (const row of rows) env.out(row);
+          },
+        },
+        {
+          name: 'rules',
+          summary: '夜里从教训里归纳出的程序',
+          async run() {
+            const rules = await openMemoryStore(env.db()).procedures.list({ active: true });
+            if (rules.length === 0) return env.out('还没有程序');
+            for (const rule of rules) env.out(ruleRow(rule));
+          },
+        },
+        {
+          name: 'tail',
+          summary: '最近 12 条笔记',
+          async run() {
+            // NoteQuery 只能取最早的 N 条，最近的要全读出来再截
+            const notes = (await openMemoryStore(env.db()).notes.list()).slice(-12);
+            if (notes.length === 0) return env.out('还没有笔记');
+            const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+            const firsts = new Map<string, string>();
+            for (const session of new Set(notes.map((note) => note.session))) {
+              const from = Math.min(...notes.filter((note) => note.session === session).map((note) => note.from));
+              const entries = await context.store.list(session, { after: from - 1, types: ['message'] });
+              for (const note of notes.filter((item) => item.session === session)) {
+                const entry = entries.find(
+                  (item) => item.seq >= note.from && item.seq <= note.upTo && !ungated(item) && entryText(item),
+                );
+                if (entry) firsts.set(note.id, entryText(entry));
+              }
+            }
+            for (const note of notes) env.out(noteRow(note, firsts.get(note.id)));
+          },
+        },
+        {
+          name: 'forget',
+          summary: '真删除一条事实；程序改成退役',
+          usage: '<id>',
+          async run(_flags, args) {
+            const [id] = args;
+            if (!id) return env.out('要给事实或程序的 id：yoyo memory forget <id>');
+            const store = openMemoryStore(env.db());
+            if ((await store.facts.forget([id])) > 0) {
+              env.repos().activity.record({ type: 'memory-forget', id });
+              return env.out(`忘掉了 ${id}，下一次整理时画像跟着改`);
+            }
+            const procedure = (await store.procedures.list()).find((item) => item.id === id);
+            if (!procedure) return env.out(`没有这条事实或程序：${id}`);
+            // ctx 的 MemoryStore 没有删程序的方法，只能退役：不再交给模型，记录还在
+            await store.procedures.retire(id, env.now().getTime());
+            env.repos().activity.record({ type: 'memory-retire', id });
+            env.out(`程序 ${id} 退役了，不再交给模型`);
+          },
+        },
+        {
+          name: 'consolidate',
+          summary: '现在就整理一次',
+          async run() {
+            const settings = env.settings();
+            const context = await createYoyoContext({ db: env.db(), petId: settings.pet.id });
+            // 命令行不用模型：没有提取就不处理笔记，只做衰减归档和画像的缺省渲染。
+            // 不给 logger：ctx 对此的英文告警和下面那行中文说的是一件事
+            const { memory, store } = createYoyoMemory({
+              store: openMemoryStore(env.db()),
+              sessions: context.store,
+              config: settings.memory,
+            });
+            const report = await memory.consolidate({ now: env.now().getTime() });
+            env.repos().activity.record({ type: 'memory-consolidate', notes: report.notes, manual: true });
+            env.out(consolidateText(report));
+            const left = (await store.notes.list({ pending: true })).length;
+            if (left > 0) env.out(`还有 ${left} 条笔记要用模型提取，留给常驻进程夜里整理`);
           },
         },
       ],

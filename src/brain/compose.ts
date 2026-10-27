@@ -45,6 +45,8 @@ export interface ComposeOptions {
   readonly model: ModelRef;
   /** 报错文案里要抹掉的密钥。 */
   readonly secrets?: readonly string[];
+  /** 这一轮只收这些来源（按名字）；不给就全部。 */
+  readonly sources?: readonly string[];
   readonly signal?: AbortSignal;
 }
 
@@ -91,7 +93,7 @@ async function run(runs: Runs, request: RunRequest, secrets: readonly string[] |
 export function whisperRequest(context: Context, options: ComposeOptions): RunRequest {
   return {
     session: context.session,
-    agent: whisperAgent(options.tone, options.model),
+    agent: whisperAgent(options.tone, options.model, options.sources ? { sources: options.sources } : {}),
     prompt: whisperPrompt(),
     record: false,
     ...(options.signal ? { signal: options.signal } : {}),
@@ -109,7 +111,10 @@ export function replyRequest(context: Context, options: ReplyOptions): RunReques
   const prompt = searchPrompt(options.searchText);
   return {
     session: context.session,
-    agent: replyAgent(options.tone, options.model, { tools: options.tools === true }),
+    agent: replyAgent(options.tone, options.model, {
+      tools: options.tools === true,
+      ...(options.sources ? { sources: options.sources } : {}),
+    }),
     ...(prompt !== undefined ? { prompt } : {}),
     record: false,
     ...(options.signal ? { signal: options.signal } : {}),

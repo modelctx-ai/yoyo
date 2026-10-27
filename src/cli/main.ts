@@ -11,7 +11,7 @@ if (result.kind === 'text') {
   console.log(result.text);
 } else {
   try {
-    await result.verb.run(result.flags);
+    await result.verb.run(result.flags, result.args);
   } catch (error) {
     console.error(errorText(error));
     process.exitCode = 1;

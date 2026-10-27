@@ -78,7 +78,8 @@ export interface Director {
   claim(text: string): void;
   playForeign(text: string): Promise<boolean>;
   refreshMemes(now?: Date, options?: { readonly force?: boolean }): Promise<MemePack | null>;
-  syncPetChat(): Promise<void>;
+  /** 并进桌宠的对话记忆，返回新写入的条数；读不到算 0。 */
+  syncPetChat(): Promise<number>;
   compactIfNeeded(): Promise<boolean>;
 }
 
@@ -221,11 +222,12 @@ export function createDirector(deps: DirectorDeps): Director {
     return true;
   }
 
-  async function syncPetChat(): Promise<void> {
+  async function syncPetChat(): Promise<number> {
     try {
-      await storePetChat(context, await host.chatHistory(200));
+      return await storePetChat(context, await host.chatHistory(200));
     } catch {
       /* 桌宠对话暂时读不到，已有上下文还在 */
+      return 0;
     }
   }
 
