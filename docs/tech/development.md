@@ -48,11 +48,15 @@ sources:
 
 ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的六个包链到 `../ctx/packages/*`，读的是 ctx 的 `dist/`：`@modelctx-ai/ctx`（`core`）、`ctx-protocol`（`protocol`，核心包把它当 peer）、`ctx-sqlite`、`ctx-mcp`、`ctx-gateway`、`ctx-models`。`ctx-exec`、`ctx-remote` 用不到，不链。改了 ctx 要在 ctx 里重新 `pnpm build`。ctx 发布以后删掉 `overrides`，同样的 `^0.3.0` 从 npm 解析。[^workspace]
 
+* 要的是 ctx `main`（0.3.x）。`link:` 不看版本范围，`../ctx` 停在旧版也装得上，要到类型检查或打开 `yoyo.db` 时才报错；拉了 ctx 记得重新构建。
+* 核心包另把 `zod` 当 peer，yoyo 自己依赖的 `zod` 4 满足它。
+* `ai` 只是开发依赖：测试里用 `ai/test` 的 `MockLanguageModelV4` 和 `APICallError`。运行时的 AI SDK 类型和函数都从 `@modelctx-ai/ctx` 拿，不直接引 `ai`。
+
 三个仓库怎么分工、怎么一起联调，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/repos.md`。
 
 # CI
 
-`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出，构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`。[^ci]
+`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出（ctx 取 `main` 的最新提交，不固定版本，所以 ctx 的不兼容改动会直接让 yoyo 的 CI 变红），构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`。[^ci]
 
 # 调试
 

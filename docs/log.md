@@ -1,5 +1,9 @@
 # 文档更新记录
 
+## 2026-10-27
+
+* **Update**: 开发的「和 ctx 联调」补三条：要的是 ctx `main`（0.3.x），`link:` 不看版本范围；核心包的 `zod` peer 由 yoyo 的 `zod` 满足；`ai` 只在测试里用。CI 写明 ctx 取 `main` 最新提交、不固定版本。ctx 0.3 里删掉的弃用别名（`thread`、`ContextStore`、`add(name, tool)` 等）yoyo 都没用到，不用改。
+
 ## 2026-10-26
 
 * **Update**: 跟上 ctx 0.3（会话位置、消息格式、`AgentSpec.context`）。架构：事实的收法和位置写进两个 agent 的 `context`（碎碎念 `prompt`、回复 `instructions`），harness 直接用上下文的 builder；`yoyo context tail` 和桌宠对话按 `(at, seq)` 排；迁移加上 schema 3；新加「旧摘要」一行（常驻进程启动时、开拍子之前重新压缩被旧摘要盖住的记录，没有模型记警告，命令行不做）。运行时原则、开发（依赖 `^0.3.0`）同步；从旧版升级加「从上一版升级（ctx 0.3）」：先停常驻进程，库结构自动升级，旧版读不了。碎碎念最后一条用户消息里，事实和「请再说一句碎碎念。」之间由一个换行变成一个空行（builder 接提示的写法），其余交给模型的指令、消息和事实不变。
