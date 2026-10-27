@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: 配置
-description: config.json 的每个选项、缺省值，以及写错时怎么办。
+description: config.json 的每个选项、缺省值，以及写错时怎么办；MCP 服务器和它们的沙箱。
 resource: src/app/config.ts
 tags: [product, config]
 status: stable
@@ -17,6 +17,7 @@ status: stable
 * 数字可以写成字符串（`"600"`）；不是数、或者超出范围就按缺省值。
 * 开关只认 `true`、`false` 和字符串 `"true"`、`"false"`，别的按缺省值；选项写错或空着也按缺省值。
 * `mcpServers` 里写错的服务器（没有 `command` 也没有 `url`）启动时跳过，记一行。
+* `sandbox` 写错的字段按缺省；但沙箱打开了却启动不了时，要放进沙箱的服务器都不启动，见[把 MCP 服务器关进沙箱](#把-mcp-服务器关进沙箱)。
 * `speech.model`、`speech.referenceId` 原样保留，不去空白。
 
 # 选项
@@ -46,6 +47,7 @@ status: stable
 | `context.compactAt`                        | 不写                                             | 历史超过这么多估算 token 时，把较早的部分压成摘要；不写就不压缩。`pnpm yoyo context compact` 手动压 |
 | `context.keep`                             | `40`                                             | 压缩时原样保留最近几条消息                                                                          |
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
+| `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
 
 # 接 MCP 服务器
 
@@ -65,6 +67,115 @@ status: stable
 * `include`、`exclude` 用服务器上的原名挑工具，`"enabled": false` 先不连。
 * 工具名加服务器前缀，例如 `notes__search_notes`。
 * 连不上只记一行，其余照常。
+
+# 把 MCP 服务器关进沙箱
+
+有 `command` 的服务器是 yoyo 以你的身份启动的进程，能读写你能读写的所有文件，能连任何网络。打开 `sandbox` 后，yoyo 把每台这样的服务器改成由沙箱程序启动：
+
+```text
+srt --settings <设置文件> -- <command> <args…>
+```
+
+srt 是 Claude Code 用的沙箱程序（npm 包 `@anthropic-ai/sandbox-runtime`）。yoyo 不安装、不加载它，只改写启动命令；任何接受这条命令行的程序都可以写进 `sandbox.command`。有 `url` 的服务器不受影响。
+
+```json
+{
+  "llm": { "tools": true },
+  "sandbox": {
+    "enabled": true,
+    "command": "srt",
+    "policy": {
+      "network": { "allowedDomains": ["api.example.com"] },
+      "filesystem": { "allowWrite": ["/home/me/notes"], "denyRead": ["~/.ssh"] }
+    }
+  },
+  "mcpServers": {
+    "notes": { "command": "node", "args": ["/path/to/notes-server.js"] },
+    "via": { "command": "via", "args": ["serve"], "sandbox": false }
+  }
+}
+```
+
+| 键 | 缺省 | 作用 |
+| --- | --- | --- |
+| `sandbox.enabled` | `false` | 打开后，`mcpServers` 里有 `command` 的服务器都在沙箱程序里启动 |
+| `sandbox.command` | `srt` | 沙箱程序和它自己的选项：一个字符串当一个程序名（可以是路径），或者一个数组，例如 `["srt", "--debug"]`。yoyo 在后面接 `--settings <文件> -- <命令…>` |
+| `sandbox.policy` | 不写 | 交给沙箱程序的设置（srt 的 settings 格式），或一个 JSON 文件的路径（相对 `config.json` 所在目录），每次启动时读。yoyo 不检查里面的字段，由沙箱程序检查 |
+| `mcpServers.<名字>.sandbox` | 不写 | 写 `false` 这台服务器不放进沙箱，例如自己会加沙箱的 `via serve` |
+
+yoyo 在 `policy` 之上加几项，写成 yoyo 数据目录里的 `sandbox/settings-<哈希>.json`（目录只有你能进，文件只有你能读写，内容相同就复用）：
+
+* `filesystem.denyWrite` 加上 yoyo 的数据目录（`YOYO_HOME`，缺省 `~/.yoyo`）、`config.json`，以及 `policy` 指向的文件。沙箱里的服务器改不了 yoyo 的库和配置，也就关不掉沙箱、放宽不了设置。
+* `network.allowedDomains`、`network.deniedDomains`、`filesystem.denyRead`、`filesystem.allowWrite` 没写的补成空数组。
+
+服务器的 `env`、`cwd` 照常生效：srt 在 `cwd` 里启动，把环境变量交给里面的进程。
+
+**启动不了就不启动。** 沙箱打开了，但 `sandbox.command` 在 PATH 上找不到，或者 `policy` 指向的文件读不出、不是 JSON 对象，yoyo 记一行，例如：
+
+```text
+沙箱程序 srt 找不到，sandbox.enabled 打开了，这些 MCP 不启动：notes
+```
+
+这些服务器都不启动，不会退回到不加沙箱运行。有 `url` 的和写了 `"sandbox": false` 的照常连。srt 自己拒绝启动时（例如 `policy` 里的字段写错，`network.allowedDomains: Expected array, received string`；或者缺依赖），它的报错打在 yoyo 的标准错误上，这台服务器记一行「MCP notes 没连上：Attempted to send a request from a closed client」，同样不退回到不加沙箱。
+
+## 装 srt
+
+```sh
+npm install -g @anthropic-ai/sandbox-runtime
+srt --version
+```
+
+* **Linux** 上 srt 要 bubblewrap、ripgrep（`rg`）、socat 三个程序都在 PATH 上，缺一个就报 `Sandbox dependencies not available: …`。Debian、Ubuntu 上：`sudo apt install bubblewrap ripgrep socat`。
+* **Ubuntu 24.04** 缺省 `kernel.apparmor_restrict_unprivileged_userns = 1`，bubblewrap 会报 `loopback: Failed RTM_NEWADDR: Operation not permitted`。给 `/usr/bin/bwrap` 一个 AppArmor profile 就行，不用改全局的 sysctl。写到 `/etc/apparmor.d/bwrap`：
+
+  ```text
+  abi <abi/4.0>,
+  include <tunables/global>
+
+  profile bwrap /usr/bin/bwrap flags=(unconfined) {
+    userns,
+  }
+  ```
+
+  再加载：`sudo apparmor_parser -r /etc/apparmor.d/bwrap`。
+* **macOS** 上 srt 用系统自带的 Seatbelt。yoyo 只在 Linux（srt 0.0.81）上验证过。
+
+## 沙箱里是什么样
+
+* **文件**：整个文件系统只读，只有 `filesystem.allowWrite` 里的目录能写。HOME 也只读，写的时候报 `EROFS`。服务器要存东西，就把它的目录写进 `allowWrite`。
+* **进程**：每台服务器在自己的 PID 命名空间里，看不到别的进程。
+* **网络**：缺省全部拒绝。要连的域名写进 `network.allowedDomains`（用 `npx -y` 启动的服务器还要 `registry.npmjs.org`）。放行的流量经 srt 在本机开的代理走，沙箱里的进程拿到 `HTTPS_PROXY`、`HTTP_PROXY` 环境变量。`curl` 自动走代理；Node 的全局 `fetch` 缺省不看这两个变量，用 Node 写、靠 `fetch` 联网的服务器会解析不了域名（`EAI_AGAIN`）。给这台服务器加 `"env": { "NODE_USE_ENV_PROXY": "1" }`（Node 24.0、22.21 起有），`fetch` 就走代理。Node 22 会在标准错误上打一行 `EnvHttpProxyAgent is experimental`，不影响使用。
+* **开销**：srt 每启动一台服务器大约多半秒，之后的调用不再经过 srt，和不加沙箱一样快。
+
+## 不想逐台配置：经 via
+
+[via](https://github.com/modelctx-ai/via) 能把它管的所有 MCP 服务器一起放进 srt。yoyo 只登记一台 `via serve`，并给它写 `"sandbox": false`（via 自己会加沙箱，srt 里再起 srt 会出问题）：
+
+```json
+{
+  "llm": { "tools": true },
+  "mcpServers": {
+    "via": { "command": "via", "args": ["serve"], "sandbox": false }
+  }
+}
+```
+
+再在 via 的用户配置 `~/.config/via/config.yaml` 里打开它的沙箱：
+
+```yaml
+sandbox:
+  enabled: true
+```
+
+经 via 调的服务器就都在 srt 里，yoyo 这边不用打开 `sandbox`。在一台 Linux 上测过：`via serve` 连上大约 540 ms，每调一次大约 400 ms（via 在沙箱里每次调用都重新启动服务器）。
+
+## 它防什么、不防什么
+
+沙箱限制的是服务器能写哪里、能连哪里，不是凭证隔离：
+
+* 缺省能读的文件服务器照样能读，包括写着密钥的 `config.json` 和对话记忆所在的 `yoyo.db`。不想让它读，就写进 `filesystem.denyRead`。
+* 服务器 `env` 里的密钥照样交给它。
+* 它能连的域名上，它想发什么都能发。
 
 # 环境变量
 

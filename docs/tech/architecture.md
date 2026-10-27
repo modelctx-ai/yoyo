@@ -25,6 +25,9 @@ sources:
   - id: harness
     resource: src/brain/harness.ts
     title: Harness
+  - id: sandbox
+    resource: src/brain/sandbox.ts
+    title: MCP 沙箱
   - id: channel
     resource: src/brain/channel.ts
     title: 对话渠道
@@ -79,7 +82,7 @@ flowchart TB
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
-| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
@@ -90,7 +93,7 @@ flowchart TB
 
 # 常驻进程
 
-`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过），最后建上下文、harness、导演和编排器。[^container]
+`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），最后建上下文、harness、导演和编排器。[^container]
 
 四样东西各管一件事：
 
@@ -134,7 +137,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | 会话 `SessionStore` | `~/.yoyo/yoyo.db` 里的 `ctx_entries`（ctx-sqlite），每只宠物一个会话 `pet:<id>` | `createYoyoContext`、`sessionFor` |
 | 上下文 `ContextBuilder` | ctx 的参考实现，配 `yoyoProjection`（碎碎念事件折成一条助手消息）和两个来源（工作状态、粘贴板）。事实怎么收、放哪由每个 agent 的 `context` 定，builder 照做 | `yoyoProjection`、`taskSource`、`clipboardSource` |
 | 工具 `ToolRegistry` | `llm.tools` 打开才有：`web_search`、`weather_forecast`、`list_alarms`、`add_alarm`，加 `mcpServers` 的工具 | `createYoyoTools`、`connectMcp` |
-| 执行环境 `Executor` | 注册表自带的进程内函数执行环境；每台 MCP 服务器经 ctx-mcp 的 hub | `createYoyoHarness` 的 `executors` |
+| 执行环境 `Executor` | 注册表自带的进程内函数执行环境；每台 MCP 服务器经 ctx-mcp 的 hub。打开 `sandbox` 时，stdio 服务器的进程由沙箱程序（srt）启动，hub 只看到改写后的命令 | `createYoyoHarness` 的 `executors` |
 | `Harness` | ctx 的参考实现（AI SDK 循环）。碎碎念和回复是同一个 harness 跑的两个 `AgentSpec` | `createYoyoHarness`、`agents.ts` |
 | 编排 `Orchestrator` | yoyo 的编排器：协议的几样交给 ctx 的进程内队列（同一会话串行），加上拍子、让路、收件箱、到点 | `createYoyoOrchestrator` |
 | 模型 | ctx-models 按 `llm` 配置造的 AI SDK 模型，进程内对象放在 `AgentSpec.model` 里 | `createLanguageModel` |
@@ -384,6 +387,18 @@ registry.addTool(
 * 启动时连接，连不上只记一行「MCP notes 没连上：…」，其余照常；退出时关掉。
 * 每台服务器连接前才检查：没有 `command` 也没有 `url` 就记一行「MCP notes 的配置不对，要有 command 或 url，先跳过」；`type` 只认 `http`、`sse`，别的按缺省；其余字段写错当没写。
 
+## 把 MCP 服务器关进沙箱
+
+用法和限制见[配置](../product/configuration.md#把-mcp-服务器关进沙箱)。这里写做法和理由。[^sandbox]
+
+* **只改启动命令**：`connectMcp` 先挑出写对的服务器，再由 `applySandbox` 把要包的（有 `command`、没写 `"sandbox": false`）改成 `{ command: <沙箱程序的绝对路径>, args: [<sandbox.command 其余的词>, '--settings', <文件>, '--', command, ...args] }`，`env`、`cwd`、`include` 等原样保留，再交给 ctx-mcp。思路同 via 的 ADR 0027：不依赖 `@anthropic-ai/sandbox-runtime`，不 `import` 它，`package.json` 不变；任何接受这条命令行的程序都能写进 `sandbox.command`。`brain/sandbox.ts` 是 yoyo 唯一知道 srt 设置形状的地方。
+* **只包服务器，不包 yoyo**：yoyo 自己要连模型和 Fish、写 `yoyo.db`、在 macOS 上放声音，放进沙箱就要把这些都写进策略；只包子进程，yoyo 留在外面，服务器也就碰不到 yoyo 的配置。和 via 不同，这里每台服务器一个常驻的 srt，进程活多久沙箱就活多久，调用不再经过 srt。
+* **设置文件**：用户的 `policy` 原样保留，`filesystem.denyWrite` 追加 `YOYO_HOME`、`config.json`（缺省在仓库根目录，不在 `YOYO_HOME` 里，所以单列）和 `policy` 指向的文件，四个数组缺的补成空数组；不校验别的字段。按内容哈希写到 `YOYO_HOME/sandbox/settings-<16 位>.json`（目录 0700、文件 0600，`wx` 打开，已有就复用）。设置文件本身在 `denyWrite` 的 `YOYO_HOME` 里，服务器改不了。
+* **在连接之前找程序**：`sandbox.command` 的第一个词在 yoyo 进程的 PATH 上解析成绝对路径。ctx-mcp（`@ai-sdk/mcp` 的 stdio 传输）启动子进程时只带 `HOME`、`LOGNAME`、`PATH`、`SHELL`、`TERM`、`USER` 加上服务器的 `env`；服务器 `env` 里改了 `PATH` 也不影响找到 srt。srt 把收到的环境变量和 `cwd` 交给里面的进程（srt 0.0.81 实测）。
+* **失败关闭**：找不到程序、`policy` 文件读不出或不是 JSON 对象、设置文件写不下，记一行警告，要包的服务器从这次连接里去掉，不退回到不加沙箱；`url` 的和豁免的照常连。只在打开了且至少有一台要包时才找程序、写文件。srt 自己拒绝时，ctx-mcp 报这台服务器连接失败，按「没连上」记。
+* **日志**：包了的服务器连上时记「MCP notes 已连上（在沙箱里），N 个工具」。
+* **测试**：`brain/fixtures/fake-srt.mjs` 替 srt：把选项、命令、`cwd` 和设置文件内容记到 `FAKE_SRT_LOG`，再启动 `--` 后面的命令，透传 stdio 和退出码，什么也不限制。`mcp.test.ts` 用一个记录配置、再交给 ctx-mcp 真连接方式的 `connector`，经假 srt 真的启动 `where-server.mjs` 并调一次工具。真的 srt 不进自动测试。
+
 ## 不接桌宠跑
 
 `"stage": "console"` 把台词打印成 `[动作] 文字`，不占锁，没有菜单、对话记忆和右键对话，工作状态是空的。语音可以不配：Fish 的四项没填齐就只出字。不在 macOS 上不播放声音、不做配音，按键助手也不起；`listen.enabled` 缺省是关的，听写要 macOS 的 ffmpeg。在任何机器上都能跑，用一个单独的数据目录和配置，就不会碰到平时的库：
@@ -401,6 +416,7 @@ YOYO_HOME=/tmp/yoyo-dev YOYO_CONFIG=/tmp/yoyo-dev/config.json pnpm once
 [^agents]: agent 配置
 [^harness]: Harness
 [^orchestrator]: 编排器
+[^sandbox]: MCP 沙箱
 [^channel]: 对话渠道
 [^director]: 导演
 [^daemon]: 常驻循环

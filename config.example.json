@@ -43,5 +43,17 @@
   "context": {
     "keep": 40
   },
-  "mcpServers": {}
+  "mcpServers": {},
+  "sandbox": {
+    "enabled": false,
+    "command": "srt",
+    "policy": {
+      "network": {
+        "allowedDomains": []
+      },
+      "filesystem": {
+        "allowWrite": []
+      }
+    }
+  }
 }
