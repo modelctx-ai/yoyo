@@ -421,12 +421,12 @@ export function buildDomains(env: CommandEnv): Domain[] {
           async run() {
             const settings = env.settings();
             const context = await createYoyoContext({ db: env.db(), petId: settings.pet.id });
-            // 命令行不用模型：没有提取就不处理笔记，只做衰减归档和画像的缺省渲染
+            // 命令行不用模型：没有提取就不处理笔记，只做衰减归档和画像的缺省渲染。
+            // 不给 logger：ctx 对此的英文告警和下面那行中文说的是一件事
             const { memory, store } = createYoyoMemory({
               store: openMemoryStore(env.db()),
               sessions: context.store,
               config: settings.memory,
-              logger: env.logger,
             });
             const report = await memory.consolidate({ now: env.now().getTime() });
             env.repos().activity.record({ type: 'memory-consolidate', notes: report.notes, manual: true });
