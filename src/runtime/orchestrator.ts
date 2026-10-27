@@ -15,7 +15,7 @@ import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateReply, generateWhisper } from '../brain/compose.ts';
 import { recordUser } from '../brain/context.ts';
-import type { YoyoMemory } from '../brain/memory.ts';
+import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
@@ -158,7 +158,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   const memory = deps.memory ?? null;
   const clock = deps.clock ?? Date.now;
   const runs = createOrchestrator({ harness, store: context.store, logger });
-  const secrets = [config.llm.apiKey].filter(Boolean);
+  // 报错里抹掉的密钥：模型的，加上记忆的决策、提取模型的
+  const secrets = [config.llm.apiKey, ...memorySecrets(config.memory)].filter(Boolean);
   const intervalMs = whisperIntervalMs(config.intervalSec);
   const state: ScheduleState = {
     nextWhisper: clock(),

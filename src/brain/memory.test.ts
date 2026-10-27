@@ -15,14 +15,18 @@ import { MockLanguageModelV4 } from 'ai/test';
 
 import { parseConfig } from '../app/config.ts';
 import type { Line } from '../kernel/types.ts';
+import type { Logger } from '../ports/index.ts';
 import { generateReply, generateWhisper } from './compose.ts';
 import { recordLine, recordUser, storePetChat, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
 import {
   MEMORY_SOURCE,
   WHISPER_MEMORY_SOURCE,
+  createSystemOneModels,
   createYoyoMemory,
+  memorySecrets,
   memorySources,
+  systemOneSpec,
   openMemoryStore,
   type YoyoMemory,
 } from './memory.ts';
@@ -259,5 +263,57 @@ describe('brain/memory 整理', () => {
       ['主人最近在写 yoyo'],
     );
     assert.equal((await usual.store.core.get())?.text, '主人最近在写 yoyo', '没有模型：画像是缺省渲染');
+  });
+});
+
+function memoryLogger(): Logger & { readonly lines: string[] } {
+  const lines: string[] = [];
+  return {
+    lines,
+    info: (message) => void lines.push(message),
+    warn: (message) => void lines.push(message),
+    error: (message) => void lines.push(message),
+  };
+}
+
+describe('brain/memory System One', () => {
+  test('配了就按 ctx-models 造决策、提取模型；不配就用 ctx 的缺省', () => {
+    const logger = memoryLogger();
+    const none = createSystemOneModels(parseConfig({ memory: { enabled: true } }).memory, logger);
+    assert.deepEqual(none, {});
+    const { memory } = parseConfig({
+      memory: {
+        decision: { provider: 'cloudflare', model: 'clef-flash', accountId: 'acc', apiKey: 'cf-decide' },
+        extraction: { provider: 'cloudflare', model: 'clairic', accountId: 'acc', apiKey: 'cf-extract' },
+      },
+    });
+    assert.deepEqual(systemOneSpec(memory.decision!), {
+      provider: 'cloudflare',
+      model: 'clef-flash',
+      apiKey: 'cf-decide',
+      accountId: 'acc',
+    });
+    const made = createSystemOneModels(memory, logger);
+    assert.equal(typeof made.decision?.decide, 'function');
+    assert.equal(typeof made.extraction?.extract, 'function');
+    assert.deepEqual(logger.lines, []);
+    assert.deepEqual(memorySecrets(memory), ['cf-decide', 'cf-extract']);
+  });
+
+  test('写得不对记一行，退回缺省：cloudflare 没有 accountId、没有 provider、认不得的服务商', () => {
+    const logger = memoryLogger();
+    const { memory } = parseConfig({
+      memory: {
+        decision: { provider: 'cloudflare', model: 'clef-flash', apiKey: 'cf-decide' },
+        extraction: { provider: 'typesafe', model: 'jev' },
+      },
+    });
+    assert.deepEqual(createSystemOneModels(memory, logger), {});
+    assert.equal(logger.lines.length, 2);
+    assert.match(logger.lines[0]!, /^config\.json 的 memory\.decision 不对：.*accountId.*，门控用启发式$/);
+    assert.match(logger.lines[1]!, /^config\.json 的 memory\.extraction 不对：.*typesafe.*，提取交给 llm 的模型$/);
+    const blank = createSystemOneModels(parseConfig({ memory: { decision: { model: 'clef' } } }).memory, logger);
+    assert.deepEqual(blank, {});
+    assert.match(logger.lines[2]!, /memory\.decision 不对：.*provider/);
   });
 });

@@ -554,6 +554,26 @@ describe('orchestrator 记忆', () => {
     await orchestrator.close();
   });
 
+  test('记忆模型的密钥也从报错里抹掉，不进记录', async () => {
+    const memory = fakeMemory();
+    memory.fail('gate', new Error('clef-flash 401: token cf-decide-key rejected'));
+    const { orchestrator, logger, repos } = orchestratorRig({
+      memory,
+      config: {
+        memory: {
+          decision: { provider: 'cloudflare', model: 'clef-flash', accountId: 'acc', apiKey: 'cf-decide-key' },
+        },
+      },
+      director: { syncPetChat: async () => 1 },
+      state: { nextWhisper: T0 + 600_000 },
+    });
+    await orchestrator.tick();
+    await settle();
+    assert.ok(logger.lines.includes('记忆门控没做成：clef-flash 401: token *** rejected'), logger.lines.join('\n'));
+    assert.ok(!JSON.stringify(repos.activity.list(50)).includes('cf-decide-key'));
+    await orchestrator.close();
+  });
+
   test('没开记忆：拍子里不门控也不整理', async () => {
     const { orchestrator, repos } = orchestratorRig({
       director: { syncPetChat: async () => 3 },

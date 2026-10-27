@@ -1,22 +1,25 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-import type {
-  ContextSource,
-  DecisionModel,
-  Entry,
-  ExtractionModel,
-  FactQuery,
-  LanguageModel,
-  Memory,
-  MemoryFact,
-  MemoryStore,
-  SessionStore,
-  SourceRef,
+import {
+  redact,
+  type ContextSource,
+  type DecisionModel,
+  type Entry,
+  type ExtractionModel,
+  type FactQuery,
+  type LanguageModel,
+  type Memory,
+  type MemoryFact,
+  type MemoryStore,
+  type SessionStore,
+  type SourceRef,
 } from '@modelctx-ai/ctx';
 import { createMemory } from '@modelctx-ai/ctx-memory';
+import { createDecisionModel, createExtractionModel, type SystemOneSpec } from '@modelctx-ai/ctx-models';
 import { createSqliteMemoryStore } from '@modelctx-ai/ctx-sqlite';
 
-import type { MemoryConfig } from '../app/config.ts';
+import type { MemoryConfig, SystemOneConfig } from '../app/config.ts';
+import { errorText } from '../app/log.ts';
 import type { Logger } from '../ports/index.ts';
 import { currentTask, type TaskDeps } from './sources.ts';
 
@@ -91,6 +94,52 @@ export function createYoyoMemory(options: YoyoMemoryOptions): YoyoMemory {
     ...(options.now ? { now: options.now } : {}),
   });
   return { memory, store: options.store };
+}
+
+/** 配置里的一节写成 `SystemOneSpec`：空着的项不带。 */
+export function systemOneSpec(config: SystemOneConfig): SystemOneSpec {
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    ...(config.accountId ? { accountId: config.accountId } : {}),
+  };
+}
+
+export interface SystemOneModels {
+  readonly decision?: DecisionModel;
+  readonly extraction?: ExtractionModel;
+}
+
+/**
+ * `memory.decision`、`memory.extraction` 配了就按 ctx-models 的 System One 工厂造；写得不对（没有 provider、model，
+ * cloudflare 没有 accountId，认不得的服务商）记一行，用 ctx 的缺省：门控是启发式，提取交给 `llm` 的模型。
+ * `secrets` 从报错里抹掉。
+ */
+export function createSystemOneModels(
+  config: MemoryConfig,
+  logger: Logger,
+  secrets: readonly string[] = [],
+): SystemOneModels {
+  function make<T>(key: 'decision' | 'extraction', fallback: string, build: (spec: SystemOneSpec) => T): T | undefined {
+    const section = config[key];
+    if (!section) return undefined;
+    try {
+      return build(systemOneSpec(section));
+    } catch (error) {
+      logger.warn(`config.json 的 memory.${key} 不对：${redact(errorText(error), secrets)}，${fallback}`);
+      return undefined;
+    }
+  }
+  const decision = make('decision', '门控用启发式', createDecisionModel);
+  const extraction = make('extraction', '提取交给 llm 的模型', createExtractionModel);
+  return { ...(decision ? { decision } : {}), ...(extraction ? { extraction } : {}) };
+}
+
+/** 报错里要抹掉的记忆模型密钥。 */
+export function memorySecrets(config: MemoryConfig): string[] {
+  return [config.decision?.apiKey, config.extraction?.apiKey].filter((key): key is string => Boolean(key));
 }
 
 /** 两个记忆来源：回复按 ctx 的缺省（最近一条用户话）召回，碎碎念按当前任务召回。 */

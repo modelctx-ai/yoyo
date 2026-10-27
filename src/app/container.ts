@@ -20,7 +20,9 @@ import { createYoyoHarness } from '../brain/harness.ts';
 import {
   MEMORY_SOURCE,
   WHISPER_MEMORY_SOURCE,
+  createSystemOneModels,
   createYoyoMemory,
+  memorySecrets,
   memorySources,
   openMemoryStore,
   type YoyoMemory,
@@ -157,6 +159,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
           config: config.memory,
           model,
           logger,
+          ...createSystemOneModels(config.memory, logger, [config.llm.apiKey, ...memorySecrets(config.memory)]),
         })
       : null,
   );
