@@ -180,6 +180,7 @@ describe('commands', () => {
     assert.deepEqual(await run('memory', 'facts'), ['还没有记住的事']);
     const context = await createYoyoContext({ db: env.db(), petId: 'main' });
     await context.append(userEntry('我在做项目 X', { at: NOW.getTime() - 86_400_000 }));
+    await context.append(assistantEntry('傍晚有雨', { at: NOW.getTime() - 86_400_000, meta: { kind: 'weather' } }));
     await context.append(assistantEntry('好，项目 X', { at: NOW.getTime() - 86_400_000 }));
     await context.append(userEntry('我换到项目 Y 了', { at: NOW.getTime() }));
     const store = openMemoryStore(env.db());
@@ -188,13 +189,13 @@ describe('commands', () => {
       ...base,
       text: '主人在做项目 X',
       validFrom: NOW.getTime() - 86_400_000,
-      sources: [{ session: 'pet:main', from: 1, upTo: 2 }],
+      sources: [{ session: 'pet:main', from: 1, upTo: 3 }],
     });
     const y = await store.facts.add({
       ...base,
       text: '主人在做项目 Y',
       validFrom: NOW.getTime(),
-      sources: [{ session: 'pet:main', from: 3, upTo: 3 }],
+      sources: [{ session: 'pet:main', from: 4, upTo: 4 }],
     });
     await store.facts.close(x.id, NOW.getTime(), { supersededBy: y.id });
     const cat = await store.facts.add({
@@ -220,7 +221,7 @@ describe('commands', () => {
       '成立：2026-10-24 起',
       `取代了：${x.id}\t主人在做项目 X`,
       '原文：',
-      'pet:main#3\tuser\t我换到项目 Y 了',
+      'pet:main#4\tuser\t我换到项目 Y 了',
     ]);
     assert.deepEqual(await run('memory', 'history', x.id), [
       `${x.id}\twork\t主人在做项目 X`,
@@ -228,7 +229,7 @@ describe('commands', () => {
       `被取代：${y.id}\t主人在做项目 Y`,
       '原文：',
       'pet:main#1\tuser\t我在做项目 X',
-      'pet:main#2\tassistant\t好，项目 X',
+      'pet:main#3\tassistant\t好，项目 X',
     ]);
     assert.deepEqual(await run('memory', 'history'), ['要给事实的 id：yoyo memory history <id>']);
     assert.deepEqual(await run('memory', 'history', 'nope'), ['没有这条事实：nope']);

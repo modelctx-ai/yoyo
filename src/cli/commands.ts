@@ -17,7 +17,7 @@ import { createApp, createPetHost, createPlatformClipboard, type App, type AppOv
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
-import { allFacts, createYoyoMemory, evidenceOf, openMemoryStore, ungated } from '../brain/memory.ts';
+import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
@@ -354,7 +354,8 @@ export function buildDomains(env: CommandEnv): Domain[] {
             const newer = fact.supersededBy ? facts.find((item) => item.id === fact.supersededBy) : undefined;
             if (newer) env.out(`被取代：${newer.id}\t${oneLine(newer.text, 80)}`);
             const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
-            const rows = (await evidenceOf(context.store, fact.sources))
+            // 和记忆读到的一样：天气和提醒不算原文
+            const rows = (await evidenceOf(memorySessions(context.store), fact.sources))
               .map((entry) => {
                 const row = contextRow(entry);
                 return row ? `${entry.session}#${entry.seq}\t${row}` : null;
