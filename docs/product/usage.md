@@ -38,6 +38,7 @@ pnpm yoyo listen         # 马上听一句
 pnpm yoyo clip history   # yoyo 运行期间复制过的内容
 pnpm yoyo context tail   # 最近的对话记忆
 pnpm yoyo log tail       # 最近 20 件做过的事
+pnpm yoyo memory core    # 记忆里的画像
 pnpm yoyo chat sync      # 右键对话没接上时重接
 ```
 
@@ -61,6 +62,24 @@ pnpm yoyo alarm add --title 开会 --time 09:30 --date 2026-10-24
 pnpm yoyo contact list
 pnpm yoyo contact add --name 小王 --yoyo yoyo://xiaowang@example --note 同事
 ```
+
+## 记忆
+
+打开 `memory.enabled` 以后才会记，见[配置](configuration.md#记忆)。这些命令只读写本地库，常驻进程不用开，也不会用模型。
+
+```sh
+pnpm yoyo memory core                 # 画像和更新时间
+pnpm yoyo memory facts                # 记得的事：id、主题、一句话、从哪天起、被想起几次
+pnpm yoyo memory facts --topic work   # 只看一个主题
+pnpm yoyo memory history <id>         # 这件事从哪段话来的，取代了哪条、被哪条取代
+pnpm yoyo memory rules                # 从纠正里归纳出的规矩，确认够两次才生效
+pnpm yoyo memory tail                 # 最近 12 条笔记：哪段话、值不值得记、整理了没有
+pnpm yoyo memory forget <id>          # 删掉一件事；给规矩的 id 就让它退役
+pnpm yoyo memory consolidate          # 现在整理一次
+```
+
+* `forget` 是真删除，画像在下一次整理时跟着改。规矩删不掉，只能退役：不再交给模型，记录还在。
+* 命令行的 `consolidate` 不用模型，只做遗忘和画像的简单整理；要用模型提取的笔记留给常驻进程夜里整理，命令会说还剩几条。
 
 ## 本地任务
 

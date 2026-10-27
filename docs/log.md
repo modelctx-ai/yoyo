@@ -2,6 +2,10 @@
 
 ## 2026-10-27
 
+* **Update**: 记忆从提案改为已实现（`status: stable`），M0–M2 做完，M3 做了接线、没校准 `theta`。和提案不一样的地方以实现为准改了：碎碎念和回复各用一个记忆来源（`memory-whisper` 按当前任务召回，`memory` 按最近一条用户话召回），因为来源不知道这一轮是哪个 agent，两个 agent 的 `context.facts.sources` 由组装根给名单；天气和提醒由 `memorySessions` 在读日志这一层滤掉（`gate.entries` 挑不了 `meta`）；门控和整理都在后台跑，门控跳过时留到下一拍，整理失败当天不再试、成功记在 kv；过了 `consolidateAt` 当天都算，不是推到第二天；`yoyo memory consolidate` 不用模型，只做衰减归档和画像的缺省渲染；`forget` 对程序只能退役（ctx 没有删程序的方法）；`rules` 列没退役的程序并标出生效与否；`tail` 列状态（待整理、已整理、不记）。配置表写明每项的范围和写错时的处理，`decision`、`extraction` 是 `SystemOneSpec` 的写法，建模型出错记一行退回缺省。分期表加「状态」一列。
+* **Update**: 架构：目录表加 `brain/memory.ts`；常驻进程的一拍加第 8、9 步（门控、整理）；「和 ctx 组件的对应」的记忆一行去掉「提案」；「怎么用 ctx」的写入（`meta.kind`）、来源、事实（两份来源名单）、工具（`recall`）、执行环境跟上。开发：`overrides` 是七个包，加 `ctx-memory`，写明记忆要 ctx 带记忆的版本、合进 `main` 之前 CI 会红。索引的记忆一行去掉「提案」。
+* **Update**: 产品文档跟上记忆：功能介绍加「记住你」；配置的选项表加 `memory.*`，新加「记忆」一节；日常使用加 `memory` 命令；数据加 `memory_` 表和删除。README 的功能列表加一条，技术文档表加记忆。
+
 * **Creation**: 补上记忆（提案，`status: proposed`）：机制在 ctx（`docs/memory.md`、ADR 0006），这里只写 yoyo 决定的事。桌宠记什么（六个主题：owner、work、people、routine、taste、fix）；哪些条目进门控（用户话、回复、右键对话并进来的；碎碎念、天气、提醒不进）；门控在拍子末尾异步跑；画像和召回经来源 `memory` 给两个 agent，位置和现有事实一样（碎碎念 `prompt`、回复 `instructions`），`recall` 工具只给回复且要 `llm.tools`；巩固在 `memory.consolidateAt`（缺省 03:00）且 30 分钟没对话时跑；存在 `yoyo.db` 的 `memory_*` 表；`config.json` 的 `memory` 一节；`yoyo memory` 命令（core、facts、history、rules、forget、consolidate、tail）；运行时原则五条；分期 M0–M3 和各期依赖的 ctx 包。索引加这一篇；架构的「和 ctx 组件的对应」加记忆一行。
 * **Update**: 架构「怎么用 dsh-pet」的 `POST /menu/item` 注明 `target: 'desktop'` 是照 dsh-pet 源码用的，`openapi.yaml` 里还没写。其余接口对照 dsh-pet `dfc0396` 核对过，都一致。
 * **Update**: 开发的「和 ctx 联调」补三条：要的是 ctx `main`（0.3.x），`link:` 不看版本范围；核心包的 `zod` peer 由 yoyo 的 `zod` 满足；`ai` 只在测试里用。CI 写明 ctx 取 `main` 最新提交、不固定版本。ctx 0.3 里删掉的弃用别名（`thread`、`ContextStore`、`add(name, tool)` 等）yoyo 都没用到，不用改。
