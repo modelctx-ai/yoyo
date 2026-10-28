@@ -47,6 +47,7 @@ describe('config', () => {
     assert.equal(config.speech.tone, undefined);
     assert.deepEqual([config.llm.provider, config.llm.model, config.llm.tools], ['openai-compatible', '', false]);
     assert.deepEqual([config.clipboard.enabled, config.hotkey.enabled], [true, true]);
+    assert.deepEqual([config.weather.enabled, config.memes.enabled, config.sfx.enabled], [true, true, true]);
     assert.deepEqual(
       [config.context.keep, config.context.compactAt, config.context.maxTokens],
       [40, undefined, undefined],
@@ -89,12 +90,16 @@ describe('config', () => {
       clipboard: { enabled: 'no' },
       hotkey: { enabled: 0 },
       llm: { tools: 'true' },
+      weather: { enabled: false },
+      memes: { enabled: 'false' },
+      sfx: { enabled: 'off' },
     });
     assert.equal(config.speech.autoplay, false);
     assert.equal(config.listen.enabled, true);
     assert.equal(config.clipboard.enabled, true);
     assert.equal(config.hotkey.enabled, true);
     assert.equal(config.llm.tools, true);
+    assert.deepEqual([config.weather.enabled, config.memes.enabled, config.sfx.enabled], [false, false, true]);
     assert.equal(parseConfig({ listen: { enabled: 1 } }).listen.enabled, false);
   });
 

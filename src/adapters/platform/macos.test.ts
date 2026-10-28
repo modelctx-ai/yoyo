@@ -39,14 +39,14 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe('按键助手', () => {
-  test('已经编译过就直接启动，传收件箱路径，stderr 记成错误', async () => {
+  test('已经编译过（或安装包里带着）就直接启动，传收件箱路径，stderr 记成错误', async () => {
     const binDir = join(tempDir(), 'bin');
     mkdirSync(binDir);
     const bin = join(binDir, 'yoyo-hotkey');
     writeFileSync(bin, HELPER, { mode: 0o755 });
     const { errors, logger } = memoryLogger();
     const inboxFile = join(tempDir(), 'inbox.jsonl');
-    startHotkeyHelper({ binDir, source: '/不存在/hotkey.swift', inboxFile, logger, swiftc: '/不存在/swiftc' });
+    startHotkeyHelper({ bin, source: '/不存在/hotkey.swift', inboxFile, logger, swiftc: '/不存在/swiftc' });
     await waitFor(() => errors.length > 0);
     assert.deepEqual(errors, ['hotkey needs accessibility permission']);
     assert.deepEqual(argsOf(bin), [inboxFile]);
@@ -61,11 +61,11 @@ describe('按键助手', () => {
       { mode: 0o755 },
     );
     const binDir = join(dir, 'bin');
+    const bin = join(binDir, 'yoyo-hotkey');
     const source = join(dir, 'hotkey.swift');
     const inboxFile = join(dir, 'inbox.jsonl');
     const { errors, logger } = memoryLogger();
-    startHotkeyHelper({ binDir, source, inboxFile, logger, swiftc });
-    const bin = join(binDir, 'yoyo-hotkey');
+    startHotkeyHelper({ bin, source, inboxFile, logger, swiftc });
     assert.deepEqual(argsOf(swiftc), ['-O', '-o', bin, source]);
     assert.equal(statSync(binDir).mode & 0o777, 0o700);
     await waitFor(() => errors.length > 0);
@@ -77,7 +77,7 @@ describe('按键助手', () => {
     const binDir = join(tempDir(), 'bin');
     const { errors, logger } = memoryLogger();
     startHotkeyHelper({
-      binDir,
+      bin: join(binDir, 'yoyo-hotkey'),
       source: '/不存在/hotkey.swift',
       inboxFile: '/不存在/inbox.jsonl',
       logger,

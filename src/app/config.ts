@@ -234,6 +234,12 @@ export const configSchema = z.looseObject({
   anysearch: z.preprocess(objectOrNothing, anysearch.prefault({})),
   clipboard: z.preprocess(objectOrNothing, toggle.prefault({})),
   hotkey: z.preprocess(objectOrNothing, toggle.prefault({})),
+  /** 工作日傍晚报一次天气。 */
+  weather: z.preprocess(objectOrNothing, toggle.prefault({})),
+  /** 空闲时找一套表情包，碎碎念时配上一张。 */
+  memes: z.preprocess(objectOrNothing, toggle.prefault({})),
+  /** 每个动作配一段很轻的音效。 */
+  sfx: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),
   memory: z.preprocess(objectOrNothing, memory.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */

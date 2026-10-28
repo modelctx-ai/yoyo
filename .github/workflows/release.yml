@@ -1,0 +1,114 @@
+name: Release
+
+# 推 v* tag 时打 macOS 安装包，挂到这个 tag 的 Release（没有就建一个）。
+# 也能在 Actions 页手动跑：只打包、上传成构建产物，不碰 Release。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ctx_ref:
+        description: ctx 的分支、tag 或提交
+        default: main
+      dsh_pet_ref:
+        description: dsh-pet 的分支、tag 或提交
+        default: main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    # Apple 芯片；要出 Intel 版就加一个 macos-15-intel 的矩阵
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: yoyo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: yoyo
+
+      # ctx 还没发到 npm：和 CI 一样检出在 yoyo 旁边，overrides 里的 link:../ctx/packages/* 才找得到
+      - uses: actions/checkout@v4
+        with:
+          repository: modelctx-ai/ctx
+          ref: ${{ inputs.ctx_ref || 'main' }}
+          path: ctx
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ticoAg/dsh-pet
+          ref: ${{ inputs.dsh_pet_ref || 'main' }}
+          path: dsh-pet
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: yoyo/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: |
+            ctx/pnpm-lock.yaml
+            yoyo/pnpm-lock.yaml
+
+      - name: 版本号
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "tag $GITHUB_REF_NAME 和 package.json 的版本 $version 不一致，先改 package.json 再打 tag" >&2
+              exit 1
+            fi
+          else
+            version="$version-dev.$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Build ctx
+        working-directory: ctx
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+      # whisper-cli 和 ffmpeg 编一次要几分钟：按 tools.sh 的内容缓存
+      - uses: actions/cache@v4
+        with:
+          path: yoyo/.cache/release-tools
+          key: release-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('yoyo/scripts/release/tools.sh') }}
+
+      - name: 打包
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DSH_PET_DIR: ${{ github.workspace }}/dsh-pet
+          CTX_DIR: ${{ github.workspace }}/ctx
+        run: scripts/release/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.sha }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: 挂到 Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.zip }}" "${{ steps.package.outputs.sha }}" --clobber

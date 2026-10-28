@@ -16,8 +16,10 @@ status: stable
 | `yoyo.db` 的 `memory_` 表     | 打开 `memory.enabled` 以后的记忆：笔记、记得的事、规矩、画像的每个版本                               |
 | `speech-cache/`               | 合成好的语音                                                                                         |
 | `sfx/`                        | 动作音效                                                                                             |
-| `models/`                     | 听写模型，第一次用时下载                                                                             |
-| `bin/yoyo-hotkey`             | 第一次启动时编译的按键助手                                                                           |
+| `models/`                     | 听写模型，第一次用时下载；安装包从包里复制过来                                                       |
+| `bin/yoyo-hotkey`             | 从源码运行时，第一次启动编译的按键助手；安装包用包里带的                                             |
+| `config.json`                 | 安装包的配置；从源码运行时配置在 yoyo 目录                                                           |
+| `pet.log`                     | 安装包的 `./yoyo start` 开的桌宠的输出，每次开桌宠重写                                               |
 | `inbox.jsonl`、`director.pid` | 命令和菜单交给常驻进程的请求；常驻进程的 pid                                                         |
 
 # 记下什么

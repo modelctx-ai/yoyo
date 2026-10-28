@@ -288,7 +288,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     },
     startHotkey() {
       if (!mac || !config.hotkey.enabled) return;
-      startHotkeyHelper({ binDir: paths.binDir, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
+      startHotkeyHelper({ bin: paths.hotkeyBin, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
     },
     async close() {
       if (closed) return;

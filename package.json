@@ -1,5 +1,6 @@
 {
   "name": "yoyo",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "个人桌宠导演。用 dsh-pet 的官方接口表演，台词、语气、语音和天气都在这里；上下文交给 ctx。",
@@ -14,6 +15,7 @@
     "start": "node src/main.ts",
     "once": "node src/main.ts --once",
     "bake": "node src/main.ts --bake",
+    "pack:app": "vp pack",
     "yoyo": "node bin/yoyo.js",
     "typecheck": "vp check --no-fmt --no-lint",
     "lint": "vp lint --deny-warnings",

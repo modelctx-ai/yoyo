@@ -1,5 +1,13 @@
 # 文档更新记录
 
+## 2026-10-28
+
+* **新增** 补上发版（提案，`status: proposed`，第一次推 tag 在真机上验证以后转为已实现）：推 `v*` tag 时 GitHub Actions 在 macOS 上打安装包并挂到 Release，手动跑只出构建产物；包的目录结构；yoyo 打成不依赖 node_modules 的单文件，Node、Electron、dsh-pet 独立模式、最小 LGPL ffmpeg、静态 whisper-cli、听写模型、按键助手各从哪来、怎么固定版本；启动脚本 `./yoyo` 设的环境变量、`start` 怎么开关桌宠、清隔离属性；冒烟测试查什么；为什么这样做；还没做的（Intel、签名公证、固定 ctx 和 dsh-pet 的 tag、单文件里依赖的许可）。索引和 README 的技术文档表加这一篇。
+* **更新** 安装与运行改成两种装法：安装包（下载、解压、`./yoyo start`、配置在 `~/.yoyo/config.json`、换新版本替换目录）和从源码运行（原来的步骤，加上按键助手要 Xcode 命令行工具）；新加「开关」一节。README 的快速开始先写安装包。
+* **更新** 配置：「写法」写明安装包的配置位置；新加「开关」一节，列出所有开关和缺省值，写明关掉的只是自动的那一下；选项表加 `weather.enabled`、`memes.enabled`、`sfx.enabled`；环境变量加 `YOYO_HOTKEY`。`config.example.json` 跟上。
+* **更新** 功能介绍的音效、听你回应、天气、表情包各加一句怎么关；日常使用写明安装包用 `./yoyo`；数据加安装包的 `config.json`、`pet.log`，`models/` 和 `bin/yoyo-hotkey` 写明安装包怎么来；从旧版升级加「换成安装包」。
+* **更新** 开发：工具链写明只有发版时构建、安装包里带着哪些程序；脚本加 `pnpm pack:app`；CI 加打包检查，并指向发版。架构：读写位置加 `YOYO_HOTKEY`，按键助手写明编好的直接用；编排器一拍的第 5 步和两张时序图注上 `memes.enabled`、`weather.enabled`、`sfx.enabled`；沙箱一节写明安装包的 `config.json` 在 `YOYO_HOME` 里。运行时原则加第 7 条「自动的那一下都能关」。
+
 ## 2026-10-27
 
 * **更新** [更新记录](log.md)的条目标签从英文 `Update` / `Creation` 改成中文「更新 / 新增」，和 ctx 的 `docs/log.md` 一致；[开发](tech/development.md)「和 ctx 联调」里「记忆合进 ctx `main` 之前 CI 会红」的说明改成已合并后的写法。

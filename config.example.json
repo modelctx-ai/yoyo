@@ -40,6 +40,15 @@
   "hotkey": {
     "enabled": true
   },
+  "weather": {
+    "enabled": true
+  },
+  "memes": {
+    "enabled": true
+  },
+  "sfx": {
+    "enabled": true
+  },
   "context": {
     "keep": 40
   },

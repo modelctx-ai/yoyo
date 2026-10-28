@@ -29,6 +29,18 @@ export default defineConfig({
     },
   },
 
+  // 只给发版用（`pnpm pack:app`）：平时照旧直接跑 .ts，不构建。
+  // 两个入口连同 ctx、zod、ai 一起打成不依赖 node_modules 的 ESM，放在 dist/yoyo/。
+  // paths.ts 按 `import.meta.url` 往上两级找根目录，所以产物要放在两层目录里：dist/yoyo/ 和安装包的 lib/yoyo/ 都是。
+  pack: {
+    entry: { main: 'src/main.ts', cli: 'src/cli/main.ts' },
+    outDir: 'dist/yoyo',
+    platform: 'node',
+    target: 'node22',
+    deps: { alwaysBundle: [/./] },
+    report: false,
+  },
+
   fmt: {
     singleQuote: true,
     printWidth: 120,

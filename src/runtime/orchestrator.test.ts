@@ -248,6 +248,26 @@ describe('orchestrator 一拍', () => {
     assert.equal(calls.filter((call) => call === 'memes').length, 3, '之后照常每拍看一眼');
   });
 
+  test('memes.enabled 关掉时空闲也不去找表情包', async () => {
+    const calls: string[] = [];
+    const { orchestrator } = orchestratorRig({
+      state: { nextWhisper: T0 + 2 * MEME_RETRY_MS },
+      config: { memes: { enabled: false } },
+      director: {
+        syncPetChat: async () => {
+          calls.push('sync');
+          return 0;
+        },
+        refreshMemes: async () => {
+          calls.push('memes');
+          return null;
+        },
+      },
+    });
+    await orchestrator.tick();
+    assert.deepEqual(calls, ['sync']);
+  });
+
   test('到点的碎碎念没说成：记日志，一分钟后再试，不每秒重来', async () => {
     let failing = true;
     const spoken: string[] = [];
