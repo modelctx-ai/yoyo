@@ -243,6 +243,23 @@ describe('director：说、听、提醒（碎碎念和听一句经编排器）',
     assert.equal(repos.activity.list(100)[0]?.['meme'], 'https://example.com/a.png');
   });
 
+  test('memes.enabled 关掉时碎碎念不配表情包', async () => {
+    const { repos, orchestrator } = rig({ rand: () => 0, config: { memes: { enabled: false } } });
+    repos.memes.write({ fetchedAt: SATURDAY.toISOString(), query: 'q', items: [{ url: 'https://example.com/a.png' }] });
+    const result = await orchestrator.whisper();
+    assert.equal(result?.line.imageUrl, undefined);
+  });
+
+  test('sfx.enabled 关掉时不放音效，也不记一笔', async () => {
+    const { calls, repos, orchestrator } = rig({ config: { sfx: { enabled: false } } });
+    const result = await orchestrator.whisper();
+    assert.equal(
+      calls.some((call) => call.startsWith('sfx:')),
+      false,
+    );
+    assert.deepEqual(types(repos), [result?.line.tone]);
+  });
+
   test('快下班先报天气：说完记下日期，不进 3 小时窗口，也不听回应', async () => {
     const asked: string[] = [];
     const fetcher = (async (input: string | URL | Request) => {
@@ -269,6 +286,23 @@ describe('director：说、听、提醒（碎碎念和听一句经编排器）',
 
     const again = await director.choose(now);
     assert.equal(again?.kind, 'whisper', '同一天只报一次');
+  });
+
+  test('weather.enabled 关掉时傍晚也不报天气，不查天气', async () => {
+    const asked: string[] = [];
+    const fetcher = (async (input: string | URL | Request) => {
+      asked.push(input instanceof Request ? input.url : String(input));
+      return jsonResponse(forecast());
+    }) as typeof fetch;
+    const { repos, orchestrator } = rig({
+      now: FRIDAY_EVENING,
+      fetch: fetcher,
+      config: { weather: { enabled: false } },
+    });
+    repos.kv.set('place', TAIPEI);
+    const result = await orchestrator.whisper();
+    assert.equal(result?.line.kind, 'whisper');
+    assert.deepEqual(asked, []);
   });
 
   test('天气没查到就改说一句预制台词', async () => {

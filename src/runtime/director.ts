@@ -65,11 +65,11 @@ export interface DirectorDeps {
  * 要不要、什么时候跑一轮模型由编排器决定，导演不调模型生成。
  */
 export interface Director {
-  /** 工作日傍晚先报一次天气，否则抽一句 3 小时内没说过的预制台词；都说过了返回 null。 */
+  /** 工作日傍晚先报一次天气（`weather.enabled` 关了就不报），否则抽一句 3 小时内没说过的预制台词；都说过了返回 null。 */
   choose(now?: Date): Promise<Line | null>;
-  /** 碎碎念大约四成配一张表情包；天气和提醒不配。 */
+  /** 碎碎念大约四成配一张表情包；天气和提醒不配，`memes.enabled` 关了都不配。 */
   dress(line: Line): Line;
-  /** 先在锁外合成，再占锁投喂、点播、配音、播放；说出口以后记进窗口和上下文。 */
+  /** 先在锁外合成，再占锁投喂、点播、配音（`sfx.enabled`）、播放；说出口以后记进窗口和上下文。 */
   speak(line: Line, now?: Date): Promise<void>;
   /** 侧耳听一句，交给主人确认。null：没听到；''：取消了。 */
   hear(): Promise<string | null>;
@@ -125,8 +125,10 @@ export function createDirector(deps: DirectorDeps): Director {
       const label = activityLabel(line);
       logger.info(`${label} ${line.action} ${line.text.length}字`);
       repos.activity.record({ type: label, action: line.action, text: line.text, meme: line.imageUrl || undefined });
-      sfx.play(line.action);
-      repos.activity.record({ type: 'sfx', action: line.action });
+      if (config.sfx.enabled) {
+        sfx.play(line.action);
+        repos.activity.record({ type: 'sfx', action: line.action });
+      }
       // 没配语音时没有文件，只出字
       if (file && config.speech.autoplay) await player.play(file);
       if (line.kind === 'weather') writeWeatherStamp(repos.kv, localDateKey(now));
@@ -136,7 +138,7 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   async function choose(now = clock()): Promise<Line | null> {
-    if (offWorkWeatherDue(now, readWeatherStamp(repos.kv))) {
+    if (config.weather.enabled && offWorkWeatherDue(now, readWeatherStamp(repos.kv))) {
       try {
         const report = await buildOffWorkWeather(repos.kv, now, deps.fetch);
         if (report) return report;
@@ -244,7 +246,7 @@ export function createDirector(deps: DirectorDeps): Director {
 
   return {
     choose,
-    dress: (line) => decorateMeme(line, repos.memes.read(), rand),
+    dress: (line) => (config.memes.enabled ? decorateMeme(line, repos.memes.read(), rand) : line),
     speak,
     hear,
     remind,

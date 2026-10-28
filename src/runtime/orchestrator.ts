@@ -342,7 +342,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         await director.remind(item, now);
         state.lastTalk = clock();
       }
-      if (memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
+      if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
           state.memeFailedAt = null;
