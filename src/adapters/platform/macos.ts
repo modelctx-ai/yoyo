@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { Clipboard, Logger, UrlOpener } from '../../ports/index.ts';
 
@@ -31,8 +31,8 @@ export function createMacOpener(): UrlOpener {
 }
 
 export interface HotkeyHelperOptions {
-  /** 编译好的助手放这里，文件名 yoyo-hotkey。 */
-  readonly binDir: string;
+  /** 助手的可执行文件。不在就先把源码编译到这里。 */
+  readonly bin: string;
   /** hotkey.swift 的路径。 */
   readonly source: string;
   readonly inboxFile: string;
@@ -43,9 +43,9 @@ export interface HotkeyHelperOptions {
 
 /** 按键助手：第一次先编译，之后直接启动。按下快捷键就往收件箱写一条 listen。 */
 export function startHotkeyHelper(options: HotkeyHelperOptions): void {
-  const bin = join(options.binDir, 'yoyo-hotkey');
+  const bin = options.bin;
   if (!existsSync(bin)) {
-    mkdirSync(options.binDir, { recursive: true, mode: 0o700 });
+    mkdirSync(dirname(bin), { recursive: true, mode: 0o700 });
     const built = spawnSync(options.swiftc ?? 'swiftc', ['-O', '-o', bin, options.source], { encoding: 'utf8' });
     if (built.status !== 0) {
       options.logger.error('按键助手没编译成，仍可用 yoyo listen');

@@ -16,6 +16,8 @@ export interface Paths {
   readonly sfxDir: string;
   readonly modelsDir: string;
   readonly binDir: string;
+  /** 按键助手。缺省第一次启动时从 `hotkeySource` 编译到 `bin/yoyo-hotkey`；`YOYO_HOTKEY` 指向编好的（安装包里带的）。 */
+  readonly hotkeyBin: string;
   readonly hotkeySource: string;
 }
 
@@ -33,6 +35,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     sfxDir: join(dataDir, 'sfx'),
     modelsDir: join(dataDir, 'models'),
     binDir: join(dataDir, 'bin'),
+    hotkeyBin: env['YOYO_HOTKEY'] || join(dataDir, 'bin', 'yoyo-hotkey'),
     hotkeySource: join(root, 'src', 'adapters', 'platform', 'hotkey.swift'),
   };
 }
