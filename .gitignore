@@ -4,3 +4,4 @@ config.json
 *.mp3
 *.tsbuildinfo
 .DS_Store
+dist/

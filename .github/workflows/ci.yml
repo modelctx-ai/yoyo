@@ -46,3 +46,14 @@ jobs:
       # 格式（Oxfmt）、lint（Oxlint）和类型检查（tsgolint，TS 7）一次跑完
       - run: pnpm exec vp check --deny-warnings
       - run: pnpm test
+
+      # 发版时 yoyo 打成不依赖 node_modules 的单文件（见 release.yml）：拷到仓库外，确认还打得出、跑得起来
+      - run: pnpm pack:app
+      - name: 打包产物说一句
+        run: |
+          home="$(mktemp -d)"
+          mkdir -p "$home/lib"
+          cp -R dist/yoyo "$home/lib/yoyo"
+          printf '{"stage":"console","weather":{"enabled":false}}\n' >"$home/config.json"
+          YOYO_HOME="$home" YOYO_CONFIG="$home/config.json" node "$home/lib/yoyo/main.mjs" --once
+          YOYO_HOME="$home" YOYO_CONFIG="$home/config.json" node "$home/lib/yoyo/cli.mjs" log tail
