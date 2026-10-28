@@ -19,7 +19,16 @@
 
 ## 快速开始
 
-需要 macOS、Node 22.18+、pnpm 10，以及独立模式运行的 dsh-pet。
+在 Apple 芯片的 Mac 上，到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载 `yoyo-<版本>-macos-arm64.zip`。包里带着桌宠、Node、录音和听写，不用另外安装。
+
+```sh
+cd ~/Applications/yoyo   # 解压到的目录
+./yoyo start             # 第一次会生成 ~/.yoyo/config.json，填上 Fish Audio 的 apiKey 和 referenceId 再运行一次
+```
+
+说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关。
+
+从源码运行需要 Node 22.18+、pnpm 10，以及独立模式运行的 dsh-pet：
 
 ```sh
 git clone https://github.com/modelctx-ai/ctx ../ctx
@@ -40,6 +49,6 @@ pnpm start
 | [日常使用](docs/product/usage.md)             | [命令原则](docs/tech/cli-principles.md)       |
 | [配置](docs/product/configuration.md)         | [运行时原则](docs/tech/runtime-principles.md) |
 | [数据](docs/product/data.md)                  | [记忆](docs/tech/memory.md)                   |
-| [从旧版升级](docs/product/upgrading.md)       |                                               |
+| [从旧版升级](docs/product/upgrading.md)       | [发版](docs/tech/release.md)                  |
 
 图标素材的许可见 [assets/NOTICE](assets/NOTICE)。

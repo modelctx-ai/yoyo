@@ -9,7 +9,7 @@ status: stable
 
 # 写法
 
-配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。`YOYO_CONFIG` 可以换一个位置。
+从源码运行时，配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。安装包的配置在 `~/.yoyo/config.json`，`./yoyo` 第一次运行时从包里的示例复制过去；放在数据目录里，换新版本时替换整个程序目录也不会丢。`YOYO_CONFIG` 可以换一个位置。
 
 配置是宽松的，写错不会挡住启动：
 
@@ -19,6 +19,25 @@ status: stable
 * `mcpServers` 里写错的服务器（没有 `command` 也没有 `url`）启动时跳过，记一行。
 * `sandbox` 写错的字段按缺省；但沙箱打开了却启动不了时，要放进沙箱的服务器都不启动，见[把 MCP 服务器关进沙箱](#把-mcp-服务器关进沙箱)。
 * `speech.model`、`speech.referenceId` 原样保留，不去空白。
+
+# 开关
+
+想关掉哪样，就在 `config.json` 里把它写成 `false`，重启常驻进程生效。
+
+| 开关                | 缺省                         | 管什么                                                   |
+| ------------------- | ---------------------------- | -------------------------------------------------------- |
+| `listen.enabled`    | `false`，示例配置里是 `true` | 碎碎念说完听你回应                                       |
+| `speech.autoplay`   | `true`                       | 放语音；关掉只出字                                       |
+| `sfx.enabled`       | `true`                       | 每个动作配的轻音效                                       |
+| `weather.enabled`   | `true`                       | 工作日傍晚报一次天气                                     |
+| `memes.enabled`     | `true`                       | 空闲时找表情包，碎碎念时配一张                           |
+| `clipboard.enabled` | `true`                       | 读粘贴板、交给模型                                       |
+| `hotkey.enabled`    | `true`                       | Control+Option+Y 马上听一句                              |
+| `llm.tools`         | `false`                      | 回复时让模型调用工具                                     |
+| `memory.enabled`    | `false`                      | 记住主人，见[记忆](#记忆)                                |
+| `sandbox.enabled`   | `false`                      | MCP 服务器放进沙箱，见[后面一节](#把-mcp-服务器关进沙箱) |
+
+关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
 # 选项
 
@@ -43,6 +62,9 @@ status: stable
 | `anysearch.apiKey`、`anysearch.maxResults` | 空、`3`                                          | 搜索密钥和条数；密钥只经环境变量交给搜索进程                                                        |
 | `clipboard.enabled`                        | `true`                                           | `false` 不读粘贴板，也不交给模型                                                                    |
 | `hotkey.enabled`                           | `true`                                           | Control+Option+Y                                                                                    |
+| `weather.enabled`                          | `true`                                           | `false` 傍晚不报天气                                                                                |
+| `memes.enabled`                            | `true`                                           | `false` 空闲时不找表情包，碎碎念也不配                                                              |
+| `sfx.enabled`                              | `true`                                           | `false` 动作不配音效                                                                                |
 | `context.maxTokens`                        | 不写                                             | 交给模型的历史上限（估算 token）；不写就整段带上                                                    |
 | `context.compactAt`                        | 不写                                             | 历史超过这么多估算 token 时，把较早的部分压成摘要；不写就不压缩。`pnpm yoyo context compact` 手动压 |
 | `context.keep`                             | `40`                                             | 压缩时原样保留最近几条消息                                                                          |
@@ -209,9 +231,10 @@ sandbox:
 
 # 环境变量
 
-| 变量               | 作用                                                         |
-| ------------------ | ------------------------------------------------------------ |
-| `YOYO_HOME`        | 数据目录，缺省 `~/.yoyo`                                     |
-| `YOYO_CONFIG`      | 配置文件                                                     |
-| `YOYO_PET_RUNTIME` | 桌宠运行状态文件，缺省 `~/.dsh/dsh-pet/standalone-runtime.json` |
-| `YOYO_WHISPER`     | `whisper-cli` 的位置                                         |
+| 变量               | 作用                                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `YOYO_HOME`        | 数据目录，缺省 `~/.yoyo`                                                                                       |
+| `YOYO_CONFIG`      | 配置文件                                                                                                       |
+| `YOYO_PET_RUNTIME` | 桌宠运行状态文件，缺省 `~/.dsh/dsh-pet/standalone-runtime.json`                                                |
+| `YOYO_WHISPER`     | `whisper-cli` 的位置                                                                                           |
+| `YOYO_HOTKEY`      | 编好的按键助手；不设就第一次启动时用 `swiftc` 编到数据目录的 `bin/yoyo-hotkey`。安装包的 `./yoyo` 指向包里带的 |

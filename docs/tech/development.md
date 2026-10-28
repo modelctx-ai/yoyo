@@ -22,25 +22,26 @@ sources:
 
 # 工具链
 
-* Node ≥22.18 直接运行 `.ts`，应用没有构建步骤。
+* Node ≥22.18 直接运行 `.ts`，平时没有构建步骤。只有发版时把 yoyo 打成单文件放进安装包，见[发版](release.md)。
 * pnpm 10，版本由 `package.json` 的 `packageManager` 固定。
 * 测试、lint、格式和类型检查用 [Vite+](https://viteplus.dev/)（`vite-plus`，命令 `vp`），配置在 `vite.config.ts`。[^vite]
 * `docs/` 不归格式化管；`README.md` 归，改完跑一次 `pnpm format`。
-* macOS 上用到的系统命令：播放 `afplay`，录音 `ffmpeg`（avfoundation），粘贴板 `pbpaste`，确认页 `open`，按键助手用 `swiftc` 编译；听写用 whisper.cpp 的 `whisper-cli`，模型第一次用时下载到 `~/.yoyo/models/ggml-<asr.model>.bin`。别的系统换成静音和空实现，见[架构](architecture.md#目录)。
+* macOS 上用到的系统命令：播放 `afplay`，录音 `ffmpeg`（avfoundation），粘贴板 `pbpaste`，确认页 `open`，按键助手用 `swiftc` 编译；听写用 whisper.cpp 的 `whisper-cli`，模型第一次用时下载到 `~/.yoyo/models/ggml-<asr.model>.bin`。别的系统换成静音和空实现，见[架构](architecture.md#目录)。安装包里这些程序都带着（`afplay`、`pbpaste`、`open` 是系统自带的），见[发版](release.md#各部分)。
 
 # 脚本
 
-| 命令                                | 作用                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------- |
-| `pnpm start`                        | 常驻进程，`node src/main.ts`                                              |
-| `pnpm once`                         | 只说一句，`--once`                                                        |
-| `pnpm bake`                         | 预合成固定台词到 `~/.yoyo/speech-cache`，`--bake`                         |
-| `pnpm yoyo <领域>`                  | 命令行，等于 `node bin/yoyo.js`                                           |
-| `pnpm test`                         | `vp test`：Vitest 跑 `src/` 和 `packages/` 下的 `*.test.ts`               |
-| `pnpm typecheck`                    | `vp check --no-fmt --no-lint`：只做类型检查（tsgolint，TS 7），不产出文件 |
-| `pnpm lint`                         | `vp lint`：Oxlint，带类型信息的规则，同时报类型错误；有警告也算失败       |
-| `pnpm format` / `pnpm format:check` | `vp fmt`：Oxfmt 改写 / 检查                                               |
-| `pnpm check`                        | `vp check`（格式、lint、类型）再 test；CI 跑同样几步                      |
+| 命令                                | 作用                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `pnpm start`                        | 常驻进程，`node src/main.ts`                                                   |
+| `pnpm once`                         | 只说一句，`--once`                                                             |
+| `pnpm bake`                         | 预合成固定台词到 `~/.yoyo/speech-cache`，`--bake`                              |
+| `pnpm yoyo <领域>`                  | 命令行，等于 `node bin/yoyo.js`                                                |
+| `pnpm test`                         | `vp test`：Vitest 跑 `src/` 和 `packages/` 下的 `*.test.ts`                    |
+| `pnpm typecheck`                    | `vp check --no-fmt --no-lint`：只做类型检查（tsgolint，TS 7），不产出文件      |
+| `pnpm lint`                         | `vp lint`：Oxlint，带类型信息的规则，同时报类型错误；有警告也算失败            |
+| `pnpm format` / `pnpm format:check` | `vp fmt`：Oxfmt 改写 / 检查                                                    |
+| `pnpm check`                        | `vp check`（格式、lint、类型）再 test；CI 跑同样几步                           |
+| `pnpm pack:app`                     | `vp pack`：把两个入口打成不依赖 node_modules 的 ESM，放在 `dist/yoyo/`，发版用 |
 
 [^package]
 
@@ -58,7 +59,9 @@ ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的七个�
 
 # CI
 
-`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出（ctx 取 `main` 的最新提交，不固定版本，所以 ctx 的不兼容改动会直接让 yoyo 的 CI 变红），构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`。[^ci]
+`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出（ctx 取 `main` 的最新提交，不固定版本，所以 ctx 的不兼容改动会直接让 yoyo 的 CI 变红），构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`；最后 `pnpm pack:app`，把产物拷到仓库外说一句，确认还打得出、跑得起来。[^ci]
+
+推 `v*` tag 时另有 `.github/workflows/release.yml` 打 macOS 安装包，见[发版](release.md)。
 
 # 调试
 

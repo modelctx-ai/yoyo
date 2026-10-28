@@ -21,6 +21,8 @@ Control+Option+Y：马上听一句。需要系统允许辅助功能。
 
 # 命令行
 
+用安装包时，下面的 `pnpm yoyo` 都换成包目录里的 `./yoyo`。
+
 `pnpm yoyo` 只列出有哪些领域。跟上领域名看它有哪些动作，`inspect` 看参数，`find` 按关键词找。
 
 ```sh

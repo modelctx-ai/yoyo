@@ -75,7 +75,7 @@ flowchart TB
 * `cli` 和组装根可以直接用下面任何一层。
 * `packages/dsh-pet` 不依赖 yoyo 的任何东西。
 
-`features`、`brain`、编排器、导演和常驻循环只认端口。换平台、换服务商、写测试替身，都只需要另给一份实现，在组装根里挑。按键助手也由组装根给：常驻循环只调 `startHotkey()`，只有 macOS 且 `hotkey.enabled` 时才真的起。[^ports] [^container]
+`features`、`brain`、编排器、导演和常驻循环只认端口。换平台、换服务商、写测试替身，都只需要另给一份实现，在组装根里挑。按键助手也由组装根给：常驻循环只调 `startHotkey()`，只有 macOS 且 `hotkey.enabled` 时才真的起；`YOYO_HOTKEY` 给了编好的（安装包里带的）就直接用，否则第一次启动时用 `swiftc` 编到数据目录。[^ports] [^container]
 
 # 目录
 
@@ -83,7 +83,7 @@ flowchart TB
 | --- | --- |
 | `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路、气泡时长和记录类型。不做 IO |
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
-| `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
+| `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
 | `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
@@ -125,7 +125,7 @@ flowchart LR
 2. 导演并进桌宠的对话记忆。
 3. 取走收件箱里的请求：命令、菜单和按键交来的「听一句」「碎碎念」。
 4. 到点的闹钟和任务，由导演提醒。
-5. 离下一句日常碎碎念还有 20 秒以上，就让导演去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
+5. `memes.enabled` 打开、离下一句日常碎碎念还有 20 秒以上，就让导演去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
 6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。
 7. 配了 `context.compactAt` 时，每 10 分钟最多让导演看一次要不要压缩；压一次最多等 60 秒，超时这次就不压。
 8. 打开记忆时：这一拍写过用户话或回复（听到一句、桌宠对话并进新条目），就在后台门控一次，不等；上一次还没完就留到下一拍。
@@ -211,20 +211,20 @@ sequenceDiagram
   participant Pet as dsh-pet
   participant DB as yoyo.db
   Orch->>Dir: choose
-  Note over Dir: 工作日傍晚先报一次天气，否则抽预制台词，避开 3 小时内说过的
+  Note over Dir: 工作日傍晚先报一次天气（weather.enabled），否则抽预制台词，避开 3 小时内说过的
   opt 预制台词用完、模型配齐
     Orch->>H: submit 碎碎念这一轮（record: false，不给工具）
     H->>LLM: 人设和语气 + 上下文视图 + 「当前任务、粘贴板、请再说一句碎碎念。」
     LLM-->>Orch: 一句
   end
-  Orch->>Dir: dress：大约四成配一张表情包
+  Orch->>Dir: dress：大约四成配一张表情包（memes.enabled）
   Orch->>Dir: speak
   Dir->>TTS: 合成，同一句走缓存
   Dir->>Pet: POST /lock
   Dir->>Pet: POST /broadcast（anim: false）
   Dir->>Pet: POST /anim
-  Dir->>DB: 行为记录、配音记录
-  Note over Dir: 放配音，speech.autoplay 开着就用 afplay 播语音
+  Dir->>DB: 行为记录、配音记录（sfx.enabled）
+  Note over Dir: 放配音（sfx.enabled），speech.autoplay 开着就用 afplay 播语音
   Dir->>DB: 记进 3 小时窗口，天气只记日期
   Dir->>DB: recordLine：whisper 事件
   Dir->>Pet: POST /lock/release
@@ -399,7 +399,7 @@ registry.addTool(
 
 * **只改启动命令**：`connectMcp` 先挑出写对的服务器，再由 `applySandbox` 把要包的（有 `command`、没写 `"sandbox": false`）改成 `{ command: <沙箱程序的绝对路径>, args: [<sandbox.command 其余的词>, '--settings', <文件>, '--', command, ...args] }`，`env`、`cwd`、`include` 等原样保留，再交给 ctx-mcp。思路同 via 的 ADR 0027：不依赖 `@anthropic-ai/sandbox-runtime`，不 `import` 它，`package.json` 不变；任何接受这条命令行的程序都能写进 `sandbox.command`。`brain/sandbox.ts` 是 yoyo 唯一知道 srt 设置形状的地方。
 * **只包服务器，不包 yoyo**：yoyo 自己要连模型和 Fish、写 `yoyo.db`、在 macOS 上放声音，放进沙箱就要把这些都写进策略；只包子进程，yoyo 留在外面，服务器也就碰不到 yoyo 的配置。和 via 不同，这里每台服务器一个常驻的 srt，进程活多久沙箱就活多久，调用不再经过 srt。
-* **设置文件**：用户的 `policy` 原样保留，`filesystem.denyWrite` 追加 `YOYO_HOME`、`config.json`（缺省在仓库根目录，不在 `YOYO_HOME` 里，所以单列）和 `policy` 指向的文件，四个数组缺的补成空数组；不校验别的字段。按内容哈希写到 `YOYO_HOME/sandbox/settings-<16 位>.json`（目录 0700、文件 0600，`wx` 打开，已有就复用）。设置文件本身在 `denyWrite` 的 `YOYO_HOME` 里，服务器改不了。
+* **设置文件**：用户的 `policy` 原样保留，`filesystem.denyWrite` 追加 `YOYO_HOME`、`config.json`（从源码运行时缺省在仓库根目录，不在 `YOYO_HOME` 里，所以单列；安装包放在 `YOYO_HOME` 里）和 `policy` 指向的文件，四个数组缺的补成空数组；不校验别的字段。按内容哈希写到 `YOYO_HOME/sandbox/settings-<16 位>.json`（目录 0700、文件 0600，`wx` 打开，已有就复用）。设置文件本身在 `denyWrite` 的 `YOYO_HOME` 里，服务器改不了。
 * **在连接之前找程序**：`sandbox.command` 的第一个词在 yoyo 进程的 PATH 上解析成绝对路径。ctx-mcp（`@ai-sdk/mcp` 的 stdio 传输）启动子进程时只带 `HOME`、`LOGNAME`、`PATH`、`SHELL`、`TERM`、`USER` 加上服务器的 `env`；服务器 `env` 里改了 `PATH` 也不影响找到 srt。srt 把收到的环境变量和 `cwd` 交给里面的进程（srt 0.0.81 实测）。
 * **失败关闭**：找不到程序、`policy` 文件读不出或不是 JSON 对象、设置文件写不下，记一行警告，要包的服务器从这次连接里去掉，不退回到不加沙箱；`url` 的和豁免的照常连。只在打开了且至少有一台要包时才找程序、写文件。srt 自己拒绝时，ctx-mcp 报这台服务器连接失败，按「没连上」记。
 * **日志**：包了的服务器连上时记「MCP notes 已连上（在沙箱里），N 个工具」。

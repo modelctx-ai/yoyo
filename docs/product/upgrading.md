@@ -1,10 +1,20 @@
 ---
 type: Guide
 title: 从旧版升级
-description: 从 JavaScript 版或上一版升级时要知道的变化；数据和配置都原样可用。
+description: 从 JavaScript 版或上一版升级、换成安装包时要知道的变化；数据和配置都原样可用。
 tags: [product, upgrade]
 status: stable
 ---
+
+# 换成安装包
+
+从源码运行换成[安装包](getting-started.md#安装包)：
+
+1. 停掉常驻进程（`pnpm start`）和自己开的桌宠。
+2. 把 yoyo 目录的 `config.json` 复制成 `~/.yoyo/config.json`。安装包从那里读配置。
+3. 解压安装包，运行 `./yoyo start`。
+
+数据本来就在 `~/.yoyo`，对话记忆、日程、语音缓存都接着用。以前编好的按键助手 `~/.yoyo/bin/yoyo-hotkey` 不再用到，可以删掉。安装包以后换新版本，替换整个目录就行。
 
 # 要做的
 
