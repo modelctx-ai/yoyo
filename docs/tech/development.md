@@ -18,6 +18,12 @@ sources:
   - id: ci
     resource: .github/workflows/ci.yml
     title: CI
+  - id: patch
+    resource: patches/dsh-pet@0.3.8.patch
+    title: dsh-pet 补丁
+  - id: patch-test
+    resource: src/adapters/dsh-pet/patch.test.ts
+    title: 补丁的测试
 ---
 
 # 工具链
@@ -35,13 +41,14 @@ sources:
 | `pnpm start`                        | 常驻进程，`node src/main.ts`                                                   |
 | `pnpm once`                         | 只说一句，`--once`                                                             |
 | `pnpm bake`                         | 预合成固定台词到 `~/.yoyo/speech-cache`，`--bake`                              |
+| `pnpm pet`                          | 桌宠：dsh-pet 独立模式，`node src/pet.ts`，按 `pet.menu` 排右键菜单            |
 | `pnpm yoyo <领域>`                  | 命令行，等于 `node bin/yoyo.js`                                                |
 | `pnpm test`                         | `vp test`：Vitest 跑 `src/` 和 `packages/` 下的 `*.test.ts`                    |
 | `pnpm typecheck`                    | `vp check --no-fmt --no-lint`：只做类型检查（tsgolint，TS 7），不产出文件      |
 | `pnpm lint`                         | `vp lint`：Oxlint，带类型信息的规则，同时报类型错误；有警告也算失败            |
 | `pnpm format` / `pnpm format:check` | `vp fmt`：Oxfmt 改写 / 检查                                                    |
 | `pnpm check`                        | `vp check`（格式、lint、类型）再 test；CI 跑同样几步                           |
-| `pnpm pack:app`                     | `vp pack`：把两个入口打成不依赖 node_modules 的 ESM，放在 `dist/yoyo/`，发版用 |
+| `pnpm pack:app`                     | `vp pack`：把三个入口打成不依赖 node_modules 的 ESM，放在 `dist/yoyo/`，发版用 |
 
 [^package]
 
@@ -57,9 +64,18 @@ ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的七个�
 
 三个仓库怎么分工、怎么一起联调，见 [ctx 仓库](https://github.com/modelctx-ai/ctx)的 `docs/repos.md`。
 
+# 桌宠
+
+dsh-pet 用 npm 上上游发的版本，钉在两处，版本要一致：根目录 `package.json` 的依赖（开发时 `pnpm pet` 用），和只为发版存在的工作区包 `scripts/release/pet`（`package.sh` 拿它 `pnpm deploy`）。第一次 `pnpm pet` 会下载 Electron。我们 fork 的仓库只用来跟上游，不在上面改；右键菜单的改动在 `patches/` 的补丁里，怎么起作用见[架构](architecture.md#怎么用-dsh-pet)。[^workspace] [^patch]
+
+* 它在 DSH 插件宿主里才用得到的 peer（`@deepseek-ai/*`、`react`）由 `pnpm-workspace.yaml` 的 `packageExtensions` 标成可选，不装。
+* 改补丁：`pnpm patch dsh-pet@<版本>` 打开一份可改的副本，改完 `pnpm patch-commit <目录>`。pnpm 会重写 `pnpm-workspace.yaml`、去掉里面的注释，提交前照原样恢复，只留它改的 `patchedDependencies`。
+* 升版本：两处的版本、`packageExtensions` 和 `patchedDependencies` 的键都换成新版本，删掉旧补丁，`pnpm patch` 新版本把补丁重做一遍。`src/adapters/dsh-pet/patch.test.ts` 查补丁打进去了、菜单整理得对，打不上时 `pnpm install` 直接失败。[^patch-test]
+* 上游 `main` 已经把菜单拆到 `runtime/electron-helper/sprite/menu.js`，下一版的补丁要把 `sprite.js` 那一处挪过去；`main.js`、`index.html` 两处和 `yoyo-menu.js` 不用变。
+
 # CI
 
-`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出（ctx 取 `main` 的最新提交，不固定版本，所以 ctx 的不兼容改动会直接让 yoyo 的 CI 变红），构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`；最后 `pnpm pack:app`，把产物拷到仓库外说一句，确认还打得出、跑得起来。[^ci]
+`.github/workflows/ci.yml` 在每次推送和 PR 上跑：把 yoyo 和 ctx 并排检出（ctx 取 `main` 的最新提交，不固定版本，所以 ctx 的不兼容改动会直接让 yoyo 的 CI 变红），构建 ctx，`pnpm install --frozen-lockfile`，再 `vp check --deny-warnings` 和 `pnpm test`；最后 `pnpm pack:app`，把产物拷到仓库外说一句，确认还打得出、跑得起来；再按锁文件 deploy 一份打过补丁的 dsh-pet，经打出来的 `pet.mjs` 开到帮助为止。[^ci]
 
 推 `v*` tag 时另有 `.github/workflows/release.yml` 打 macOS 安装包，见[发版](release.md)。
 
@@ -80,3 +96,5 @@ ctx 还没发到 npm。`pnpm-workspace.yaml` 的 `overrides` 把用到的七个�
 [^package]: 脚本
 [^workspace]: 工作区和 overrides
 [^ci]: CI
+[^patch]: dsh-pet 补丁
+[^patch-test]: 补丁的测试

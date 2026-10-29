@@ -46,6 +46,12 @@ sources:
   - id: client
     resource: packages/dsh-pet/src/client.ts
     title: dsh-pet 客户端
+  - id: pet
+    resource: src/pet.ts
+    title: 桌宠入口
+  - id: patch
+    resource: patches/dsh-pet@0.3.8.patch
+    title: dsh-pet 补丁
 ---
 
 # 分层
@@ -86,12 +92,14 @@ flowchart TB
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
 | `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
-| `src/adapters` | 端口的实现：`dsh-pet`、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
+| `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
+| `src/pet.ts` | 桌宠入口：按 `pet.menu` 设好右键菜单的环境变量，再加载 dsh-pet 的独立模式入口 |
+| `patches/` | npm 上 dsh-pet 的补丁，`pnpm install` 时打上 |
 | `packages/dsh-pet` | `@yoyo/dsh-pet`：dsh-pet 独立模式 HTTP 接口的类型化客户端，只照 `openapi.yaml` 写 |
 
 # 常驻进程
@@ -176,7 +184,14 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 
 # 怎么用 dsh-pet
 
-只经 `@yoyo/dsh-pet` 调官方 HTTP 接口，契约是 dsh-pet 仓库的 `openapi.yaml`。不改宠物仓库，也不读它的文件，只读独立模式的运行状态文件取令牌。[^client]
+只经 `@yoyo/dsh-pet` 调官方 HTTP 接口，契约是 dsh-pet 仓库的 `openapi.yaml`。不读它的文件，只读独立模式的运行状态文件取令牌。[^client]
+
+桌宠本身是 npm 上上游发的 `dsh-pet`，版本钉在 `package.json`。我们 fork 的仓库只用来跟上游，不在上面改；右键菜单靠 yoyo 自己带的一份补丁：[^patch] [^pet]
+
+* `patches/dsh-pet@<版本>.patch` 登记在 `pnpm-workspace.yaml` 的 `patchedDependencies`，`pnpm install` 时打上，打不上就装不成。开发时的 `node_modules` 和安装包里的是同一份。
+* 补丁只碰桌面窗口的纯 JS（Electron 直接加载，不用重新构建）：`main.js` 把环境变量 `YOYO_PET_MENU` 当页面参数转给菜单页，`index.html` 多加载一个 `yoyo-menu.js`，`sprite.js` 拼菜单前调一次 `yoyoArrangeMenu`。逻辑都在新加的 `yoyo-menu.js` 里：按 `hide` 去掉自带的工具项（认 action），按 `top` 把这些 owner 的第三方项提到第一层；没有这个变量、或者不是合法 JSON，就原样返回。
+* 桌宠经 `src/pet.ts` 开：按 `pet.menu` 算出 `{"hide":[…],"top":["yoyo"]}` 放进 `YOYO_PET_MENU`（已经设了就不覆盖），再加载 dsh-pet 的 `lib/standalone.js`。dsh-pet 起桌面窗口进程时把自己的环境变量整份传下去，变量因此到得了 `main.js`。
+* 菜单接口不变：照旧经 `POST /menu/item` 注册、`GET /menu/events` 收点击，提到第一层的项点了也走 `/menu/click`。没打补丁的桌宠只是把 yoyo 的项放在「更多」里。
 
 | 接口 | 用途 | `PetHost` |
 | --- | --- | --- |
@@ -186,7 +201,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | `POST /broadcast` | 投喂台词：`text`、`duration`、表情包 `url`，`anim: false` | `present` |
 | `POST /anim` | 点播动作；开始听时也用，不占锁 | `present`、`cue` |
 | `POST /lock/release` | 放开，失败不抛错 | `present` |
-| `POST /menu/item` | 注册右键 yoyo 分组：「碎碎念」「听一句」，带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
+| `POST /menu/item` | 注册 yoyo 的「碎碎念」「听一句」（打了补丁的桌宠放第一层，否则收在「更多」的 yoyo 分组里），带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
 | `GET /menu/events?owner=yoyo&wait=` | 长轮询菜单点击；回 `unknown-owner` 就重新注册 | `menu` |
 | `POST /standalone-ai/settings` | 右键对话改走 yoyo 的网关，`automaticWhispers: false`。独立模式自己的设置接口，挂在服务根上，不在 `openapi.yaml` 里 | `bindChat` |
 
@@ -427,4 +442,6 @@ YOYO_HOME=/tmp/yoyo-dev YOYO_CONFIG=/tmp/yoyo-dev/config.json pnpm once
 [^director]: 导演
 [^daemon]: 常驻循环
 [^client]: dsh-pet 客户端
+[^pet]: 桌宠入口
+[^patch]: dsh-pet 补丁
 [^memory]: 记忆接线

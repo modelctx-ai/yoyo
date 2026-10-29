@@ -10,6 +10,7 @@
 - **开口说话**：每句台词都有配音，动作也配一段轻轻的音效。
 - **听你回应**：说完听你几秒，听写后先给你确认，再回复；像在提问就先搜一下。
 - **右键对话更聪明**：桌宠自己的对话框用上 yoyo 的完整记忆。
+- **右键菜单换成 yoyo 的**：碎碎念、听一句放在第一层，用不上的自带项藏起来。
 - **记住你**（可选）：夜里把值得记的话整理成画像和记得的事，碎碎念和回复时带上；随时能看、能删。
 - **闹钟和日程**：每天、工作日、每周或某一天，到点就提醒。
 - **天气**：工作日傍晚报一次接下来几小时的天气。
@@ -28,13 +29,14 @@ cd ~/Applications/yoyo   # 解压到的目录
 
 说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关。
 
-从源码运行需要 Node 22.18+、pnpm 10，以及独立模式运行的 dsh-pet：
+从源码运行需要 Node 22.18+ 和 pnpm 10，桌宠 dsh-pet 跟着依赖装上：
 
 ```sh
 git clone https://github.com/modelctx-ai/ctx ../ctx
 pnpm -C ../ctx install && pnpm -C ../ctx build
 pnpm install
 cp config.example.json config.json   # 填上 Fish Audio 的 apiKey 和 referenceId
+pnpm pet                             # 另开一个终端：桌宠
 pnpm start
 ```
 

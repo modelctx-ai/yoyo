@@ -1,5 +1,10 @@
 # 文档更新记录
 
+## 2026-10-29
+
+* **更新** 桌宠改用 npm 上上游发的 `dsh-pet`，右键菜单靠 yoyo 自带的补丁：配置的选项表加 `pet.menu.hide`、`pet.menu.top`，新加「右键菜单」一节（藏得掉哪些自带项、改了要重开桌宠、自己开的桌宠不认）；日常使用的「右键菜单」改成 yoyo 的两项在第一层、自带的三项缺省藏起来；安装与运行的「启动桌宠」改成 `pnpm pet`，另外要装的不再有 dsh-pet；README 的功能列表加一条，从源码运行加 `pnpm pet`。`config.example.json` 跟上。
+* **更新** 架构：目录表加 `src/pet.ts`、`patches/` 和 `adapters/dsh-pet/patch.ts`；「怎么用 dsh-pet」写明桌宠从 npm 装、fork 只跟上游不改，补丁碰哪几处、`YOYO_PET_MENU` 怎么从 `pet.menu` 传到菜单页，`POST /menu/item` 一行跟上。开发：脚本加 `pnpm pet`、`pack:app` 是三个入口；新加「桌宠」一节（两处钉版本、peer 标成可选、怎么改补丁和升版本、上游已拆菜单文件）；CI 加上 deploy 桌宠的检查。发版：dsh-pet 不再检出和构建，改为按锁文件 `pnpm deploy`，Electron 版本取 dsh-pet 缺省下载的那个；启动脚本加 `YOYO_PET_ENTRY`，桌宠都经 `pet.mjs` 开；「为什么」加一条，「还没做」去掉固定 dsh-pet 版本。
+
 ## 2026-10-28
 
 * **新增** 补上发版（提案，`status: proposed`，第一次推 tag 在真机上验证以后转为已实现）：推 `v*` tag 时 GitHub Actions 在 macOS 上打安装包并挂到 Release，手动跑只出构建产物；包的目录结构；yoyo 打成不依赖 node_modules 的单文件，Node、Electron、dsh-pet 独立模式、最小 LGPL ffmpeg、静态 whisper-cli、听写模型、按键助手各从哪来、怎么固定版本；启动脚本 `./yoyo` 设的环境变量、`start` 怎么开关桌宠、清隔离属性；冒烟测试查什么；为什么这样做；还没做的（Intel、签名公证、固定 ctx 和 dsh-pet 的 tag、单文件里依赖的许可）。索引和 README 的技术文档表加这一篇。
