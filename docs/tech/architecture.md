@@ -175,7 +175,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | 记录 | 每一轮都是 `record: false`：用户这句、回复和 `ctx.run.*` 都不写。听到的话在跑回复之前由编排器 `recordUser`；合成、投喂、播放成功以后，导演才 `recordLine`；没说出口的句子不进上下文 | `orchestrator.ts`、`director.ts` |
 | 报错 | `stopReason` 是 `error` 或 `aborted` 就报错。`RunResult.error`（`ErrorInfo`）带 `statusCode` 和 `responseBody`，`compose.ts` 抹掉 `llm.apiKey`、压成一行、截到 180 字，和 `describeError` 对抛出来的错误做的一样；有状态码时「模型接口返回 <状态码>：<正文片段>」，否则「模型没回：…」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过。导入的条目 `at` 是过去，日志里排在写入的位置，投影和 `yoyo context tail` 按 `(at, seq)` 排回原来的位置（`compareEntries`） | `storePetChat` |
-| 网关 | 右键对话走 `startGateway({ upstream, accessToken, rewrite: withContext(context) })`，本机随机端口；`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。只支持 `openai-compatible` | `startChannel`、`connectChannel` |
+| 网关 | 右键对话走 `startGateway({ accessToken, rewrite, fetch })`，本机随机端口：`fetch` 换成 yoyo 自己（`answeringFetch`），请求不转发出去，交给编排器的 `chat` / `petWhisper` 跑一轮，再按 Chat Completions 的格式回；`rewrite` 原样返回，只为让网关先检查正文。令牌、Host、Origin 的检查照旧由网关做。`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。哪种 `llm.provider` 都行 | `startChannel`、`connectChannel` |
 | 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness；打开记忆时再加 `recall`，执行环境是记忆 | `createYoyoTools`、`connectMcp`、`createApp` |
 | 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。压缩另记的 `ctx.compacted` 和别的框架事件 `ctx.*` 投影里看不见，不计入阈值，`yoyo context tail` 也不列。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 旧摘要 | 摘要的 `covers` 在 ctx 0.3 里按 `seq` 算，升级前写的旧摘要（`v` 是 0）可能盖住了后写进来的旧记录。常驻进程启动时、开拍子之前找一次：有，而且有模型，就用 `COMPACT_INSTRUCTIONS` 重新压一次，新摘要取代旧摘要；没有模型记一条警告，下次启动再做。命令行不做，出错不挡启动 | `recompactLossySummaries`、`runDaemon` |
@@ -203,12 +203,12 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | `POST /lock/release` | 放开，失败不抛错 | `present` |
 | `POST /menu/item` | 注册 yoyo 的「碎碎念」「听一句」（打了补丁的桌宠放第一层，否则收在「更多」的 yoyo 分组里），带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
 | `GET /menu/events?owner=yoyo&wait=` | 长轮询菜单点击；回 `unknown-owner` 就重新注册 | `menu` |
-| `POST /standalone-ai/settings` | 右键对话改走 yoyo 的网关，`automaticWhispers: false`。独立模式自己的设置接口，挂在服务根上，不在 `openapi.yaml` 里 | `bindChat` |
+| `POST /standalone-ai/settings` | 右键对话改走 yoyo 的网关，`automaticWhispers: false`，`timeoutMs` 设成它允许的上限 60 秒（yoyo 跑的一轮可能调工具）。独立模式自己的设置接口，挂在服务根上，不在 `openapi.yaml` 里 | `bindChat` |
 
 * 每次请求都重新读 `~/.dsh/dsh-pet/standalone-runtime.json`（`YOYO_PET_RUNTIME` 可换）里的令牌，带在 `x-dsh-pet-token` 里。桌宠重启换了令牌也不用重启 yoyo。
 * `/lock`、`/broadcast`、`/anim` 带 `?pet=&surface=`，持锁时加 `lock=`。`/lock/release` 和 `GET /chat` 只带 `pet`，宠物中途被隐藏也撤得掉锁。
 * 业务失败是 HTTP 200 加 `ok: false`，按 `message`、`reason` 抛 `PetApiError`。单次请求 15 秒超时，长轮询在等待时长之外再给 12 秒。
-* 不调用 `POST /whisper` 和 `POST /chat`。独立模式下这两条回 `provider-missing`。
+* 不调用 `POST /whisper` 和 `POST /chat`：那是桌宠自己的对话框和碎碎念用的，它们的模型请求再经网关回到 yoyo。
 
 # 数据流
 
@@ -288,26 +288,34 @@ sequenceDiagram
 
 ## 右键对话
 
-右键「对话」仍是桌宠自己的输入框，yoyo 只换掉它的模型地址和历史。这一路不经过 harness 和编排器：网关只读上下文视图，原样转发。[^channel] [^daemon]
+右键「对话」仍是桌宠自己的输入框，但回答整轮在 yoyo 里跑：和听到一句以后的回复是同一个 agent，带记忆、事实、工具、MCP 和搜索。桌宠带来的人设和截断历史都不要，只取最后一条用户消息；开着对话配图时桌宠在这句后面接的表情包清单也去掉。请求以「随便说一句日常碎碎念」开头的是桌宠自己的「碎碎念」（右键里没藏起来时），交给碎碎念的 agent。[^channel] [^daemon] [^orchestrator]
+
+* 这一轮不写日志（`record: false`），主人这句放进最后一条临时用户消息。一问一答由桌宠写进它的对话记忆，下一拍照旧按幂等键并进来，所以不会记两遍；并进来以后照样门控。
+* 回复不按念的那一句截：气泡装得下多句，整段回去。
+* 算作说过话：开始和结束都更新 `lastTalk`，碎碎念照样让路，记忆也不在这时整理。
+* 桌宠一次请求最多等 60 秒；yoyo 这边 55 秒没跑完就取消，留几秒把错误送回去。桌宠断开也取消。
+* 流式时先回一个角色块，桌宠马上拿到响应头；跑完再回正文、`stop` 和 `[DONE]`。没跑成就在流里回一个 `error`，OpenAI 的 SDK 读到就报错，桌宠显示它自己的出错文案。
 
 ```mermaid
 sequenceDiagram
   participant User as 主人
   participant Pet as dsh-pet
   participant GW as ctx-gateway
+  participant Orch as 编排器
+  participant H as harness
   participant Ctx as ctx Context
-  participant Up as llm.baseUrl
   participant Daemon as 常驻循环
-  participant Orch as 编排器和导演
-  Daemon->>GW: 启动时 startChannel：本机随机端口，新生成本机令牌
-  Daemon->>Pet: POST /standalone-ai/settings（网关地址、本机令牌；桌宠没开就每 30 秒再试）
+  Daemon->>GW: 启动时 startChannel：本机随机端口，新生成本机令牌，fetch 换成 yoyo
+  Daemon->>Pet: POST /standalone-ai/settings（网关地址、本机令牌、60 秒；桌宠没开就每 30 秒再试）
   User->>Pet: 右键「对话」说一句
-  Pet->>GW: POST /v1/chat/completions（本机令牌，截断的历史）
-  GW->>Ctx: view()
-  Ctx-->>GW: 完整上下文
-  GW->>Up: 桌宠的系统提示 + 完整上下文 + 这一句（真密钥）
-  Up-->>GW: SSE
-  GW-->>Pet: SSE，边收边转
+  Pet->>GW: POST /v1/chat/completions（本机令牌，人设和截断的历史）
+  GW-->>Pet: SSE 角色块
+  GW->>Orch: chat(最后一句用户话)
+  Orch->>H: submit 回复的 agent（record: false，这句放进临时用户消息）
+  H->>Ctx: 视图、事实、记忆、工具、MCP
+  H-->>Orch: 回复
+  Orch-->>GW: 整段回复
+  GW-->>Pet: SSE 正文、stop、[DONE]
   Note over Pet: 写进自己的对话记忆，弹气泡
   Orch->>Pet: 每拍 GET /chat?rounds=200
   Orch->>Ctx: storePetChat，按幂等键去重
@@ -315,7 +323,7 @@ sequenceDiagram
   Note over Daemon: 不是自己投喂的句子，speech.autoplay 开着就合成并播放
 ```
 
-网关只读上下文，不写。问答是下一拍从桌宠的对话记忆并进来的。
+这一轮不写上下文。问答是下一拍从桌宠的对话记忆并进来的。
 
 # 扩展
 

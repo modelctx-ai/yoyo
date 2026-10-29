@@ -53,7 +53,7 @@ status: stable
 | `speech.baseUrl`、`speech.model`           | `https://api.fish.audio/v1/tts`、`s2.1-pro-free` | Fish Audio 的接口和模型                                                                             |
 | `speech.autoplay`                          | `true`                                           | `false` 只出字，不放语音                                                                            |
 | `speech.tone`                              | `lively`                                         | 朗读右键对话回复用的语气                                                                            |
-| `llm.provider`                             | `openai-compatible`                              | 或 `anthropic`；`anthropic` 时右键对话不经过 yoyo                                                   |
+| `llm.provider`                             | `openai-compatible`                              | 或 `anthropic`；两种右键对话都由 yoyo 回答                                                          |
 | `llm.baseUrl`、`llm.apiKey`、`llm.model`   | 空                                               | 配齐了才让模型写碎碎念和回复；`anthropic` 可以不写 `baseUrl`                                        |
 | `llm.tools`                                | `false`                                          | 回复时让模型调用工具：搜索、天气、闹钟，以及 `mcpServers` 里的工具                                  |
 | `listen.enabled`、`listen.seconds`         | `false`、`5`                                     | 说完听回应，听几秒（1–10）；不写就不听，示例配置里打开了                                            |
@@ -84,14 +84,14 @@ status: stable
 
 `./yoyo start`、`./yoyo pet` 和从源码运行时 `pnpm pet` 开的桌宠，右键菜单按 `pet.menu` 排：`top` 打开时「碎碎念」「听一句」放在第一层，`hide` 里列的自带项藏起来。桌宠开的时候读一次，改了要关掉桌宠再开（`./yoyo start` 开的桌宠随 Control+C 一起关）。
 
-| `hide` 里写    | 藏掉的自带项                                                     |
-| -------------- | ---------------------------------------------------------------- |
-| `open-site`    | 打开网站：桌宠自己的模型设置页，右键对话交给 yoyo 以后用不上     |
-| `show-balance` | 查看余额：桌宠单独开的时候查不了                                 |
-| `whisper`      | 桌宠自己的碎碎念，不经过 yoyo                                    |
-| `chat`         | 对话                                                             |
-| `home`         | 回到初始位置                                                     |
-| `reload`       | 重载配置                                                         |
+| `hide` 里写    | 藏掉的自带项                                                                     |
+| -------------- | -------------------------------------------------------------------------------- |
+| `open-site`    | 打开网站：桌宠自己的模型设置页，右键对话交给 yoyo 以后用不上                     |
+| `show-balance` | 查看余额：桌宠单独开的时候查不了                                                 |
+| `whisper`      | 桌宠自己的碎碎念：内容也由 yoyo 写，但不配图、不记、说完不听，和 yoyo 的那项重复 |
+| `chat`         | 对话                                                                             |
+| `home`         | 回到初始位置                                                                     |
+| `reload`       | 重载配置                                                                         |
 
 「显示位置」「动作」「更多」藏不掉，别的程序加的菜单项还在「更多」里。自己另外开的桌宠不认这些设置，菜单和原来一样，yoyo 的两项在「更多」里。
 

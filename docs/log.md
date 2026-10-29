@@ -2,6 +2,7 @@
 
 ## 2026-10-29
 
+* **更新** 右键对话改由 yoyo 回答：架构的「右键对话」改成桌宠的请求交给编排器的 `chat` 跑回复的 agent（记忆、工具、MCP、搜索），只取最后一条用户消息、去掉配图清单，不写日志、问答照旧从桌宠并进来，算作说过话，55 秒取消，流式先回角色块；桌宠自带的「碎碎念」交给碎碎念的 agent；时序图重画；网关一行改成 `fetch` 换成 yoyo、哪种 `llm.provider` 都行；`POST /standalone-ai/settings` 一行加 `timeoutMs`。运行时原则第 4 条改写；记忆的 `lastTalk` 算上右键对话。功能介绍、配置的 `llm.provider`、README 跟上。
 * **更新** 桌宠改用 npm 上上游发的 `dsh-pet`，右键菜单靠 yoyo 自带的补丁：配置的选项表加 `pet.menu.hide`、`pet.menu.top`，新加「右键菜单」一节（藏得掉哪些自带项、改了要重开桌宠、自己开的桌宠不认）；日常使用的「右键菜单」改成 yoyo 的两项在第一层、自带的三项缺省藏起来；安装与运行的「启动桌宠」改成 `pnpm pet`，另外要装的不再有 dsh-pet；README 的功能列表加一条，从源码运行加 `pnpm pet`。`config.example.json` 跟上。
 * **更新** 架构：目录表加 `src/pet.ts`、`patches/` 和 `adapters/dsh-pet/patch.ts`；「怎么用 dsh-pet」写明桌宠从 npm 装、fork 只跟上游不改，补丁碰哪几处、`YOYO_PET_MENU` 怎么从 `pet.menu` 传到菜单页，`POST /menu/item` 一行跟上。开发：脚本加 `pnpm pet`、`pack:app` 是三个入口；新加「桌宠」一节（两处钉版本、peer 标成可选、怎么改补丁和升版本、上游已拆菜单文件）；CI 加上 deploy 桌宠的检查。发版：dsh-pet 不再检出和构建，改为按锁文件 `pnpm deploy`，Electron 版本取 dsh-pet 缺省下载的那个；启动脚本加 `YOYO_PET_ENTRY`，桌宠都经 `pet.mjs` 开；「为什么」加一条，「还没做」去掉固定 dsh-pet 版本。
 
