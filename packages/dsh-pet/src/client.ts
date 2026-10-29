@@ -406,6 +406,7 @@ export function createPetClient(options: PetClientOptions): PetClient {
       apiKey: input.apiKey,
       enabled: input.enabled,
       automaticWhispers: input.automaticWhispers,
+      timeoutMs: input.timeoutMs,
     };
     const reply = await send(new URL(root).origin, path, { method: 'POST', body });
     const { data } = reply;

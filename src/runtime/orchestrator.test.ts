@@ -20,7 +20,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
-import { sessionFor, yoyoProjection } from '../brain/context.ts';
+import { petChatEntries, sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import type { YoyoMemory } from '../brain/memory.ts';
 import type { ScheduleItem } from '../kernel/types.ts';
@@ -406,6 +406,36 @@ describe('orchestrator 跑模型', () => {
       repos.activity.list(10).map((event) => event.type),
       ['whisper-skip'],
     );
+  });
+
+  test('右键对话：主人这句放进最后一条临时用户消息，经回复的 agent 跑一轮，日志里不写；算作说过话', async () => {
+    const model = createScriptedModel([{ type: 'text', text: '带伞了\n记得早点回来' }]);
+    const { orchestrator, context, logger, state, clock } = orchestratorRig({ model });
+    await context.append(...petChatEntries([{ role: 'user', content: '昨天说过要带伞', ts: T0 - 60_000 }]));
+    const before = await context.entries();
+    clock.now = T0 + 5_000;
+    assert.equal(await orchestrator.chat('今天呢'), '带伞了\n记得早点回来');
+    const prompt = JSON.stringify(model.doGenerateCalls[0]?.prompt);
+    assert.match(prompt, /昨天说过要带伞[\s\S]*今天呢/);
+    assert.deepEqual(await context.entries(), before, '问答由桌宠记，下一拍并进来');
+    assert.equal(state.lastTalk, T0 + 5_000);
+    assert.ok(logger.lines.includes('右键对话回了 10 字'), logger.lines.join('\n'));
+    await orchestrator.close();
+  });
+
+  test('右键对话：没配模型就报错；调用方取消就停', async () => {
+    await assert.rejects(orchestratorRig().orchestrator.chat('在吗'), { message: '没配 llm，右键对话回不了' });
+    const { orchestrator } = orchestratorRig({ model: createScriptedModel([{ type: 'text', text: '在呢' }]) });
+    await assert.rejects(orchestrator.chat('在吗', AbortSignal.abort()));
+    await orchestrator.close();
+  });
+
+  test('桌宠自己的碎碎念交给碎碎念的 agent，日志里不写', async () => {
+    const model = createScriptedModel([{ type: 'text', text: '「主人写了好久代码，喝口水吧」' }]);
+    const { orchestrator, context } = orchestratorRig({ model });
+    assert.equal(await orchestrator.petWhisper(), '主人写了好久代码，喝口水吧');
+    assert.deepEqual(await context.entries(), []);
+    await orchestrator.close();
   });
 
   test('start 每秒一拍；停下时正在跑的模型一起取消，close 不用等它跑完', async () => {

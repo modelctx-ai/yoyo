@@ -343,6 +343,7 @@ describe('dsh-pet 宿主', () => {
             apiKey: 'secret',
             enabled: true,
             automaticWhispers: false,
+            timeoutMs: 60_000,
           },
         ],
       },

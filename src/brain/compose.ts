@@ -106,16 +106,40 @@ export interface ReplyOptions extends ComposeOptions {
   readonly tools?: boolean;
 }
 
+function replyRequestAgent(options: ReplyOptions) {
+  return replyAgent(options.tone, options.model, {
+    tools: options.tools === true,
+    ...(options.sources ? { sources: options.sources } : {}),
+  });
+}
+
 /** 回复这一轮：事实由 agent 的 `context` 接在指令后面，有搜索结果时放在最后一条临时用户消息里。不写日志。 */
 export function replyRequest(context: Context, options: ReplyOptions): RunRequest {
   const prompt = searchPrompt(options.searchText);
   return {
     session: context.session,
-    agent: replyAgent(options.tone, options.model, {
-      tools: options.tools === true,
-      ...(options.sources ? { sources: options.sources } : {}),
-    }),
+    agent: replyRequestAgent(options),
     ...(prompt !== undefined ? { prompt } : {}),
+    record: false,
+    ...(options.signal ? { signal: options.signal } : {}),
+  };
+}
+
+export interface ChatOptions extends ReplyOptions {
+  /** 主人在右键对话里说的这句。 */
+  readonly text: string;
+}
+
+/**
+ * 右键对话这一轮：和回复同一个 agent。主人这句还没进日志，连同搜索结果放进最后一条临时用户消息。
+ * 不写日志：这一问一答由桌宠记进它的对话记忆，下一拍并进来。
+ */
+export function chatRequest(context: Context, options: ChatOptions): RunRequest {
+  const found = searchPrompt(options.searchText);
+  return {
+    session: context.session,
+    agent: replyRequestAgent(options),
+    prompt: found ? `${options.text}\n\n${found}` : options.text,
     record: false,
     ...(options.signal ? { signal: options.signal } : {}),
   };
@@ -129,6 +153,13 @@ export async function generateWhisper(context: Context, runs: Runs, options: Com
   const { messages } = await context.view();
   if (messages.some((message) => textOf(message).includes(line.text))) throw new Error('模型重复了最近说过的句子');
   return line;
+}
+
+/** 右键对话：经编排器跑一轮，返回整段回复。气泡装得下多句，不按念的那一句截。 */
+export async function generateChat(context: Context, runs: Runs, options: ChatOptions): Promise<string> {
+  const text = (await run(runs, chatRequest(context, options), options.secrets)).trim();
+  if (!text) throw new Error('模型没有返回可用的回复');
+  return text;
 }
 
 /** 回复主人刚说的话（调用前先 recordUser），经编排器跑一轮。 */

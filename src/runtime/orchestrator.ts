@@ -13,7 +13,7 @@ import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
-import { generateReply, generateWhisper } from '../brain/compose.ts';
+import { generateChat, generateReply, generateWhisper } from '../brain/compose.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
@@ -144,6 +144,13 @@ export interface YoyoOrchestrator extends Orchestrator {
   /** 马上听一句，听到就回复。 */
   listen(now?: Date): Promise<{ readonly talked: boolean }>;
   /**
+   * 桌宠右键对话的一句：和回复同一个 agent（记忆、工具、搜索），返回整段回复。不写日志，
+   * 这一问一答由桌宠记进它的对话记忆，下一拍并进来。算作说过话，碎碎念照样让路。
+   */
+  chat(text: string, signal?: AbortSignal): Promise<string>;
+  /** 桌宠自己的「碎碎念」（右键里没藏起来时）：交给碎碎念的 agent 写一句，返回正文。不写日志。 */
+  petWhisper(signal?: AbortSignal): Promise<string>;
+  /**
    * 一拍：粘贴板、桌宠对话、收件箱、到点提醒、空闲找图、碎碎念让路、上下文压缩，打开记忆时再加门控和夜里的整理。
    * 上一拍没走完就跳过。门控和整理在后台跑，不等。
    */
@@ -249,18 +256,27 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       });
   }
 
+  /** 停下常驻循环时取消；调用方另给的（比如桌宠断开）也算。 */
+  function runSignal(signal?: AbortSignal): AbortSignal {
+    return signal ? AbortSignal.any([stopping.signal, signal]) : stopping.signal;
+  }
+
+  /** 按最近的对话和任务写一句碎碎念。 */
+  function writeWhisper(now: Date, llm: LanguageModel, signal?: AbortSignal): Promise<Line> {
+    return generateWhisper(context, orchestrator, {
+      tone: toneForHour(now.getHours()),
+      model: llm,
+      secrets,
+      signal: runSignal(signal),
+      ...(factSources ? { sources: factSources.whisper } : {}),
+    });
+  }
+
   /** 预制台词都说过了：有模型就按最近的对话和任务写一句。 */
   async function written(now: Date): Promise<Line | null> {
     if (!model) return null;
     logger.info('预制台词用完了，按最近的对话和任务写一句');
-    const tone = toneForHour(now.getHours());
-    return generateWhisper(context, orchestrator, {
-      tone,
-      model,
-      secrets,
-      signal: stopping.signal,
-      ...(factSources ? { sources: factSources.whisper } : {}),
-    });
+    return writeWhisper(now, model);
   }
 
   /** 像提问就先搜一下。打开工具时由模型自己决定搜不搜，不再先按问句搜一遍。 */
@@ -324,6 +340,33 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     }
     if (accepted && model) await reply(accepted, toneForHour(now.getHours()), now, model);
     return { talked: true };
+  }
+
+  async function chat(text: string, signal?: AbortSignal): Promise<string> {
+    if (!model) throw new Error('没配 llm，右键对话回不了');
+    state.lastTalk = clock();
+    try {
+      const searchText = await lookUp(text);
+      const answer = await generateChat(context, orchestrator, {
+        text,
+        tone: toneForHour(new Date(clock()).getHours()),
+        model,
+        secrets,
+        tools: config.llm.tools,
+        signal: runSignal(signal),
+        ...(factSources ? { sources: factSources.reply } : {}),
+        ...(searchText ? { searchText } : {}),
+      });
+      logger.info(`右键对话回了 ${answer.length} 字`);
+      return answer;
+    } finally {
+      state.lastTalk = clock();
+    }
+  }
+
+  async function petWhisper(signal?: AbortSignal): Promise<string> {
+    if (!model) throw new Error('没配 llm，写不了碎碎念');
+    return (await writeWhisper(new Date(clock()), model, signal)).text;
   }
 
   async function tick(): Promise<void> {
@@ -421,6 +464,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     },
     whisper,
     listen,
+    chat,
+    petWhisper,
     tick,
     start,
     state,

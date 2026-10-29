@@ -47,14 +47,9 @@ export function menuRequest(label: string): InboxRequest | null {
   return null;
 }
 
-/** 桌宠右键对话要不要改走 yoyo 的渠道。只有 openai-compatible 能走网关。 */
-export function channelPlan(
-  config: Pick<Config, 'llm'>,
-  hostName: string,
-  hasModel: boolean,
-): 'open' | 'unsupported' | 'skip' {
-  if (!hasModel || hostName !== 'dsh-pet') return 'skip';
-  return config.llm.provider === 'openai-compatible' ? 'open' : 'unsupported';
+/** 桌宠右键对话要不要改走 yoyo：驱动桌宠、配了模型才接。回答在 yoyo 里跑，哪种 `llm.provider` 都行。 */
+export function channelWanted(hostName: string, hasModel: boolean): boolean {
+  return hasModel && hostName === 'dsh-pet';
 }
 
 /** 一直跑到 signal 中止。出错或意外结束时等一会儿重来。 */
@@ -77,12 +72,7 @@ export type ChannelApp = Pick<DaemonApp, 'config' | 'logger' | 'host' | 'model' 
  * 直到接上或 signal 中止。只记第一次失败。
  */
 export async function connectChannel(app: ChannelApp, signal: AbortSignal, retryMs = BIND_RETRY_MS): Promise<void> {
-  const plan = channelPlan(app.config, app.host.name, app.model !== null);
-  if (plan === 'skip') return;
-  if (plan === 'unsupported') {
-    app.logger.info('llm.provider 不是 openai-compatible，桌宠右键对话不经过 yoyo');
-    return;
-  }
+  if (!channelWanted(app.host.name, app.model !== null)) return;
   let channel: Channel;
   try {
     channel = await app.openChannel();

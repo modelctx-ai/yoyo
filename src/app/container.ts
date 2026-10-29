@@ -277,7 +277,13 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     openChannel() {
       if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
       if (!channel) {
-        const pending = startChannel({ llm: config.llm, context, kv: repos.kv, logger });
+        const pending = startChannel({
+          // 桌宠的请求在 yoyo 里跑完整的一轮：右键对话走回复的 agent，桌宠自己的碎碎念走碎碎念的
+          answer: (ask, signal) =>
+            ask.kind === 'whisper' ? orchestrator.petWhisper(signal) : orchestrator.chat(ask.text, signal),
+          kv: repos.kv,
+          logger,
+        });
         channel = pending;
         // 没开成就允许下次再试。
         pending.catch(() => {

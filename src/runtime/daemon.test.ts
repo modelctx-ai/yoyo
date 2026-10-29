@@ -11,7 +11,7 @@ import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
-import { channelPlan, connectChannel, menuRequest, runDaemon, type ChannelApp, type DaemonApp } from './daemon.ts';
+import { channelWanted, connectChannel, menuRequest, runDaemon, type ChannelApp, type DaemonApp } from './daemon.ts';
 import { drain } from './inbox.ts';
 import { createYoyoOrchestrator } from './orchestrator.ts';
 import { fakeDirector, fakeHost, lossyContext, memoryLogger, memoryRepos } from './testing.ts';
@@ -37,13 +37,10 @@ describe('daemon 菜单和渠道', () => {
     assert.equal(menuRequest('别的'), null);
   });
 
-  test('只有桌宠宿主、配了模型、openai-compatible 才开对话渠道', () => {
-    const openai = parseConfig({ llm: { provider: 'openai-compatible' } });
-    const anthropic = parseConfig({ llm: { provider: 'anthropic' } });
-    assert.equal(channelPlan(openai, 'dsh-pet', true), 'open');
-    assert.equal(channelPlan(anthropic, 'dsh-pet', true), 'unsupported');
-    assert.equal(channelPlan(openai, 'console', true), 'skip');
-    assert.equal(channelPlan(openai, 'dsh-pet', false), 'skip');
+  test('驱动桌宠、配了模型才开对话渠道', () => {
+    assert.equal(channelWanted('dsh-pet', true), true);
+    assert.equal(channelWanted('console', true), false);
+    assert.equal(channelWanted('dsh-pet', false), false);
   });
 });
 
@@ -97,7 +94,7 @@ describe('daemon 对话渠道', () => {
     assert.equal(logger.lines.length, 1);
   });
 
-  test('控制台舞台、没配模型都不开渠道；anthropic 只记一行', async () => {
+  test('控制台舞台、没配模型都不开渠道；anthropic 也开（回答在 yoyo 里跑）', async () => {
     const consoleRig = channelRig(async () => {});
     await connectChannel(
       { ...consoleRig.app, host: fakeHost([], { name: 'console' }) },
@@ -109,8 +106,8 @@ describe('daemon 对话渠道', () => {
 
     const anthropic = channelRig(async () => {}, { llm: { ...LLM, provider: 'anthropic' } });
     await connectChannel(anthropic.app, new AbortController().signal, 5);
-    assert.equal(anthropic.counts.opened, 0);
-    assert.deepEqual(anthropic.logger.lines, ['llm.provider 不是 openai-compatible，桌宠右键对话不经过 yoyo']);
+    assert.equal(anthropic.counts.opened, 1);
+    assert.deepEqual(anthropic.logger.lines, ['对话渠道已接上 mock-model']);
   });
 });
 
