@@ -53,6 +53,10 @@
   "sfx": {
     "enabled": true
   },
+  "web": {
+    "enabled": true,
+    "port": 0
+  },
   "context": {
     "keep": 40
   },

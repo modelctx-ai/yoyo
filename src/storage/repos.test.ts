@@ -38,6 +38,9 @@ describe('createRepos', () => {
     repos.contacts.insert(later);
     repos.contacts.insert(earlier);
     assert.deepEqual(repos.contacts.list(), [earlier, later]);
+    assert.equal(repos.contacts.remove(later.id), true);
+    assert.equal(repos.contacts.remove(later.id), false);
+    assert.deepEqual(repos.contacts.list(), [earlier]);
   });
 
   test('日程按时间排序，响过以后只改那一条的 lastFired', () => {
@@ -72,6 +75,13 @@ describe('createRepos', () => {
 
     repos.schedule.markFired('s_1', '2026-10-23T18:00');
     assert.deepEqual(repos.schedule.list(), [once, weekly, { ...daily, lastFired: '2026-10-23T18:00' }]);
+
+    assert.equal(repos.schedule.remove('s_3'), true);
+    assert.equal(repos.schedule.remove('s_3'), false);
+    assert.deepEqual(
+      repos.schedule.list().map((item) => item.id),
+      ['s_2', 's_1'],
+    );
   });
 
   test('粘贴板最新的在前，只留最近 50 条', () => {

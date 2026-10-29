@@ -31,7 +31,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
   const kv = new Map<string, string>();
   return {
     events,
-    contacts: { list: () => [], insert: () => {} },
+    contacts: { list: () => [], insert: () => {}, remove: () => false },
     schedule: {
       list: () => schedule.toSorted((a, b) => a.time.localeCompare(b.time)),
       insert: (item) => {
@@ -42,6 +42,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
         const found = schedule[index];
         if (found) schedule[index] = { ...found, lastFired: occurrence };
       },
+      remove: () => false,
     },
     clipboard: { list: () => [], insert: () => {} },
     memes: { read: () => null, write: () => {} },

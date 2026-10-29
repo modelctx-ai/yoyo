@@ -7,7 +7,7 @@ import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { Channel } from '../brain/channel.ts';
 import type { InboxRequest } from '../kernel/types.ts';
-import type { Logger, PetHost } from '../ports/index.ts';
+import type { Logger, PetHost, UrlOpener } from '../ports/index.ts';
 import type { Director } from './director.ts';
 import { recompactLossySummaries } from './compact.ts';
 import { enqueue } from './inbox.ts';
@@ -27,8 +27,11 @@ export interface DaemonApp {
   readonly context: Pick<Context, 'session' | 'store' | 'builder'>;
   readonly director: Pick<Director, 'bake' | 'claim' | 'playForeign'>;
   readonly orchestrator: Pick<YoyoOrchestrator, 'whisper' | 'start'>;
+  readonly opener: UrlOpener;
   /** 开本机对话渠道，关闭应用时一起关。 */
   openChannel(): Promise<Channel>;
+  /** 开管理页，关闭应用时一起关。`web.enabled` 关着时是 null。 */
+  openWeb(): Promise<{ readonly origin: string; readonly url: string } | null>;
   /** 起按键助手。由组装根决定：macOS 且 `hotkey.enabled` 才真的起，别处什么也不做。 */
   startHotkey(): void;
   close(): Promise<void>;
@@ -40,6 +43,12 @@ const RETRY_MS = 2000;
 
 export const MENU_OWNER = 'yoyo';
 export const MENU_LABELS: readonly string[] = ['碎碎念', '听一句'];
+/** 打开管理页的那一项，`web.enabled` 打开时才挂。 */
+export const MANAGE_LABEL = '管理';
+
+export function menuLabels(config: Pick<Config, 'web'>): readonly string[] {
+  return config.web.enabled ? [...MENU_LABELS, MANAGE_LABEL] : MENU_LABELS;
+}
 
 export function menuRequest(label: string): InboxRequest | null {
   if (label === '碎碎念') return 'whisper';
@@ -98,9 +107,29 @@ export async function connectChannel(app: ChannelApp, signal: AbortSignal, retry
   }
 }
 
+/** 开着管理页就用浏览器打开（地址带着令牌）。 */
+async function openManager(app: DaemonApp): Promise<void> {
+  const web = await app.openWeb();
+  if (web) app.opener.open(web.url);
+}
+
+/** 起管理页，记一行地址（不带令牌）。没起成只记一行，右键「管理」时再试。 */
+async function startManager(app: DaemonApp): Promise<void> {
+  try {
+    const web = await app.openWeb();
+    if (web) app.logger.info(`管理页开在 ${web.origin}：右键「管理」或 yoyo web open 打开`);
+  } catch (error) {
+    app.logger.error(`管理页没开成：${errorText(error)}`);
+  }
+}
+
 function watchMenu(app: DaemonApp, signal: AbortSignal): Promise<void> {
   return keepRunning(signal, app.logger, async () => {
-    for await (const label of app.host.menu(MENU_OWNER, MENU_LABELS, signal)) {
+    for await (const label of app.host.menu(MENU_OWNER, menuLabels(app.config), signal)) {
+      if (label === MANAGE_LABEL) {
+        openManager(app).catch((error: unknown) => app.logger.error(`管理页没打开：${errorText(error)}`));
+        continue;
+      }
       const type = menuRequest(label);
       if (type) enqueue(app.paths.inboxFile, type);
     }
@@ -174,6 +203,7 @@ export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Pr
 
   // 桌宠还没开时渠道会一直等着再接，不挡后面的事
   void connectChannel(app, signal);
+  void startManager(app);
   void watchMenu(app, signal);
   app.startHotkey();
   void watchSayings(app, signal);

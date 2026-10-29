@@ -24,3 +24,11 @@ export function addContact(
   repos.activity.record({ type: 'contact-add', id: contact.id, name, yoyo });
   return contact;
 }
+
+/** 删掉一个联系人，记一条 'contact-remove'。没有这个人返回 null。 */
+export function removeContact(repos: Pick<Repos, 'contacts' | 'activity'>, id: string): Contact | null {
+  const contact = repos.contacts.list().find((item) => item.id === id);
+  if (!contact || !repos.contacts.remove(id)) return null;
+  repos.activity.record({ type: 'contact-remove', id, name: contact.name });
+  return contact;
+}

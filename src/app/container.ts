@@ -49,6 +49,7 @@ import { createDirector, type Director } from '../runtime/director.ts';
 import { createYoyoOrchestrator, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
+import { startWeb, type WebServer } from '../web/server.ts';
 import { speechReady, type AnysearchConfig, type Config } from './config.ts';
 import { consoleLogger, errorText } from './log.ts';
 import type { Paths } from './paths.ts';
@@ -86,6 +87,8 @@ export interface App extends AppServices {
   readonly paths: Paths;
   /** 开本机对话渠道（只开一次），关闭应用时一起关。 */
   openChannel(): Promise<Channel>;
+  /** 开管理页（只开一次），关闭应用时一起关。`web.enabled` 关着时是 null。 */
+  openWeb(): Promise<WebServer | null>;
   /** 起按键助手：只有 macOS 且 `hotkey.enabled` 才起，别处什么也不做。 */
   startHotkey(): void;
   /** 关掉编排器（等正在跑的一轮）、MCP 连接和对话渠道。数据库留给进程退出时关。 */
@@ -250,6 +253,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   );
 
   let channel: Promise<Channel> | null = null;
+  let web: Promise<WebServer | null> | null = null;
   let closed = false;
 
   return {
@@ -292,6 +296,33 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       }
       return channel;
     },
+    openWeb() {
+      if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
+      if (!config.web.enabled) return Promise.resolve(null);
+      if (!web) {
+        const pending = startWeb({
+          config,
+          paths,
+          repos,
+          context,
+          // 记忆没打开时库里也可能有以前记的，照样能看、能删
+          memory: memory?.store ?? openMemoryStore(db),
+          host,
+          schedule: () => orchestrator.state,
+          logger,
+          port: config.web.port,
+        }).then((server) => {
+          // 令牌只在这个地址里：命令行的 `yoyo web open` 从这里取
+          repos.kv.set('web-url', server.url);
+          return server;
+        });
+        web = pending;
+        pending.catch(() => {
+          if (web === pending) web = null;
+        });
+      }
+      return web;
+    },
     startHotkey() {
       if (!mac || !config.hotkey.enabled) return;
       startHotkeyHelper({ bin: paths.hotkeyBin, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
@@ -312,6 +343,13 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         await current?.close();
       } catch (error) {
         logger.warn(`对话渠道没关好：${errorText(error)}`);
+      }
+      try {
+        const page = web ? await web.catch(() => null) : null;
+        web = null;
+        await page?.close();
+      } catch (error) {
+        logger.warn(`管理页没关好：${errorText(error)}`);
       }
       try {
         await mcp?.close();

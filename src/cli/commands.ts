@@ -13,7 +13,14 @@ import {
 import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import { assertDirectorReady, llmReady, loadConfig, parseConfig, type Config } from '../app/config.ts';
-import { createApp, createPetHost, createPlatformClipboard, type App, type AppOverrides } from '../app/container.ts';
+import {
+  createApp,
+  createPetHost,
+  createPlatformClipboard,
+  createPlatformOpener,
+  type App,
+  type AppOverrides,
+} from '../app/container.ts';
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { createYoyoContext } from '../brain/context.ts';
@@ -23,7 +30,7 @@ import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { InboxRequest } from '../kernel/types.ts';
-import type { Clipboard, Logger, PetHost, Repos } from '../ports/index.ts';
+import type { Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
 import { compactContext } from '../runtime/compact.ts';
 import { directorAlive, enqueue } from '../runtime/inbox.ts';
 import { openDatabase } from '../storage/db.ts';
@@ -44,6 +51,7 @@ export interface CommandEnv {
   /** 有 config.json 就读，没有就用缺省值。 */
   settings(): Config;
   clipboard(): Clipboard;
+  opener(): UrlOpener;
   host(): PetHost;
   /** 和导演同一套组装。用完要 close。 */
   app(): Promise<App>;
@@ -73,6 +81,7 @@ export function createCommandEnv(paths: Paths, options: CommandEnvOptions = {}):
     config: () => (config ??= loadConfig(paths.configFile)),
     settings: () => (existsSync(paths.configFile) ? env.config() : parseConfig({})),
     clipboard: () => overrides.clipboard ?? createPlatformClipboard(),
+    opener: () => overrides.opener ?? createPlatformOpener(),
     host: () => overrides.host ?? createPetHost(env.config(), logger),
     app: () => createApp(env.config(), paths, { logger, db: env.db(), repos: env.repos(), ...overrides }),
   };
@@ -480,6 +489,25 @@ export function buildDomains(env: CommandEnv): Domain[] {
       summary: '马上说一句碎碎念',
       detail: '右键 yoyo 分组里的「碎碎念」也是这一条。宠物自带的那一项到不了这里。',
       verbs: [{ name: 'now', summary: '现在就说一句', run: () => handoff(env, 'whisper') }],
+    },
+    {
+      name: 'web',
+      summary: '管理页',
+      detail:
+        '常驻进程开着一个只听本机的网页：看状态和对话，管记忆、日程和联系人。地址每次启动都换，带着一次性令牌。config.json 的 web.enabled 关掉就不开。',
+      verbs: [
+        {
+          name: 'open',
+          summary: '用浏览器打开管理页',
+          run() {
+            if (!env.settings().web.enabled) return env.out('config.json 的 web.enabled 关着，没有管理页');
+            const url = env.repos().kv.get('web-url');
+            if (!url || !directorAlive(env.paths.pidFile)) return env.out('常驻进程没在跑，管理页跟着它开');
+            env.opener().open(url);
+            env.out(url);
+          },
+        },
+      ],
     },
     {
       name: 'log',

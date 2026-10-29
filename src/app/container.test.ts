@@ -222,6 +222,25 @@ describe('container', () => {
     await assert.rejects(fetch(`${channel.baseUrl}/chat/completions`, { method: 'POST', body: '{}' }));
   });
 
+  test('管理页只开一次，地址带令牌记进 kv，关闭应用时一起关；关掉 web 就不开', async () => {
+    const app = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger() });
+    const web = await app.openWeb();
+    assert.ok(web);
+    assert.equal(await app.openWeb(), web);
+    assert.equal(app.repos.kv.get('web-url'), web.url);
+    const status = await fetch(`${web.origin}/api/status`, { headers: { authorization: `Bearer ${web.token}` } });
+    assert.equal(((await status.json()) as { stage: string }).stage, 'console');
+    await app.close();
+    await assert.rejects(fetch(`${web.origin}/`));
+    await assert.rejects(app.openWeb(), /已经关闭/);
+
+    const off = await createApp(parseConfig({ stage: 'console', web: { enabled: false } }), tempPaths(), {
+      logger: memoryLogger(),
+    });
+    assert.equal(await off.openWeb(), null);
+    await off.close();
+  });
+
   test('控制台舞台、没配语音、不是 macOS：只出字，不合成也不播放，按键助手不起', async () => {
     const logger = memoryLogger();
     const paths = tempPaths();

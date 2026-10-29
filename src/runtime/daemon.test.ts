@@ -11,7 +11,16 @@ import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
-import { channelWanted, connectChannel, menuRequest, runDaemon, type ChannelApp, type DaemonApp } from './daemon.ts';
+import {
+  MANAGE_LABEL,
+  channelWanted,
+  connectChannel,
+  menuLabels,
+  menuRequest,
+  runDaemon,
+  type ChannelApp,
+  type DaemonApp,
+} from './daemon.ts';
 import { drain } from './inbox.ts';
 import { createYoyoOrchestrator } from './orchestrator.ts';
 import { fakeDirector, fakeHost, lossyContext, memoryLogger, memoryRepos } from './testing.ts';
@@ -35,6 +44,12 @@ describe('daemon 菜单和渠道', () => {
     assert.equal(menuRequest('碎碎念'), 'whisper');
     assert.equal(menuRequest('听一句'), 'listen');
     assert.equal(menuRequest('别的'), null);
+  });
+
+  test('打开管理页时右键多一项「管理」', () => {
+    assert.deepEqual(menuLabels(parseConfig({})), ['碎碎念', '听一句', MANAGE_LABEL]);
+    assert.deepEqual(menuLabels(parseConfig({ web: { enabled: false } })), ['碎碎念', '听一句']);
+    assert.equal(menuRequest(MANAGE_LABEL), null, '不进收件箱');
   });
 
   test('驱动桌宠、配了模型才开对话渠道', () => {
@@ -130,6 +145,8 @@ async function staleRig(model: MockLanguageModelV4 | null) {
       // 开拍子的时候模型已经被调过几次
       start: () => void calls.push(`start:${model?.doGenerateCalls.length ?? 0}`),
     },
+    opener: { open: () => {} },
+    openWeb: async () => null,
     openChannel: async () => {
       throw new Error('不该开渠道');
     },
@@ -182,6 +199,8 @@ describe('daemon 常驻', () => {
       context,
       director,
       orchestrator,
+      opener: { open: () => {} },
+      openWeb: async () => null,
       openChannel: async () => {
         throw new Error('控制台舞台不该开渠道');
       },
@@ -226,6 +245,8 @@ describe('daemon 常驻', () => {
         },
         start: () => void calls.push('start'),
       },
+      opener: { open: () => {} },
+      openWeb: async () => null,
       openChannel: async () => {
         throw new Error('不该开渠道');
       },

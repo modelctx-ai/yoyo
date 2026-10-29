@@ -129,6 +129,12 @@ const anysearch = z.looseObject({
 
 const toggle = z.looseObject({ enabled: flag(true) });
 
+/** 管理页：常驻进程在本机开一个网页。端口 0 是每次随机挑一个。 */
+const web = z.looseObject({
+  enabled: flag(true),
+  port: z.coerce.number().int().min(0).max(65_535).catch(0).default(0),
+});
+
 const context = z.looseObject({
   /** 交给模型的历史上限（估算 token）。不写就整段带上，和以前一样。 */
   maxTokens: optionalCount(),
@@ -250,6 +256,8 @@ export const configSchema = z.looseObject({
   weather: z.preprocess(objectOrNothing, toggle.prefault({})),
   /** 空闲时找一套表情包，碎碎念时配上一张。 */
   memes: z.preprocess(objectOrNothing, toggle.prefault({})),
+  /** 管理页，见 `web/server.ts`。 */
+  web: z.preprocess(objectOrNothing, web.prefault({})),
   /** 每个动作配一段很轻的音效。 */
   sfx: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),
@@ -270,6 +278,7 @@ export type AnysearchConfig = Config['anysearch'];
 export type ContextConfig = Config['context'];
 export type McpServersConfig = Config['mcpServers'];
 export type SandboxConfig = Config['sandbox'];
+export type WebConfig = Config['web'];
 export type MemoryConfig = Config['memory'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
 
