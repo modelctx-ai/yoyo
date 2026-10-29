@@ -28,7 +28,7 @@ yoyo：让桌宠 dsh-pet 真正陪着你。
 
 说完要不要听你回应（listen.enabled）、报天气（weather.enabled）、表情包（memes.enabled）、
 动作音效（sfx.enabled）、读粘贴板（clipboard.enabled）、快捷键（hotkey.enabled）都在 config.json 里，
-写 true 或 false。改完重新 ./yoyo start。
+写 true 或 false，存好一两秒内生效。也可以右键桌宠的「管理」，在「设置」里点。
 
 换新版本
 

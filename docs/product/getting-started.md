@@ -85,7 +85,7 @@ pnpm pet
 
 # 开关
 
-说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，重启常驻进程生效。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
+说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，存好一两秒内生效，不用重启；右键「管理」打开的管理页里也能直接点。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
 
 # 不接桌宠试一试
 

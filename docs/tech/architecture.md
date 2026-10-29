@@ -49,6 +49,9 @@ sources:
   - id: pet
     resource: src/pet.ts
     title: 桌宠入口
+  - id: supervisor
+    resource: src/app/supervisor.ts
+    title: 换配置
   - id: patch
     resource: patches/dsh-pet@0.3.8.patch
     title: dsh-pet 补丁
@@ -99,6 +102,7 @@ flowchart TB
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
+| `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
 | `src/pet.ts` | 桌宠入口：按 `pet.menu` 设好右键菜单的环境变量，再加载 dsh-pet 的独立模式入口 |
@@ -107,7 +111,7 @@ flowchart TB
 
 # 常驻进程
 
-`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid，再交给 `createApp` 组装：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），`memory.enabled` 打开才建记忆（`llm.tools` 也打开时把 `recall` 加进工具），最后建上下文、harness、导演和编排器。[^container]
+`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid。常驻时交给 `supervise`：它组装应用、跑常驻循环，`config.json` 改了就关掉这一份、按新的再组装一份，碎碎念的排期和管理页的端口、令牌接着用，见[管理页](web.md#热加载)。[^supervisor] 组装由 `createApp` 做：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），`memory.enabled` 打开才建记忆（`llm.tools` 也打开时把 `recall` 加进工具），最后建上下文、harness、导演和编排器。[^container]
 
 四样东西各管一件事：
 

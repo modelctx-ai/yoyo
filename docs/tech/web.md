@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: 管理页
-description: 常驻进程在本机开的网页：看状态和对话，管记忆、日程和联系人。接口、安全边界、页面怎么做、怎么打开。
+description: 常驻进程在本机开的网页：看状态和对话，管记忆、日程和联系人，改配置。接口、安全边界、改配置和热加载、页面怎么做、怎么打开。
 resource: src/web/server.ts
 tags: [web, runtime, security]
 status: stable
@@ -24,6 +24,12 @@ sources:
   - id: commands
     resource: src/cli/commands.ts
     title: 领域表
+  - id: settings
+    resource: src/web/settings.ts
+    title: 改配置
+  - id: supervisor
+    resource: src/app/supervisor.ts
+    title: 换配置
 ---
 
 # 做什么
@@ -71,6 +77,31 @@ sources:
 | `GET`、`POST /api/alarms`，`DELETE /api/alarms/:id` | 日程：列、加、删；删记 `schedule-remove` |
 | `GET`、`POST /api/contacts`，`DELETE /api/contacts/:id` | 联系人：列、加、删；删记 `contact-remove` |
 | `POST /api/actions/whisper`、`/listen` | 写进收件箱，下一拍做 |
+| `GET /api/config` | 打过码的整份原文、各开关的值、指纹、文件路径 |
+| `PUT /api/config` | 存整份：`{ text, version }` |
+| `PATCH /api/config` | 只改开关：`{ switches: { "weather.enabled": false } }` |
+
+# 改配置
+
+「设置」页签：常用的开关直接点，整份 `config.json` 也能改。写进文件就完了，换上新配置是常驻进程自己的事（见下一节）。[^settings]
+
+* 读：整份原文，名字像密钥的键（`apiKey`、`token`、`secret`、`password`、`Authorization` 之类，`mcpServers` 的 `env`、`headers` 里的也算）非空的值换成 `••••••`；还有各开关按缺省值补齐后的值，和文件内容的指纹。
+* 存整份：交回来的还是 `••••••` 的，换回同一位置原来的值；原来那里没有就不存，免得把码当成密钥写进去。指纹对不上（开关刚点过、编辑器里改过）回 409，页面换成最新的，刚才的改动要重新改。
+* 只改开关：只认开关表里那几个、只收 `true` / `false`，别的原样留着。`web.enabled` 不在里面：关掉它管理页就没了。开关改完，框里的整份没动过就跟着刷新。
+* 写之前和常驻进程启动时一样检查（`parseConfig`、`assertDirectorReady`），不过就回 400，文件一个字不改。先写临时文件再改名，权限照旧。记 `config-edit` 或 `config-switch`。
+
+# 热加载
+
+常驻时外层是 `supervise`：组装应用、跑常驻循环，同时每秒 `stat` 一次 `config.json`（编辑器另存再改名、管理页的原子写入都认得出）。[^supervisor]
+
+* 内容变了、读得出来、过了 `assertDirectorReady`，而且按缺省值补齐以后真的不一样（只改空白不算），才换：中止这一代的常驻循环（它关掉应用：等正在跑的一轮、关按键助手、管理页、MCP、对话渠道），按新配置再组装一份、再跑。
+* 改坏了只记一行「config.json 改得不对，先接着用现在的：…」，同一个问题只记一次。
+* 读得出来、按它却组装不起来（建应用时抛错）：记一行「按新的 config.json 组装不起来，先接着用原来的：…」，退回上一份，等文件再改才换，同一份不反复试。
+* 新的一代一开始先对一次文件：上一份换下来的那一两秒里又存了一次，也不会漏。
+* 从上一份接过来的（`Resume`）：碎碎念的排期，不然一换就马上说一句；管理页的端口和令牌，开着的页面接着能用。端口被占了就随机挑一个，令牌照旧。配置里固定了 `web.port` 就用配置的。
+* 桌宠的右键菜单是桌宠开的时候读的（`YOYO_PET_MENU`），`pet.menu` 改了要重开桌宠。对话渠道换了端口和令牌，新的一份会重新绑定桌宠。
+* 按键助手以前起了就不管，换配置时会越起越多；现在由应用记着，关应用时停掉，退出 yoyo 时也不再留下。
+* `--once`、`--bake` 和命令行不盯文件，每次都读最新的。
 
 # 页面
 
@@ -80,7 +111,7 @@ sources:
 
 # 还没做
 
-* 在页面上改 `config.json`：要先有配置的热加载，现在改配置要重启常驻进程。
+* 设置页上只有开关是表单，别的要在整份配置里改 JSON。
 * 联系人、日程的编辑（现在只能删了重加），日程的暂停。
 * 记忆的「事实的来龙去脉」（命令行的 `memory history`）、笔记和整理。
 
@@ -90,3 +121,5 @@ sources:
 [^container]: 组装根
 [^daemon]: 常驻循环
 [^commands]: 领域表
+[^settings]: 改配置
+[^supervisor]: 换配置
