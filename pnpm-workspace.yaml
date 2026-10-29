@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - scripts/release/pet
 
 # Vite+ 的约定布局（与 `vp migrate` 生成的一致）：vite 指到 Vite+ 自带的核心，Vitest 的 vite peer 由它提供。
 catalog:
@@ -22,3 +23,25 @@ overrides:
   '@modelctx-ai/ctx-models': link:../ctx/packages/models
   '@modelctx-ai/ctx-protocol': link:../ctx/packages/protocol
   '@modelctx-ai/ctx-sqlite': link:../ctx/packages/sqlite
+
+# 桌宠用 npm 上上游发的 dsh-pet，不用 fork、不改它的仓库；版本钉死，升级时连补丁一起换。
+# 独立模式（lib/standalone.js）用不到 DSH 插件宿主那一套 peer（@deepseek-ai/*、react），标成可选就不会自动装上。
+packageExtensions:
+  dsh-pet@0.3.8:
+    peerDependenciesMeta:
+      '@deepseek-ai/cordis': { optional: true }
+      '@deepseek-ai/dsh-agent-default-model': { optional: true }
+      '@deepseek-ai/dsh-client-connection': { optional: true }
+      '@deepseek-ai/dsh-client-ui-primitives': { optional: true }
+      '@deepseek-ai/dsh-client-ui-slots': { optional: true }
+      '@deepseek-ai/dsh-commands': { optional: true }
+      '@deepseek-ai/dsh-credentials': { optional: true }
+      '@deepseek-ai/dsh-home-paths': { optional: true }
+      '@deepseek-ai/dsh-host-webserver': { optional: true }
+      '@deepseek-ai/dsh-llm': { optional: true }
+      react: { optional: true }
+      react-dom: { optional: true }
+
+# 右键菜单的补丁：安装时打上，打不上就装不成。改补丁用 `pnpm patch dsh-pet@<版本>` 再 `pnpm patch-commit`
+patchedDependencies:
+  dsh-pet@0.3.8: patches/dsh-pet@0.3.8.patch

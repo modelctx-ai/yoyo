@@ -3,7 +3,11 @@
   "pet": {
     "baseUrl": "http://127.0.0.1:3080/dsh-pet-7340",
     "id": "main",
-    "surface": "desktop"
+    "surface": "desktop",
+    "menu": {
+      "hide": ["open-site", "show-balance", "whisper"],
+      "top": true
+    }
   },
   "intervalSec": 300,
   "speech": {

@@ -2,8 +2,9 @@
 # 在 macOS 上组装 yoyo 安装包：yoyo 和桌宠、Node、Electron、ffmpeg、whisper-cli、听写模型、按键助手都在里面，
 # 解压、填好配置就能用。先冒烟测试，再压成 $OUT_DIR/yoyo-<版本>-macos-<架构>.zip。
 #
+# 桌宠是 npm 上上游发的 dsh-pet，版本和右键菜单的补丁跟 yoyo 的锁文件走（patches/、pnpm-workspace.yaml），不检出它的仓库。
+#
 # 环境变量：
-#   DSH_PET_DIR  dsh-pet 仓库的检出（必填）
 #   CTX_DIR      ctx 仓库的检出，要已经构建过；缺省 yoyo 旁边的 ../ctx。只用来记版本
 #   VERSION      缺省 package.json 的 version
 #   OUT_DIR      缺省 dist/release
@@ -13,8 +14,6 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-: "${DSH_PET_DIR:?要给 DSH_PET_DIR：dsh-pet 仓库的检出}"
-DSH_PET_DIR="$(cd "$DSH_PET_DIR" && pwd)"
 CTX_DIR="${CTX_DIR:-$root/../ctx}"
 VERSION="${VERSION:-$(node -p "require('$root/package.json').version")}"
 OUT_DIR="$(mkdir -p "${OUT_DIR:-$root/dist/release}" && cd "${OUT_DIR:-$root/dist/release}" && pwd)"
@@ -96,37 +95,39 @@ cp "$node_dir/LICENSE" "$stage/lib/licenses/node.txt"
 node_version="$("$stage/lib/node/bin/node" --version)"
 
 echo "== dsh-pet"
-pet="$DSH_PET_DIR/dsh-pet"
-pnpm12=(npx --yes pnpm@12)
-(
-  cd "$pet"
-  "${pnpm12[@]}" install --frozen-lockfile
-  "${pnpm12[@]}" run bundle
-  "${pnpm12[@]}" run build:desktop-core
-)
-# 只装运行依赖，平铺成真目录（不留指到包外的符号链接）
-mkdir -p "$work/pet-deps"
-cp "$pet/package.json" "$pet/pnpm-lock.yaml" "$pet/pnpm-workspace.yaml" "$work/pet-deps/"
-(cd "$work/pet-deps" && "${pnpm12[@]}" install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted)
-# 和 npm 上的 dsh-pet 包一样，带 package.json 的 files 里列的那些
-mkdir -p "$stage/lib/dsh-pet"
-cp "$pet/package.json" "$stage/lib/dsh-pet/"
-"$stage/lib/node/bin/node" -e 'for (const f of require(process.argv[1]).files) console.log(f)' "$pet/package.json" |
-  while IFS= read -r entry; do
-    if [ -e "$pet/$entry" ]; then
-      ditto "$pet/$entry" "$stage/lib/dsh-pet/$entry"
-    else
-      echo "dsh-pet 的 files 里有 $entry，但没找到，跳过"
-    fi
-  done
-cp -R "$work/pet-deps/node_modules" "$stage/lib/dsh-pet/node_modules"
-cp "$pet/LICENSE" "$stage/lib/licenses/dsh-pet.txt"
-pet_version="$("$stage/lib/node/bin/node" -p "require('$pet/package.json').version")"
+# 按锁文件 deploy 出一份平铺的真目录，安装时已经打上补丁：桌宠本体放 lib/dsh-pet，运行依赖放 lib/dsh-pet/node_modules
+(cd "$root" && pnpm --filter @yoyo/pet-release deploy --prod --legacy --config.node-linker=hoisted "$work/pet")
+deps="$work/pet/node_modules"
+# overrides 里 link: 到 ctx 的几个包、工作区里的 @yoyo/* 也会跟着进来，桌宠用不着；.bin 里是指来指去的链接
+rm -rf "$deps/@modelctx-ai" "$deps/@yoyo"
+find "$deps" -name .bin -type d -prune -exec rm -rf {} +
+pet="$deps/dsh-pet"
+grep -q yoyoArrangeMenu "$pet/runtime/electron-helper/sprite.js" || {
+  echo "dsh-pet 没打上 yoyo 的补丁" >&2
+  exit 1
+}
+if [ -d "$pet/node_modules" ]; then
+  rmdir "$pet/node_modules" || {
+    echo "dsh-pet 有嵌在自己目录里的依赖，这里要跟着改" >&2
+    exit 1
+  }
+fi
+mv "$pet" "$stage/lib/dsh-pet"
+mv "$deps" "$stage/lib/dsh-pet/node_modules"
+links="$(find "$stage/lib/dsh-pet" -type l)"
+if [ -n "$links" ]; then
+  echo "dsh-pet 里还有符号链接：" >&2
+  echo "$links" >&2
+  exit 1
+fi
+cp "$stage/lib/dsh-pet/LICENSE" "$stage/lib/licenses/dsh-pet.txt"
+pet_version="$("$stage/lib/node/bin/node" -p "require('$stage/lib/dsh-pet/package.json').version")"
 
 echo "== Electron"
-electron_version="$(sed -n 's/^electronVersion:[[:space:]]*//p' "$pet/electron-builder.yml" | tr -d "\"' ")"
+# 和 dsh-pet 自己第一次运行时去下的版本一样
+electron_version="$(sed -n 's/.*DSH_PET_ELECTRON_VERSION || "\([0-9][0-9.]*\)".*/\1/p' "$stage/lib/dsh-pet/lib/standalone.js" | head -n 1)"
 if [ -z "$electron_version" ]; then
-  echo "dsh-pet 的 electron-builder.yml 里没找到 electronVersion" >&2
+  echo "dsh-pet 的 lib/standalone.js 里没找到缺省的 Electron 版本" >&2
   exit 1
 fi
 electron_base="https://github.com/electron/electron/releases/download/v$electron_version"
@@ -148,7 +149,7 @@ commit_of() { git -C "$1" rev-parse HEAD 2>/dev/null || echo unknown; }
 cat >"$stage/lib/VERSIONS.txt" <<EOF
 yoyo      $VERSION ($(commit_of "$root"))
 ctx       $(commit_of "$CTX_DIR")
-dsh-pet   $pet_version ($(commit_of "$DSH_PET_DIR"))
+dsh-pet   $pet_version (npm，打了 patches/dsh-pet@$pet_version.patch)
 node      $node_version
 electron  $electron_version
 $(cat "$TOOLS_DIR/.stamp")

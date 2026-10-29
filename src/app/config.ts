@@ -67,10 +67,22 @@ function stringList() {
   );
 }
 
+/** 桌宠自带、缺省藏起来的右键菜单项（按 dsh-pet 的 action 名）：网站、余额 yoyo 用不上，碎碎念换成 yoyo 的。 */
+export const PET_MENU_HIDE: readonly string[] = ['open-site', 'show-balance', 'whisper'];
+
+/** 右键菜单怎么排。只对打了 yoyo 补丁的桌宠起作用（`patches/`），桌宠开的时候读一次。 */
+const petMenu = z.looseObject({
+  /** 藏起来的自带项。写 `[]` 全留着。 */
+  hide: stringList().transform((value) => value ?? [...PET_MENU_HIDE]),
+  /** yoyo 的菜单项放到第一层；关掉就收在「更多」里。 */
+  top: flag(true),
+});
+
 const pet = z.looseObject({
   baseUrl: text('http://127.0.0.1:3080/dsh-pet-7340'),
   id: text('main'),
   surface: z.enum(['web', 'desktop', 'both', 'any']).catch('desktop').default('desktop'),
+  menu: z.preprocess(objectOrNothing, petMenu.prefault({})),
 });
 
 const speech = z.looseObject({

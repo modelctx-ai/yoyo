@@ -18,6 +18,8 @@ home="${YOYO_HOME:-$HOME/.yoyo}"
 export YOYO_CONFIG="${YOYO_CONFIG:-$home/config.json}"
 export YOYO_HOTKEY="${YOYO_HOTKEY:-$lib/bin/yoyo-hotkey}"
 export DSH_PET_ELECTRON_PATH="${DSH_PET_ELECTRON_PATH:-$lib/electron/Electron.app/Contents/MacOS/Electron}"
+# 桌宠经 yoyo 的 pet 入口开：先按配置排好右键菜单，再交给包里打过补丁的 dsh-pet
+export YOYO_PET_ENTRY="${YOYO_PET_ENTRY:-$lib/dsh-pet/lib/standalone.js}"
 # 录音的 ffmpeg、听写的 whisper-cli，以及 MCP 服务器和搜索脚本用的 node、npx，都先找包里的
 export PATH="$lib/node/bin:$lib/bin:$PATH"
 
@@ -88,7 +90,7 @@ start_pet() {
     return 0
   fi
   mkdir -p -m 700 "$home"
-  "$node" "$lib/dsh-pet/lib/standalone.js" >"$home/pet.log" 2>&1 &
+  "$node" "$lib/yoyo/pet.mjs" >"$home/pet.log" 2>&1 &
   pet_pid=$!
   trap stop_pet EXIT
   for _ in $(seq 1 60); do
@@ -134,7 +136,7 @@ case "${1:-}" in
     ;;
   pet)
     shift
-    exec "$node" "$lib/dsh-pet/lib/standalone.js" "$@"
+    exec "$node" "$lib/yoyo/pet.mjs" "$@"
     ;;
   "" | -h | --help)
     usage
