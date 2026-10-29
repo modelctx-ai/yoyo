@@ -64,6 +64,8 @@ flowchart TB
   entry --> container["app/container"]
   cli --> container
   cli --> runtime
+  container --> web["web<br/>管理页"]
+  web --> runtime
   container --> runtime["runtime<br/>编排器、导演、常驻循环"]
   runtime --> features
   runtime --> brain
@@ -95,6 +97,7 @@ flowchart TB
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
+| `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
@@ -127,7 +130,7 @@ flowchart LR
   harness -. "读视图" .-> store
 ```
 
-`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），挂右键菜单、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
+`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
 
 1. 粘贴板有变化就记一条（`clipboard.enabled`）。
 2. 导演并进桌宠的对话记忆。
@@ -201,7 +204,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | `POST /broadcast` | 投喂台词：`text`、`duration`、表情包 `url`，`anim: false` | `present` |
 | `POST /anim` | 点播动作；开始听时也用，不占锁 | `present`、`cue` |
 | `POST /lock/release` | 放开，失败不抛错 | `present` |
-| `POST /menu/item` | 注册 yoyo 的「碎碎念」「听一句」（打了补丁的桌宠放第一层，否则收在「更多」的 yoyo 分组里），带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
+| `POST /menu/item` | 注册 yoyo 的「碎碎念」「听一句」，`web.enabled` 打开时再加「管理」（打了补丁的桌宠放第一层，否则收在「更多」的 yoyo 分组里），带 `target: 'desktop'` 只在桌面端。`target` 是照 dsh-pet 源码用的（`web`、`desktop`、`both`，缺省 `both`），`openapi.yaml` 里还没写 | `menu` |
 | `GET /menu/events?owner=yoyo&wait=` | 长轮询菜单点击；回 `unknown-owner` 就重新注册 | `menu` |
 | `POST /standalone-ai/settings` | 右键对话改走 yoyo 的网关，`automaticWhispers: false`，`timeoutMs` 设成它允许的上限 60 秒（yoyo 跑的一轮可能调工具）。独立模式自己的设置接口，挂在服务根上，不在 `openapi.yaml` 里 | `bindChat` |
 

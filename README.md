@@ -16,6 +16,7 @@
 - **天气**：工作日傍晚报一次接下来几小时的天气。
 - **表情包**：空闲时自己找一套图，碎碎念时配上一张。
 - **不抢话**：你正和它聊着，日常碎碎念会往后让。
+- **管理页**：右键「管理」打开一个本机网页，看状态和对话，改画像、删记错的事，管日程和联系人。
 - **MCP 工具关进沙箱**：可选地让每台本机 MCP 服务器在 srt 沙箱里运行，写不了 yoyo 的配置和数据，只连你放行的域名。
 
 ## 快速开始
@@ -52,5 +53,6 @@ pnpm start
 | [配置](docs/product/configuration.md)         | [运行时原则](docs/tech/runtime-principles.md) |
 | [数据](docs/product/data.md)                  | [记忆](docs/tech/memory.md)                   |
 | [从旧版升级](docs/product/upgrading.md)       | [发版](docs/tech/release.md)                  |
+|                                               | [管理页](docs/tech/web.md)                    |
 
 图标素材的许可见 [assets/NOTICE](assets/NOTICE)。

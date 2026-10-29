@@ -26,7 +26,7 @@ sources:
 
 # 边界
 
-dsh-pet 保持官方行为。yoyo 只用它的占用锁、投喂文字、点名动作、状态、对话记忆、菜单、工作状态和独立模式的对话设置，都经 `@yoyo/dsh-pet` 调用。不改宠物仓库，也不调用它在独立模式下不会生成文字的 `POST /whisper` 和 `POST /chat`。[^director]
+dsh-pet 保持官方行为。yoyo 只用它的占用锁、投喂文字、点名动作、状态、对话记忆、菜单、工作状态和独立模式的对话设置，都经 `@yoyo/dsh-pet` 调用。不改宠物仓库（右键菜单靠安装时打的补丁，见[架构](architecture.md#怎么用-dsh-pet)），也不调用 `POST /whisper` 和 `POST /chat`：那是桌宠自己的对话框和碎碎念用的，它们的模型请求再经网关回到 yoyo。[^director]
 
 台词、语气、语音、天气、搜索、听写和日程都在 yoyo 里决定。上下文怎么存、怎么交给模型，用 ctx。
 

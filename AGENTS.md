@@ -14,7 +14,7 @@
 
 ## 改代码时
 
-- 依赖只朝一个方向：`kernel` ← `ports` ← `features` / `brain` / `adapters` ← `runtime` ← `cli` / `app`，`features` 和 `brain` 只认端口，见[架构](docs/tech/architecture.md#分层)。换实现在组装根 `src/app/container.ts` 里挑，不在业务代码里判断平台。
+- 依赖只朝一个方向：`kernel` ← `ports` ← `features` / `brain` / `adapters` ← `runtime` ← `cli` / `web` / `app`，`features` 和 `brain` 只认端口，见[架构](docs/tech/architecture.md#分层)。换实现在组装根 `src/app/container.ts` 里挑，不在业务代码里判断平台。
 - 改配置是四件事一起：`src/app/config.ts` 的 zod 结构（缺省值都在这里，写错按缺省值、不报错）、`config.example.json`、[配置](docs/product/configuration.md)的选项表、`src/app/config.test.ts`。
 - 加命令照[命令原则](docs/tech/cli-principles.md)「加一条命令时」；改开口、让路、记录的行为先对照[运行时原则](docs/tech/runtime-principles.md)。
 - 密钥（`llm.apiKey`、`speech.apiKey` 等）不进日志、报错和测试快照。

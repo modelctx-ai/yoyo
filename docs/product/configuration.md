@@ -36,6 +36,7 @@ status: stable
 | `llm.tools`         | `false`                      | 回复时让模型调用工具                                     |
 | `memory.enabled`    | `false`                      | 记住主人，见[记忆](#记忆)                                |
 | `sandbox.enabled`   | `false`                      | MCP 服务器放进沙箱，见[后面一节](#把-mcp-服务器关进沙箱) |
+| `web.enabled`       | `true`                       | 管理页，见[日常使用](usage.md#管理页)                    |
 
 关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
@@ -79,6 +80,7 @@ status: stable
 | `memory.decision`、`memory.extraction`     | 不写                                             | System One 的决策、提取模型；不写就用内置的判断和 `llm` 的模型，见[记忆](#记忆)                     |
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
 | `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
+| `web.enabled`、`web.port`                  | `true`、`0`                                      | 管理页开不开、用哪个端口；`0` 是每次随机                                                            |
 
 # 右键菜单
 
