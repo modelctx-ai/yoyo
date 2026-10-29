@@ -2,7 +2,7 @@
  * 常驻进程的外层：按 config.json 组装应用、跑常驻循环；config.json 改了，就关掉这一份、按新的再组装一份。
  * 改坏了（不是 JSON、驱动桌宠却缺语音）只记一行，接着用现在的，等下一次改好。
  */
-import { unwatchFile, watchFile, type Stats } from 'node:fs';
+import { statSync } from 'node:fs';
 
 import { runDaemon, type DaemonOptions } from '../runtime/daemon.ts';
 import { assertDirectorReady, loadConfig, type Config } from './config.ts';
@@ -45,13 +45,25 @@ export function watchConfig(
     last = key;
     onChange(next);
   };
-  const listener = (now: Stats, before: Stats): void => {
-    if (now.mtimeMs === before.mtimeMs && now.size === before.size && now.ino === before.ino) return;
-    check();
+  // 自己轮询：起点和第一次比对同步做完，中间存的那一下不会被当成起点漏掉（fs.watchFile 的起点是异步取的）
+  const stamp = (): string => {
+    try {
+      const stat = statSync(file);
+      return `${stat.mtimeMs}:${stat.size}:${stat.ino}`;
+    } catch {
+      return '';
+    }
   };
-  watchFile(file, { interval: options.intervalMs ?? CONFIG_POLL_MS, persistent: false }, listener);
+  let seen = stamp();
   check();
-  return () => unwatchFile(file, listener);
+  const timer = setInterval(() => {
+    const now = stamp();
+    if (now === seen) return;
+    seen = now;
+    check();
+  }, options.intervalMs ?? CONFIG_POLL_MS);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 export interface SuperviseOptions {
