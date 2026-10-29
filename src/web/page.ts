@@ -52,6 +52,9 @@ button:disabled { opacity: .5; cursor: default; }
 form { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0; }
 input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 0; }
 textarea { width: 100%; min-height: 160px; resize: vertical; }
+textarea.code { min-height: 420px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+label.row { cursor: pointer; }
+label.row input { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
 form input[name="title"], form input[name="name"], form input[name="yoyo"] { flex: 1 1 160px; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px); }
 #toast.show { opacity: 1; }
@@ -102,7 +105,11 @@ function api(method, path, body) {
   return fetch(path, init).then(function (response) {
     return response.json().catch(function () { return {}; }).then(function (data) {
       if (response.status === 401) lock();
-      if (!response.ok) throw new Error(data.error || ("出错了（" + response.status + "）"));
+      if (!response.ok) {
+        var error = new Error(data.error || ("出错了（" + response.status + "）"));
+        error.status = response.status;
+        throw error;
+      }
       return data;
     });
   });
@@ -143,6 +150,23 @@ function card(title, value, state) {
 function confirmThen(question, action) {
   return function () { if (confirm(question)) action(); };
 }
+
+var SWITCHES = [
+  ["listen.enabled", "说完听你回应"],
+  ["speech.autoplay", "放语音"],
+  ["sfx.enabled", "动作音效"],
+  ["weather.enabled", "傍晚报天气"],
+  ["memes.enabled", "碎碎念配表情包"],
+  ["clipboard.enabled", "读粘贴板"],
+  ["hotkey.enabled", "Control+Option+Y 听一句"],
+  ["llm.tools", "回复时用工具"],
+  ["memory.enabled", "记住主人"],
+  ["sandbox.enabled", "MCP 服务器关进沙箱"],
+];
+
+/** 整份配置：读到时的指纹，和框里改过没有。开关改了以后，框里没动过就跟着刷新。 */
+var configVersion = "";
+var configDirty = false;
 
 var loaders = {
   overview: function () {
@@ -210,6 +234,30 @@ var loaders = {
       }), "还没有联系人");
     });
   },
+  settings: function () {
+    return api("GET", "/api/config").then(function (c) {
+      fill($("#switches"), SWITCHES.map(function (pair) {
+        var box = h("input", { type: "checkbox", "aria-label": pair[1] });
+        box.checked = Boolean(c.switches[pair[0]]);
+        box.addEventListener("change", function () {
+          var change = {};
+          change[pair[0]] = box.checked;
+          box.disabled = true;
+          api("PATCH", "/api/config", { switches: change }).then(function () {
+            toast("改好了，yoyo 一会儿就换上");
+            if (!configDirty) loaders.settings().catch(fail);
+          }, function (error) {
+            box.checked = !box.checked;
+            fail(error);
+          }).finally(function () { box.disabled = false; });
+        });
+        return h("label", { class: "row" }, [h("div", { class: "main", text: pair[1] }), box]);
+      }), "");
+      configVersion = c.version;
+      if (!configDirty) $("#config-text").value = c.text;
+      $("#config-file").textContent = c.file;
+    });
+  },
   activity: function () {
     return api("GET", "/api/activity?limit=100").then(function (items) {
       // 记录按时间先后来，最新的放上面
@@ -253,6 +301,23 @@ document.addEventListener("DOMContentLoaded", function () {
   $("#core-save").addEventListener("click", function () {
     api("PUT", "/api/memory/core", { text: $("#core-text").value }).then(function () { toast("画像存好了"); loaders.memory(); }, fail);
   });
+  $("#config-text").addEventListener("input", function () { configDirty = true; });
+  $("#config-save").addEventListener("click", function () {
+    var button = $("#config-save");
+    button.disabled = true;
+    api("PUT", "/api/config", { text: $("#config-text").value, version: configVersion }).then(function () {
+      configDirty = false;
+      toast("存好了，yoyo 一会儿就换上");
+      setTimeout(function () { loaders.settings().catch(fail); }, 2500);
+    }, function (error) {
+      // 在别处改过了：换成最新的，刚才的改动要重新改
+      if (error.status === 409) {
+        configDirty = false;
+        loaders.settings().catch(fail);
+      }
+      fail(error);
+    }).finally(function () { button.disabled = false; });
+  });
   $("#alarm-form").addEventListener("submit", function (event) {
     event.preventDefault();
     var form = event.target;
@@ -291,6 +356,7 @@ const BODY = String.raw`
     <button data-tab="alarms">日程</button>
     <button data-tab="contacts">联系人</button>
     <button data-tab="activity">记录</button>
+    <button data-tab="settings">设置</button>
   </nav>
 </header>
 <div id="locked">从桌宠右键的「管理」或 <code>yoyo web open</code> 打开这一页。</div>
@@ -347,6 +413,14 @@ const BODY = String.raw`
     </div>
   </section>
   <section id="activity"><div class="panel" id="activity-list"></div></section>
+  <section id="settings">
+    <div class="panel" id="switches"></div>
+    <div class="panel">
+      <h2>整份配置</h2>
+      <textarea class="code" id="config-text" spellcheck="false" aria-label="整份配置"></textarea>
+      <div class="actions"><button class="primary" id="config-save">保存</button><span class="side" id="config-file"></span></div>
+    </div>
+  </section>
 </main>
 <div id="toast" role="status"></div>
 `;

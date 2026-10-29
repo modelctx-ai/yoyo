@@ -5,7 +5,12 @@ import type { McpHub } from '@modelctx-ai/ctx-mcp';
 
 import { createConsoleHost } from '../adapters/console/host.ts';
 import { createDshPetHost } from '../adapters/dsh-pet/host.ts';
-import { createMacOpener, createPbpasteClipboard, startHotkeyHelper } from '../adapters/platform/macos.ts';
+import {
+  createMacOpener,
+  createPbpasteClipboard,
+  startHotkeyHelper,
+  type HotkeyHelper,
+} from '../adapters/platform/macos.ts';
 import { noopClipboard, noopOpener } from '../adapters/platform/noop.ts';
 import { createAnysearch } from '../adapters/search/anysearch.ts';
 import { createAfplayPlayer } from '../adapters/voice/afplay.ts';
@@ -46,7 +51,7 @@ import type {
   WebSearch,
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
-import { createYoyoOrchestrator, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
+import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
@@ -91,13 +96,22 @@ export interface App extends AppServices {
   openWeb(): Promise<WebServer | null>;
   /** 起按键助手：只有 macOS 且 `hotkey.enabled` 才起，别处什么也不做。 */
   startHotkey(): void;
-  /** 关掉编排器（等正在跑的一轮）、MCP 连接和对话渠道。数据库留给进程退出时关。 */
+  /** 关掉编排器（等正在跑的一轮）、按键助手、管理页、MCP 连接和对话渠道。数据库留给进程退出时关。 */
   close(): Promise<void>;
 }
 
 export interface AppOverrides extends Partial<AppServices> {
   /** 测试用：当成哪个系统来挑实现。缺省是 `process.platform`。 */
   readonly platform?: NodeJS.Platform;
+  /** 换配置重建应用时接着上一个的，见 `Resume`。 */
+  readonly resume?: Resume;
+}
+
+/** 换配置重建应用时从上一个接过来的：碎碎念的排期（不然一换就马上说一句），管理页的端口和令牌（开着的页面接着能用）。 */
+export interface Resume {
+  readonly schedule?: Partial<ScheduleState>;
+  readonly webPort?: number;
+  readonly webToken?: string;
 }
 
 const darwin = process.platform === 'darwin';
@@ -249,11 +263,13 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       model,
       memory,
       ...(factSources ? { factSources } : {}),
+      ...(overrides.resume?.schedule ? { state: overrides.resume.schedule } : {}),
     }),
   );
 
   let channel: Promise<Channel> | null = null;
   let web: Promise<WebServer | null> | null = null;
+  let hotkey: HotkeyHelper | null = null;
   let closed = false;
 
   return {
@@ -300,22 +316,30 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
       if (!config.web.enabled) return Promise.resolve(null);
       if (!web) {
-        const pending = startWeb({
-          config,
-          paths,
-          repos,
-          context,
-          // 记忆没打开时库里也可能有以前记的，照样能看、能删
-          memory: memory?.store ?? openMemoryStore(db),
-          host,
-          schedule: () => orchestrator.state,
-          logger,
-          port: config.web.port,
-        }).then((server) => {
-          // 令牌只在这个地址里：命令行的 `yoyo web open` 从这里取
-          repos.kv.set('web-url', server.url);
-          return server;
-        });
+        const { resume } = overrides;
+        const open = (port: number): Promise<WebServer> =>
+          startWeb({
+            config,
+            paths,
+            repos,
+            context,
+            // 记忆没打开时库里也可能有以前记的，照样能看、能删
+            memory: memory?.store ?? openMemoryStore(db),
+            host,
+            schedule: () => orchestrator.state,
+            logger,
+            port,
+            ...(resume?.webToken ? { token: resume.webToken } : {}),
+          });
+        // 没固定端口时接着用上一个的；被别人占了就随机挑一个
+        const reused = !config.web.port && resume?.webPort ? resume.webPort : 0;
+        const pending = open(config.web.port || reused)
+          .catch((error: unknown) => (reused ? open(0) : Promise.reject(error)))
+          .then((server) => {
+            // 令牌只在这个地址里：命令行的 `yoyo web open` 从这里取
+            repos.kv.set('web-url', server.url);
+            return server;
+          });
         web = pending;
         pending.catch(() => {
           if (web === pending) web = null;
@@ -325,11 +349,20 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     },
     startHotkey() {
       if (!mac || !config.hotkey.enabled) return;
-      startHotkeyHelper({ bin: paths.hotkeyBin, source: paths.hotkeySource, inboxFile: paths.inboxFile, logger });
+      // 换配置时旧的应用关掉、新的再起一个，所以只留一个
+      hotkey?.stop();
+      hotkey = startHotkeyHelper({
+        bin: paths.hotkeyBin,
+        source: paths.hotkeySource,
+        inboxFile: paths.inboxFile,
+        logger,
+      });
     },
     async close() {
       if (closed) return;
       closed = true;
+      hotkey?.stop();
+      hotkey = null;
       try {
         await orchestrator.close();
       } catch (error) {

@@ -153,7 +153,7 @@ function watchSayings(app: DaemonApp, signal: AbortSignal): Promise<void> {
 export interface DaemonOptions {
   readonly once?: boolean;
   readonly bake?: boolean;
-  /** 不发 SIGINT 也能停：中止后关掉应用，runDaemon 返回，不退出进程。测试用。 */
+  /** 不发 SIGINT 也能停：中止后关掉应用，runDaemon 返回，不退出进程。换配置时、测试里用。 */
   readonly signal?: AbortSignal;
 }
 

@@ -24,6 +24,8 @@ export interface WebServer {
 export interface WebOptions extends WebDeps {
   /** 缺省 0：随机端口。 */
   readonly port?: number;
+  /** 缺省新生成一个。换配置重建应用时接着用上一个的，开着的页面不用重开。 */
+  readonly token?: string;
   readonly logger?: Logger;
 }
 
@@ -81,7 +83,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 export function startWeb(options: WebOptions): Promise<WebServer> {
   const { logger } = options;
   const api = createWebApi(options);
-  const token = randomBytes(24).toString('base64url');
+  const token = options.token ?? randomBytes(24).toString('base64url');
   let hosts = new Set<string>();
   let origins = new Set<string>();
 
@@ -101,7 +103,7 @@ export function startWeb(options: WebOptions): Promise<WebServer> {
     if (!authorized(req, token))
       return send(res, 401, { error: '令牌不对：从桌宠右键的「管理」或 yoyo web open 重新打开' });
     let body: unknown;
-    if (method === 'POST' || method === 'PUT') {
+    if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
       if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
         return send(res, 415, { error: '只收 JSON' });
       }

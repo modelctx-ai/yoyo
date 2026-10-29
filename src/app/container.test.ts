@@ -241,6 +241,30 @@ describe('container', () => {
     await off.close();
   });
 
+  test('换配置重建时接着用上一个的排期、管理页端口和令牌；端口被占了就随机挑', async () => {
+    const first = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger() });
+    const web = await first.openWeb();
+    assert.ok(web);
+    const port = Number(new URL(web.origin).port);
+    await first.close();
+
+    const resume = { schedule: { nextWhisper: 42, lastTalk: 7 }, webPort: port, webToken: web.token };
+    const second = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger(), resume });
+    assert.equal(second.orchestrator.state.nextWhisper, 42);
+    assert.equal(second.orchestrator.state.lastTalk, 7);
+    const again = await second.openWeb();
+    assert.equal(again?.origin, web.origin);
+    assert.equal(again?.url, web.url, '开着的页面接着能用');
+
+    // 端口还被上一个占着：随机挑一个，令牌照旧
+    const third = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger(), resume });
+    const moved = await third.openWeb();
+    assert.notEqual(moved?.origin, web.origin);
+    assert.equal(moved?.token, web.token);
+    await second.close();
+    await third.close();
+  });
+
   test('控制台舞台、没配语音、不是 macOS：只出字，不合成也不播放，按键助手不起', async () => {
     const logger = memoryLogger();
     const paths = tempPaths();

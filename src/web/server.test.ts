@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +47,7 @@ const T0 = new Date(2026, 9, 24, 15, 0, 0).getTime();
 describe('web 管理页', () => {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-web-'));
   const paths = resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') });
+  writeFileSync(paths.configFile, JSON.stringify({ stage: 'console', llm: { apiKey: 'secret-key', model: 'demo' } }));
   const repos = memoryRepos({ now: () => new Date(T0) });
   const logger = memoryLogger();
   const memory: MemoryStore = createMemory();
@@ -214,6 +215,46 @@ describe('web 管理页', () => {
     assert.equal(((await call('GET', '/api/contacts')).data as unknown[]).length, 1);
     assert.equal((await call('DELETE', `/api/contacts/${contact.id}`)).status, 200);
     assert.deepEqual((await call('POST', '/api/contacts', { name: '小李' })).data, { error: '联系人要有 yoyo 地址' });
+  });
+
+  test('设置：读到的密钥打了码；整份存、只改开关都写回 config.json，填错回一句话', async () => {
+    const read = (await call('GET', '/api/config')).data as {
+      file: string;
+      text: string;
+      switches: Record<string, boolean>;
+    };
+    assert.equal(read.file, paths.configFile);
+    assert.ok(!read.text.includes('secret-key'));
+    assert.equal(read.switches['weather.enabled'], true);
+
+    const edited = JSON.parse(read.text) as Record<string, unknown>;
+    edited['intervalSec'] = 900;
+    assert.equal((await call('PUT', '/api/config', { text: JSON.stringify(edited) })).status, 200);
+    const saved = JSON.parse(readFileSync(paths.configFile, 'utf8')) as {
+      intervalSec: number;
+      llm: { apiKey: string };
+    };
+    assert.equal(saved.intervalSec, 900);
+    assert.equal(saved.llm.apiKey, 'secret-key');
+
+    assert.equal((await call('PATCH', '/api/config', { switches: { 'weather.enabled': false } })).status, 200);
+    assert.deepEqual((JSON.parse(readFileSync(paths.configFile, 'utf8')) as { weather: unknown }).weather, {
+      enabled: false,
+    });
+
+    assert.deepEqual(await call('PUT', '/api/config', { text: '[]' }), {
+      status: 400,
+      data: { error: '整份配置要是一个对象' },
+    });
+    assert.equal((await call('PATCH', '/api/config', { switches: { 'web.enabled': false } })).status, 400);
+    assert.deepEqual(
+      repos.activity
+        .list(10)
+        .map((event) => event.type)
+        .filter((type) => type.startsWith('config-'))
+        .toSorted(),
+      ['config-edit', 'config-switch'],
+    );
   });
 
   test('说一句、听一句交给收件箱，下一拍做', async () => {

@@ -11,10 +11,11 @@ import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
 import { addContact, removeContact } from '../features/contacts/contacts.ts';
 import type { PetHost, Repos } from '../ports/index.ts';
 import { enqueue } from '../runtime/inbox.ts';
+import { SettingsError, readSettings, saveSwitches, saveText } from './settings.ts';
 
 export interface WebDeps {
   readonly config: Config;
-  readonly paths: Pick<Paths, 'inboxFile'>;
+  readonly paths: Pick<Paths, 'inboxFile' | 'configFile'>;
   readonly repos: Repos;
   readonly context: Pick<Context, 'entries'>;
   readonly memory: MemoryStore;
@@ -229,6 +230,23 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       if (method === 'DELETE' && parts.length === 3 && parts[1] === 'contacts') {
         return ok(removed(removeContact(repos, id), '个联系人'));
       }
+      if (route === 'GET /api/config')
+        return ok({ file: deps.paths.configFile, ...readSettings(deps.paths.configFile) });
+      if (route === 'PUT /api/config') {
+        const value = text(body, 'text');
+        if (value === undefined) throw new RequestError('整份配置要是一段文字');
+        saveText(deps.paths.configFile, value, text(body, 'version'));
+        repos.activity.record({ type: 'config-edit' });
+        // 常驻进程盯着 config.json，一两秒内自己换上
+        return ok({ saved: true });
+      }
+      if (route === 'PATCH /api/config') {
+        const switches = field(body, 'switches');
+        if (typeof switches !== 'object' || switches === null) throw new RequestError('要给 switches');
+        saveSwitches(deps.paths.configFile, switches as Record<string, unknown>);
+        repos.activity.record({ type: 'config-switch', text: Object.keys(switches).join(' ') });
+        return ok({ saved: true });
+      }
       if (route === 'POST /api/actions/whisper' || route === 'POST /api/actions/listen') {
         // 和右键菜单一样交给常驻进程的收件箱，下一拍做
         enqueue(deps.paths.inboxFile, id === 'listen' ? 'listen' : 'whisper');
@@ -237,6 +255,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       return { status: 404, body: { error: '没有这个接口' } };
     } catch (error) {
       if (error instanceof RequestError) return { status: error.status, body: { error: error.message } };
+      if (error instanceof SettingsError) return { status: error.status, body: { error: error.message } };
       throw error;
     }
   };
