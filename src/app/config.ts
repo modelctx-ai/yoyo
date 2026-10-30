@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { z } from 'zod';
 
+import { paceOptionsFrom } from '../kernel/pace.ts';
+
 /**
  * config.json 的结构。和旧代码一样宽松，旧配置原样可用：
  * - 所有键都有缺省值，认不出的键保留不报错；整段写成 null（或不是对象）当没写。
@@ -286,6 +288,21 @@ const memory = z.looseObject({
   consolidateAt: clockTime('03:00'),
 });
 
+/**
+ * 碎碎念的间隔交给决策模型挑：说完一句，按上下文从几档里挑下一句什么时候说。
+ * 没配 `decision`、或者这次没判成，都按 `intervalSec`。
+ */
+const pace = z.looseObject({
+  /** System One 的决策模型。不借 `memory.decision`：各配各的，开记忆不会悄悄改碎碎念的节奏。 */
+  decision: systemOne,
+  /** 几档间隔，秒。丢掉写错的和少于 60 的，去重排序；剩下不到两档用缺省 300、900、1800、3600。 */
+  options: z.unknown().optional().transform(paceOptionsFrom),
+  /** 挑中那档的概率低于它就算没把握，这句按 `intervalSec`；0 到 1。 */
+  minConfidence: unit(0.4),
+  /** 发给决策模型的最近对话原文条数，0 只发结构化的信号，不发原文。 */
+  recent: z.coerce.number().int().min(0).max(20).catch(6).default(6),
+});
+
 export const configSchema = z.looseObject({
   /** `dsh-pet` 驱动桌宠；`console` 只在终端打印，用来在没有桌宠的机器上调试。 */
   stage: z.enum(['dsh-pet', 'console']).catch('dsh-pet').default('dsh-pet'),
@@ -310,6 +327,7 @@ export const configSchema = z.looseObject({
   tasks: z.preprocess(objectOrNothing, tasks.prefault({})),
   files: z.preprocess(objectOrNothing, files.prefault({})),
   memory: z.preprocess(objectOrNothing, memory.prefault({})),
+  pace: z.preprocess(objectOrNothing, pace.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
   mcpServers: z.preprocess(objectOrNothing, z.record(z.string(), z.unknown()).default({})),
   /** 把 stdio 的 MCP 服务器放进沙箱程序里启动，见 `brain/sandbox.ts`。 */
@@ -330,6 +348,7 @@ export type WebConfig = Config['web'];
 export type TasksConfig = Config['tasks'];
 export type FilesConfig = Config['files'];
 export type MemoryConfig = Config['memory'];
+export type PaceConfig = Config['pace'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
 
 function describeIssues(error: z.ZodError): string {

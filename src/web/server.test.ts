@@ -10,6 +10,7 @@ import { createMemoryStore as createMemory } from '@modelctx-ai/ctx-memory';
 
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
+import type { PaceDecision } from '../kernel/pace.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { requestApproval } from '../features/approvals/approvals.ts';
@@ -61,6 +62,7 @@ describe('web 管理页', () => {
     projection: yoyoProjection,
   });
   let unreachable = false;
+  let lastPace: PaceDecision | null = null;
   let web: WebServer;
   const files = createArtifactFiles(paths.artifactsDir);
   const revealed: string[] = [];
@@ -92,7 +94,7 @@ describe('web 管理页', () => {
           return { state: 'busy', task: '写周报' };
         },
       },
-      schedule: () => ({ nextWhisper: T0 + 60_000, lastTalk: 0 }),
+      schedule: () => ({ nextWhisper: T0 + 60_000, lastTalk: 0, lastPace }),
       talk: async (text) => {
         if (text === '坏了') throw new Error('没配 llm，回不了话');
         return `收到：${text}`;
@@ -119,6 +121,32 @@ describe('web 管理页', () => {
     assert.ok(reply.body.includes(`<script nonce="${nonce}">`));
     assert.match(csp, /frame-ancestors 'none'/);
     assert.ok(!reply.body.includes(web.token));
+  });
+
+  const paceView = async (): Promise<unknown> =>
+    ((await call('GET', '/api/status')).data as { lastPace: unknown }).lastPace;
+
+  test('概览带上下一句间隔是怎么来的：固定、挑的档、退回的原因，各带一句短说明', async () => {
+    lastPace = { source: 'fixed', ms: 300_000 };
+    assert.deepEqual(await paceView(), { source: 'fixed', sec: 300, note: '按固定间隔' });
+    lastPace = { source: 'decided', ms: 1_800_000, option: '30m', confidence: 0.8 };
+    assert.deepEqual(await paceView(), {
+      source: 'decided',
+      sec: 1800,
+      option: '30m',
+      confidence: 0.8,
+      note: '隔 30 分钟',
+    });
+    lastPace = { source: 'decided', ms: 3_600_000, option: '1h', confidence: 0.6 };
+    assert.equal(((await paceView()) as { note: string }).note, '主人在忙，隔 1 小时');
+    lastPace = { source: 'fallback', ms: 300_000, reason: 'timeout' };
+    assert.deepEqual(await paceView(), {
+      source: 'fallback',
+      sec: 300,
+      reason: 'timeout',
+      note: '决策模型超时，按固定间隔',
+    });
+    lastPace = null;
   });
 
   test('只认本机 Host、自己的 Origin；跨站、没令牌、不是 JSON 的都挡掉', async () => {
@@ -151,6 +179,7 @@ describe('web 管理页', () => {
     assert.equal((data as { nextWhisper: number }).nextWhisper, T0 + 60_000);
     assert.equal((data as { lastTalk: number | null }).lastTalk, null);
     assert.ok(!JSON.stringify(data).includes('secret-key'));
+    assert.equal((data as { lastPace: unknown }).lastPace, null, '还没说过，没有间隔的来历');
     unreachable = true;
     assert.deepEqual(((await call('GET', '/api/status')).data as { pet: unknown }).pet, {
       reachable: false,

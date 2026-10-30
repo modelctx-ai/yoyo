@@ -28,6 +28,7 @@ import { createSilentPlayer, silentSfx, silentSynthesizer } from '../adapters/vo
 import { createWhisperTranscriber } from '../adapters/voice/whisper-cpp.ts';
 import { startChannel, type Channel } from '../brain/channel.ts';
 import { createTaskContext, createYoyoContext } from '../brain/context.ts';
+import { createWhisperPacer, paceSecrets } from '../brain/pace.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import {
   MEMORY_SOURCE,
@@ -61,9 +62,15 @@ import type {
   Transcriber,
   UrlOpener,
   WebSearch,
+  WhisperPacer,
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
-import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
+import {
+  createYoyoOrchestrator,
+  whisperIntervalMs,
+  type ScheduleState,
+  type YoyoOrchestrator,
+} from '../runtime/orchestrator.ts';
 import { createApprovalRunner, type ApprovalRunner } from '../runtime/approvals.ts';
 import { createTaskRunner, type TaskRunner } from '../runtime/tasks.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
@@ -98,6 +105,8 @@ export interface AppServices {
   readonly context: Context;
   /** 只有 `memory.enabled` 打开时才有。 */
   readonly memory: YoyoMemory | null;
+  /** 说完一句碎碎念以后隔多久说下一句：没配 `pace.decision` 是固定的 `intervalSec`。 */
+  readonly pacer: WhisperPacer;
   /** 跑一轮：组装上下文、调模型、分发工具。 */
   readonly harness: Harness;
   /** 舞台上的动作：说、听、提醒、预合成、压缩。 */
@@ -289,6 +298,18 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     }),
   );
 
+  // 间隔的决策模型有自己的配置，不借记忆的；密钥一并从报错里抹掉
+  const pacer = use('pacer', () =>
+    createWhisperPacer({
+      config: config.pace,
+      fallbackMs: whisperIntervalMs(config.intervalSec),
+      logger,
+      context,
+      work: () => host.workStatus(),
+      secrets: [config.llm.apiKey, ...memorySecrets(config.memory), ...paceSecrets(config.pace)].filter(Boolean),
+    }),
+  );
+
   const harness = use('harness', () =>
     createYoyoHarness(context, { logger, ...(executors.length > 0 ? { executors } : {}) }),
   );
@@ -308,6 +329,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       director,
       model,
       memory,
+      pacer,
       ...(factSources ? { factSources } : {}),
       ...(tools ? { toolNames: () => tools.list().map((definition) => definition.name) } : {}),
       ...(overrides.resume?.schedule ? { state: overrides.resume.schedule } : {}),
@@ -393,6 +415,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     tools,
     context,
     memory,
+    pacer,
     harness,
     director,
     orchestrator,

@@ -23,6 +23,13 @@ import type {
   SpokenEntry,
   WorkStatus,
 } from '../kernel/types.ts';
+import type { PaceDecision, PaceInput } from '../kernel/pace.ts';
+
+/** 说完一句碎碎念以后，决定隔多久说下一句。不抛错：没判成就返回 `fallback`。 */
+export interface WhisperPacer {
+  readonly name: string;
+  next(input: PaceInput, signal?: AbortSignal): Promise<PaceDecision>;
+}
 
 export interface Logger {
   info(message: string): void;
