@@ -96,7 +96,7 @@ flowchart TB
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`（macOS 上还能在访达里显示）、`WebSearch`、`Repos`、`ArtifactFiles`（交付物的文件）、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换，`YOYO_APP` 指出所在的 yoyo.app）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问）、`tasks`（子任务的规则：开、拆 todo、标状态、交文件、交结果，和给人、给模型看的文字；子 agent 类型）、`files`（读写文件能碰哪里） |
-| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`files.ts`（读、写、改文件三个工具，见[读写文件](files.md)）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`files.ts`（读、写、改文件三个工具）、`bash.ts`（跑命令的 `bash` 工具，经沙箱程序，见[读写文件和跑命令](files.md)）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器和 `bash` 经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现；`artifacts.ts` 是交付物的文件（`~/.yoyo/artifacts/`） |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台同时做几件，结果写回主线程，见[子任务](tasks.md)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
@@ -435,6 +435,7 @@ registry.addTool(
 * **在连接之前找程序**：`sandbox.command` 的第一个词在 yoyo 进程的 PATH 上解析成绝对路径。ctx-mcp（`@ai-sdk/mcp` 的 stdio 传输）启动子进程时只带 `HOME`、`LOGNAME`、`PATH`、`SHELL`、`TERM`、`USER` 加上服务器的 `env`；服务器 `env` 里改了 `PATH` 也不影响找到 srt。srt 把收到的环境变量和 `cwd` 交给里面的进程（srt 0.0.81 实测）。
 * **失败关闭**：找不到程序、`policy` 文件读不出或不是 JSON 对象、设置文件写不下，记一行警告，要包的服务器从这次连接里去掉，不退回到不加沙箱；`url` 的和豁免的照常连。只在打开了且至少有一台要包时才找程序、写文件。srt 自己拒绝时，ctx-mcp 报这台服务器连接失败，按「没连上」记。
 * **日志**：包了的服务器连上时记「MCP notes 已连上（在沙箱里），N 个工具」。
+* **`bash` 也用这一套**：命令行改写（`sandboxArgv`）、找程序（`findProgram`）、写设置文件（`writeSandboxSettings`）和 `sandbox.command`、`sandbox.policy` 都共用，但设置另拼一份（`bashSandboxSettings`），范围、网络和失败怎么办见[读写文件和跑命令](files.md#跑命令)。`sandbox.enabled` 只管 MCP 服务器。
 * **测试**：`brain/fixtures/fake-srt.mjs` 替 srt：把选项、命令、`cwd` 和设置文件内容记到 `FAKE_SRT_LOG`，再启动 `--` 后面的命令，透传 stdio 和退出码，什么也不限制。`mcp.test.ts` 用一个记录配置、再交给 ctx-mcp 真连接方式的 `connector`，经假 srt 真的启动 `where-server.mjs` 并调一次工具。真的 srt 不进自动测试。
 
 ## 不接桌宠跑

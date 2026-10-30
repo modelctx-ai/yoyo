@@ -43,6 +43,7 @@ status: stable
 | `tasks.notify`      | `true`                       | 子任务做完或没做成时，yoyo 用自己的话告诉你，桌宠说出来  |
 | `tasks.concurrency` | `2`                          | 子任务同时做几件，1 到 8，多的排队；写错按 2             |
 | `files.read`、`files.write`、`files.edit` | `allow` | yoyo 能读、写、改文件（只在工作区里写），`deny` 不给；见[读写文件](../tech/files.md) |
+| `files.bash` | `allow` | yoyo 能在沙箱里跑命令，`deny` 不给；沙箱程序（srt）没装就没有，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
 
 关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
@@ -91,6 +92,9 @@ status: stable
 | `files.workspace` | 空 | yoyo 读写文件的工作区，能读能写；空着是 `~/.yoyo/workspace`，`~` 开头算主目录 |
 | `files.readable`、`files.denyRead` | `[]`、`[]` | 另外能读（不能写）的目录或文件；另外读不到的，盖过 `readable`。配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到 |
 | `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自给不给，`deny` 不给，写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给 |
+| `files.bash` | `allow` | 跑命令的 `bash` 给不给，`deny` 不给，写错按 `allow`。一律经沙箱程序跑，沙箱程序找不到就没有；规则同上，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
+| `files.bashNetwork` | `[]` | 命令能连的域名，例如 `["pypi.org", "files.pythonhosted.org"]`；不写就是网络全关 |
+| `files.bashTimeout`、`files.bashMaxTimeout` | `120`、`600` | 命令没说时最多跑几秒，和它自己最多能要几秒（1 到 3600）；写错按缺省 |
 
 # 右键菜单
 
@@ -234,6 +238,33 @@ sandbox:
 * 缺省能读的文件服务器照样能读，包括写着密钥的 `config.json` 和对话记忆所在的 `yoyo.db`。不想让它读，就写进 `filesystem.denyRead`。
 * 服务器 `env` 里的密钥照样交给它。
 * 它能连的域名上，它想发什么都能发。
+
+# 让 yoyo 跑命令
+
+`files.bash` 给的（缺省给）、`llm.tools` 打开、沙箱程序找得到时，yoyo 能在你的电脑上跑命令：「用 python 把这份数据画成图」「数一数工作区里有多少个 md 文件」。每条命令都经沙箱程序跑（和上面 `sandbox.command` 是同一个，缺省 srt）：
+
+* **只能写工作区**（`files.workspace`）和一个专用临时目录，别处只读。
+* **读不到密钥**：yoyo 的数据目录、`config.json`、`~/.ssh`、`~/.aws` 这些，和 `files.denyRead` 里列的，命令也读不到。但文稿这类没列进去的地方，命令读得到（`read` 工具读不到）；要拦就写进 `files.denyRead`。
+* **网络缺省全关**，要连哪里写进 `files.bashNetwork`。
+* **有时限**：缺省 120 秒，超时杀掉；输出最多留 6 万字节。
+* 环境变量只带 `PATH`、`HOME` 这几个，yoyo 自己的密钥不带。
+
+```json
+{
+  "llm": { "tools": true },
+  "files": { "bashNetwork": ["pypi.org", "files.pythonhosted.org"], "bashTimeout": 120 }
+}
+```
+
+`sandbox.policy` 里和范围无关的字段（例如 `enableWeakerNestedSandbox`）和 `network.deniedDomains`、`filesystem.denyRead`、`filesystem.denyWrite` 也用在命令上；给 MCP 服务器放行的域名和可写目录不借给命令。`sandbox.enabled` 只管 MCP 服务器，命令不看它。
+
+**没装沙箱就没有这个工具。** `sandbox.command` 在 PATH 上找不到、`policy` 指向的文件读不出时，yoyo 照常启动，只是没有 `bash`，记一行：
+
+```text
+没有 bash 工具：沙箱程序 srt 找不到（命令一律经沙箱跑，不退回不加沙箱的跑法）
+```
+
+不会退回到不加沙箱跑。装 srt 见[装 srt](#装-srt)。转告子任务结果那一轮不给命令；子任务里只有 `general` 能用，`research`、`writer` 不能。
 
 # 记忆
 

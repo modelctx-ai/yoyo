@@ -39,11 +39,11 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 
 要交文件的（整理好的周报、对比表、图），子任务会把文件交上来，放在子任务详情的「交付物」里：文本和图片点开就能看，浏览器里能下载，yoyo.app 里是「在访达里显示」。文件在 `~/.yoyo/artifacts/<编号>/`，不要了可以删。
 
-派的时候 yoyo 会按事情挑一种子 agent：`general` 什么都能做，`research` 上网查、结论带出处，`writer` 把给的材料整理成周报和清单。想加自己的，在 `~/.yoyo/agents/` 里放一个 `.md`，写法和 Claude Code 的子 agent 一样，见[子任务](../tech/tasks.md#子-agent-类型)。
+派的时候 yoyo 会按事情挑一种子 agent：`general` 什么都能做，`research` 上网查、结论带出处，`writer` 把给的材料整理成周报和清单。只有 `general` 能跑命令。想加自己的，在 `~/.yoyo/agents/` 里放一个 `.md`，写法和 Claude Code 的子 agent 一样，见[子任务](../tech/tasks.md#子-agent-类型)。
 
 同时做两件（`tasks.concurrency` 可以改），多的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
 
-# 让 yoyo 读写文件
+# 让 yoyo 读写文件、跑命令
 
 回复时用工具（`llm.tools`）打开以后，yoyo 能读文件、写文件、改文件：「把我工作区里的会议记录整理一下」「帮我在 notes 里记一笔」。
 
@@ -53,6 +53,13 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 * 它主动转告子任务结果的那一句不会动文件；写和改都记在工作台的轨迹里。
 
 不想要哪个，把 `files.read`、`files.write`、`files.edit` 设成 `deny`。
+
+装了沙箱程序（srt，见[装 srt](configuration.md#装-srt)）的话，yoyo 还能跑命令：「用 python 把这份数据画成一张图」「数一数工作区里有多少个 md 文件」。
+
+* 命令在沙箱里跑，只能写工作区，读不到密钥，缺省不能上网（要连哪里写进 `files.bashNetwork`），最多跑 2 分钟，输出太长只留开头和结尾。
+* 没装沙箱程序就没有这个能力，yoyo 启动时记一行，不会换成不加沙箱的跑法。不想要就把 `files.bash` 设成 `deny`。
+* 每条命令（前面一段和退出码）都记在工作台的轨迹里；转告子任务结果那一句不会跑命令。
+* 命令生成的文件（例如画图脚本输出的图）放在工作区里，交给子任务去做时，它能把文件交到子任务的交付物里。详细的规则见[让 yoyo 跑命令](configuration.md#让-yoyo-跑命令)。
 
 # 按键
 
