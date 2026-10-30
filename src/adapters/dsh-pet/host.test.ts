@@ -6,12 +6,12 @@ import { describe, test } from 'vite-plus/test';
 import { createPetClient } from '@yoyo/dsh-pet';
 import type { ChatMemoryMessage, PetClient, PollState, SayData } from '@yoyo/dsh-pet';
 
-import type { PetConfig } from '../../app/config.ts';
+import { parseConfig, type PetConfig } from '../../app/config.ts';
 import type { PetSaying } from '../../kernel/types.ts';
 import type { Logger, StageLine } from '../../ports/index.ts';
 import { createDshPetHost } from './host.ts';
 
-const pet: PetConfig = { baseUrl: 'http://127.0.0.1:3080/dsh-pet-7340', id: 'main', surface: 'desktop' };
+const pet = parseConfig({}).pet;
 
 const line: StageLine = {
   text: '该喝水了',
@@ -343,6 +343,7 @@ describe('dsh-pet 宿主', () => {
             apiKey: 'secret',
             enabled: true,
             automaticWhispers: false,
+            timeoutMs: 60_000,
           },
         ],
       },

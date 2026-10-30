@@ -116,6 +116,8 @@ export interface WebSearch {
 export interface ContactRepo {
   list(): Contact[];
   insert(contact: Contact): void;
+  /** 删掉一个；返回删没删掉。 */
+  remove(id: string): boolean;
 }
 
 export interface ScheduleRepo {
@@ -123,6 +125,8 @@ export interface ScheduleRepo {
   list(): ScheduleItem[];
   insert(item: ScheduleItem): void;
   markFired(id: string, occurrence: string): void;
+  /** 删掉一条；返回删没删掉。 */
+  remove(id: string): boolean;
 }
 
 export interface ClipboardRepo {

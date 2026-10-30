@@ -75,6 +75,14 @@ export function addSchedule(
   return item;
 }
 
+/** 删掉一条日程，记一条 'schedule-remove'。没有这条返回 null。 */
+export function removeSchedule(repos: Pick<Repos, 'schedule' | 'activity'>, id: string): ScheduleItem | null {
+  const item = repos.schedule.list().find((entry) => entry.id === id);
+  if (!item || !repos.schedule.remove(id)) return null;
+  repos.activity.record({ type: 'schedule-remove', id, title: item.title });
+  return item;
+}
+
 export function saveFired(repos: Pick<Repos, 'schedule'>, item: ScheduleItem, now: Date): void {
   repos.schedule.markFired(item.id, occurrenceKey(item, now));
 }

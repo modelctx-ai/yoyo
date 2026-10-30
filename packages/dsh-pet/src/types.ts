@@ -59,6 +59,8 @@ export interface StandaloneAiInput {
   readonly apiKey: string;
   readonly enabled?: boolean;
   readonly automaticWhispers?: boolean;
+  /** 一次请求最多等多久，1000–60000 毫秒，桌宠缺省 30 秒。 */
+  readonly timeoutMs?: number;
 }
 
 /** 桌宠保存后回的公开设置（不含密钥）。 */

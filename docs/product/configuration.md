@@ -11,6 +11,8 @@ status: stable
 
 从源码运行时，配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。安装包的配置在 `~/.yoyo/config.json`，`./yoyo` 第一次运行时从包里的示例复制过去；放在数据目录里，换新版本时替换整个程序目录也不会丢。`YOYO_CONFIG` 可以换一个位置。
 
+改了不用重启：常驻进程每秒看一眼 `config.json`，内容变了、读得出来，就在一两秒内换上，正在说的那句说完为止，下一句碎碎念的时间照旧。改坏了（不是 JSON，或者驱动桌宠却把语音删空了）只记一行，接着用原来的，改好了再换。两样要另外动一下：`pet.menu` 要关掉桌宠再开；没固定 `web.port` 时管理页的地址不变，固定成别的端口就换到那个端口。也可以在[管理页](usage.md#管理页)的「设置」里改。
+
 配置是宽松的，写错不会挡住启动：
 
 * 每个键都有缺省值，认不出的键保留不报错；整段写成 `null` 当没写。
@@ -22,7 +24,7 @@ status: stable
 
 # 开关
 
-想关掉哪样，就在 `config.json` 里把它写成 `false`，重启常驻进程生效。
+想关掉哪样，就在 `config.json` 里把它写成 `false`，存好一两秒内生效；管理页的「设置」里也能直接点。
 
 | 开关                | 缺省                         | 管什么                                                   |
 | ------------------- | ---------------------------- | -------------------------------------------------------- |
@@ -36,6 +38,7 @@ status: stable
 | `llm.tools`         | `false`                      | 回复时让模型调用工具                                     |
 | `memory.enabled`    | `false`                      | 记住主人，见[记忆](#记忆)                                |
 | `sandbox.enabled`   | `false`                      | MCP 服务器放进沙箱，见[后面一节](#把-mcp-服务器关进沙箱) |
+| `web.enabled`       | `true`                       | 管理页，见[日常使用](usage.md#管理页)                    |
 
 关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
@@ -46,12 +49,14 @@ status: stable
 | `stage`                                    | `dsh-pet`                                        | `console` 只在终端打印台词                                                                          |
 | `pet.baseUrl`                              | `http://127.0.0.1:3080/dsh-pet-7340`             | 桌宠接口                                                                                            |
 | `pet.id`、`pet.surface`                    | `main`、`desktop`                                | 哪一只、哪一端；不同的 `pet.id` 各有一份对话记忆                                                    |
+| `pet.menu.hide`                            | `["open-site", "show-balance", "whisper"]`       | 藏起来的桌宠自带菜单项，写 `[]` 全留着；见[右键菜单](#右键菜单)                                     |
+| `pet.menu.top`                             | `true`                                           | yoyo 的菜单项放第一层；`false` 收进「更多」                                                         |
 | `intervalSec`                              | `300`                                            | 日常碎碎念的间隔，最少 60                                                                           |
 | `speech.apiKey`、`speech.referenceId`      | 空                                               | Fish Audio 的密钥和声音；驱动桌宠时必填，控制台模式没填就只出字                                     |
 | `speech.baseUrl`、`speech.model`           | `https://api.fish.audio/v1/tts`、`s2.1-pro-free` | Fish Audio 的接口和模型                                                                             |
 | `speech.autoplay`                          | `true`                                           | `false` 只出字，不放语音                                                                            |
 | `speech.tone`                              | `lively`                                         | 朗读右键对话回复用的语气                                                                            |
-| `llm.provider`                             | `openai-compatible`                              | 或 `anthropic`；`anthropic` 时右键对话不经过 yoyo                                                   |
+| `llm.provider`                             | `openai-compatible`                              | 或 `anthropic`；两种右键对话都由 yoyo 回答                                                          |
 | `llm.baseUrl`、`llm.apiKey`、`llm.model`   | 空                                               | 配齐了才让模型写碎碎念和回复；`anthropic` 可以不写 `baseUrl`                                        |
 | `llm.tools`                                | `false`                                          | 回复时让模型调用工具：搜索、天气、闹钟，以及 `mcpServers` 里的工具                                  |
 | `listen.enabled`、`listen.seconds`         | `false`、`5`                                     | 说完听回应，听几秒（1–10）；不写就不听，示例配置里打开了                                            |
@@ -77,6 +82,22 @@ status: stable
 | `memory.decision`、`memory.extraction`     | 不写                                             | System One 的决策、提取模型；不写就用内置的判断和 `llm` 的模型，见[记忆](#记忆)                     |
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
 | `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
+| `web.enabled`、`web.port`                  | `true`、`0`                                      | 管理页开不开、用哪个端口；`0` 是每次随机                                                            |
+
+# 右键菜单
+
+`./yoyo start`、`./yoyo pet` 和从源码运行时 `pnpm pet` 开的桌宠，右键菜单按 `pet.menu` 排：`top` 打开时「碎碎念」「听一句」放在第一层，`hide` 里列的自带项藏起来。桌宠开的时候读一次，改了要关掉桌宠再开（`./yoyo start` 开的桌宠随 Control+C 一起关）。
+
+| `hide` 里写    | 藏掉的自带项                                                                     |
+| -------------- | -------------------------------------------------------------------------------- |
+| `open-site`    | 打开网站：桌宠自己的模型设置页，右键对话交给 yoyo 以后用不上                     |
+| `show-balance` | 查看余额：桌宠单独开的时候查不了                                                 |
+| `whisper`      | 桌宠自己的碎碎念：内容也由 yoyo 写，但不配图、不记、说完不听，和 yoyo 的那项重复 |
+| `chat`         | 对话                                                                             |
+| `home`         | 回到初始位置                                                                     |
+| `reload`       | 重载配置                                                                         |
+
+「显示位置」「动作」「更多」藏不掉，别的程序加的菜单项还在「更多」里。自己另外开的桌宠不认这些设置，菜单和原来一样，yoyo 的两项在「更多」里。
 
 # 接 MCP 服务器
 

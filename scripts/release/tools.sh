@@ -82,7 +82,7 @@ tar -xf "$work/ffmpeg.tar.xz" -C "$work"
   cp ffmpeg "$out/bin/ffmpeg"
   cp COPYING.LGPLv2.1 "$out/licenses/ffmpeg-LGPL-2.1.txt"
   {
-    echo "ffmpeg $FFMPEG_VERSION，LGPL 2.1，未修改。源码：https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+    echo "ffmpeg ${FFMPEG_VERSION}，LGPL 2.1，未修改。源码：https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
     echo "构建脚本：scripts/release/tools.sh（https://github.com/modelctx-ai/yoyo）"
   } > "$out/licenses/ffmpeg.txt"
 )

@@ -73,6 +73,29 @@ describe('按键助手', () => {
     assert.deepEqual(argsOf(bin), [inboxFile]);
   });
 
+  test('stop 停掉助手', async () => {
+    const binDir = join(tempDir(), 'bin');
+    mkdirSync(binDir);
+    const bin = join(binDir, 'yoyo-hotkey');
+    // 记下自己的 pid，然后一直等着，像真的助手一样
+    writeFileSync(bin, '#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n', { mode: 0o755 });
+    const { logger } = memoryLogger();
+    const helper = startHotkeyHelper({ bin, source: '/不存在/hotkey.swift', inboxFile: '/不存在/inbox.jsonl', logger });
+    assert.ok(helper);
+    await waitFor(() => existsSync(`${bin}.pid`) && readFileSync(`${bin}.pid`, 'utf8').trim() !== '');
+    const pid = Number(readFileSync(`${bin}.pid`, 'utf8'));
+    helper.stop();
+    await waitFor(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    helper.stop();
+  });
+
   test('编译不成只记一行，不启动', () => {
     const binDir = join(tempDir(), 'bin');
     const { errors, logger } = memoryLogger();
@@ -84,6 +107,16 @@ describe('按键助手', () => {
       swiftc: join(tempDir(), '没有编译器'),
     });
     assert.deepEqual(errors, ['按键助手没编译成，仍可用 yoyo listen']);
+    assert.equal(
+      startHotkeyHelper({
+        bin: join(binDir, 'yoyo-hotkey'),
+        source: '/不存在/hotkey.swift',
+        inboxFile: '/不存在/inbox.jsonl',
+        logger,
+        swiftc: join(tempDir(), '没有编译器'),
+      }),
+      null,
+    );
     assert.equal(existsSync(join(binDir, 'yoyo-hotkey')), false);
   });
 

@@ -1,0 +1,74 @@
+diff --git a/runtime/electron-helper/index.html b/runtime/electron-helper/index.html
+index fda307616a77105a70b6e4edad3f089c0229d38f..1c1526a2fa11e12dba27e011974d6519706431a4 100644
+--- a/runtime/electron-helper/index.html
++++ b/runtime/electron-helper/index.html
+@@ -263,6 +263,7 @@
+          桌面端同模式拆分：constants（基础设施）→ sprite（宠物本体）→ events（事件联动）→ renderer（启动入口） -->
+     <script src="./shared-core.js"></script>
+     <script src="./constants.js"></script>
++    <script src="./yoyo-menu.js"></script>
+     <script src="./sprite.js"></script>
+     <script src="./events.js"></script>
+     <script src="./renderer.js"></script>
+diff --git a/runtime/electron-helper/main.js b/runtime/electron-helper/main.js
+index a1f67836df09cdb41b3e73859502c869e9bee76c..05861f7ef6c0817458a4f60b663ee908cddae0da 100644
+--- a/runtime/electron-helper/main.js
++++ b/runtime/electron-helper/main.js
+@@ -538,6 +538,7 @@ function createPetWindows() {
+           bridge: BRIDGE ? '1' : '0',
+           // 工具项「打开网站」的文案按宿主形态自动变（见 sprite.js）：desktop=唤起桌面应用 / site=打开站点
+           openTarget: OPEN_TARGET,
++          yoyoMenu: process.env.YOYO_PET_MENU || '', // yoyo 补丁，见 yoyo-menu.js
+           scale: String(scale),
+           petIndex: String(pet.index),
+           workAreaW: String(area.width),
+diff --git a/runtime/electron-helper/sprite.js b/runtime/electron-helper/sprite.js
+index 730af1214ae8fbacc0743e937ab41649905c3470..de0f1e82522f6941b1695a0a4eca2c7dfa657004 100644
+--- a/runtime/electron-helper/sprite.js
++++ b/runtime/electron-helper/sprite.js
+@@ -1651,8 +1651,9 @@ class PetSprite {
+     // 第三方菜单项统一收在「更多」下（与浏览器端同一份拼装函数）：0 项不出现；
+     // 某个 owner 只有 1 项时跳过 owner 那层直接平铺（规则见 shared/menu 的 buildMoreBranch）。
+     // 放在整棵动作树之后——「更多」是"别的东西"，不插在工具项和动作之间。
+-    const more = S.buildMoreBranch(this.menuItems);
+-    const tree = tools.concat(S.buildMenuTree(this.animations), more ? [more] : []);
++    const arranged = yoyoArrangeMenu(tools, this.menuItems); // yoyo 补丁，见 yoyo-menu.js
++    const more = S.buildMoreBranch(arranged.items);
++    const tree = arranged.top.concat(arranged.tools, S.buildMenuTree(this.animations), more ? [more] : []);
+     if (!tree.length) return;
+     this.menuOpen = true;
+     this.setInteractive(true); // 菜单是窗口内 DOM：悬停期间整窗保持可交互，关闭后恢复命中区穿透
+diff --git a/runtime/electron-helper/yoyo-menu.js b/runtime/electron-helper/yoyo-menu.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..fe623b1a1acf4e0c5b1b971bcc93d64bda991f13
+--- /dev/null
++++ b/runtime/electron-helper/yoyo-menu.js
+@@ -0,0 +1,28 @@
++/**
++ * yoyo 补丁，不在上游：yoyo 仓库的 patches/dsh-pet@*.patch 在安装时打进来。
++ *
++ * 按主进程转来的 yoyoMenu 参数（取自环境变量 YOYO_PET_MENU）整理右键菜单：hide 按 action 去掉自带的工具项，
++ * top 按 owner 把第三方项提到第一层、不再收进「更多」。例：{"hide":["open-site","show-balance"],"top":["yoyo"]}。
++ * 没有这个参数或不是合法 JSON 时原样返回，菜单和上游一样。
++ */
++'use strict';
++
++function yoyoArrangeMenu(tools, items) {
++  const list = Array.isArray(items) ? items : [];
++  let spec = null;
++  try {
++    spec = JSON.parse(params.get('yoyoMenu') || 'null');
++  } catch {
++    spec = null;
++  }
++  if (!spec || typeof spec !== 'object') return { top: [], tools, items: list };
++  const hide = new Set(Array.isArray(spec.hide) ? spec.hide : []);
++  const owners = new Set(Array.isArray(spec.top) ? spec.top : []);
++  return {
++    top: list
++      .filter((item) => owners.has(item.owner))
++      .map((item) => ({ label: item.label, action: 'third-party', owner: item.owner })),
++    tools: tools.filter((node) => !hide.has(node.action)),
++    items: list.filter((item) => !owners.has(item.owner)),
++  };
++}

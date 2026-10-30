@@ -41,15 +41,20 @@ export interface HotkeyHelperOptions {
   readonly swiftc?: string;
 }
 
-/** 按键助手：第一次先编译，之后直接启动。按下快捷键就往收件箱写一条 listen。 */
-export function startHotkeyHelper(options: HotkeyHelperOptions): void {
+export interface HotkeyHelper {
+  /** 停掉助手。它自己不看 yoyo 还在不在，不停就一直留着。 */
+  stop(): void;
+}
+
+/** 按键助手：第一次先编译，之后直接启动。按下快捷键就往收件箱写一条 listen。没起成返回 null。 */
+export function startHotkeyHelper(options: HotkeyHelperOptions): HotkeyHelper | null {
   const bin = options.bin;
   if (!existsSync(bin)) {
     mkdirSync(dirname(bin), { recursive: true, mode: 0o700 });
     const built = spawnSync(options.swiftc ?? 'swiftc', ['-O', '-o', bin, options.source], { encoding: 'utf8' });
     if (built.status !== 0) {
       options.logger.error('按键助手没编译成，仍可用 yoyo listen');
-      return;
+      return null;
     }
   }
   const child = spawn(bin, [options.inboxFile], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -62,4 +67,9 @@ export function startHotkeyHelper(options: HotkeyHelperOptions): void {
     options.logger.error(`按键助手没启动：${error.message}`);
   });
   child.unref();
+  return {
+    stop() {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    },
+  };
 }

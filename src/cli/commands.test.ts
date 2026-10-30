@@ -323,6 +323,19 @@ describe('commands', () => {
     assert.deepEqual(calls, ['bind:http://127.0.0.1:4567/v1']);
   });
 
+  test('web open：常驻进程在跑才打开记下的地址；关掉 web 就说一声', async () => {
+    const opened: string[] = [];
+    const { run, env, paths } = cli({ overrides: { opener: { open: (url) => void opened.push(url) } } });
+    assert.deepEqual(await run('web', 'open'), ['常驻进程没在跑，管理页跟着它开']);
+    env.repos().kv.set('web-url', 'http://127.0.0.1:4568/#token=t');
+    assert.deepEqual(await run('web', 'open'), ['常驻进程没在跑，管理页跟着它开'], '记下的地址是上次的');
+    writePid(paths.pidFile);
+    assert.deepEqual(await run('web', 'open'), ['http://127.0.0.1:4568/#token=t']);
+    assert.deepEqual(opened, ['http://127.0.0.1:4568/#token=t']);
+    const off = cli({ config: { web: { enabled: false } } });
+    assert.deepEqual(await off.run('web', 'open'), ['config.json 的 web.enabled 关着，没有管理页']);
+  });
+
   test('listen、whisper：导演在跑就交给它', async () => {
     const { run, paths } = cli();
     writePid(paths.pidFile);

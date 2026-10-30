@@ -7,6 +7,7 @@ import { assertDirectorReady, loadConfig } from './app/config.ts';
 import { createApp } from './app/container.ts';
 import { errorText } from './app/log.ts';
 import { resolvePaths } from './app/paths.ts';
+import { supervise } from './app/supervisor.ts';
 import { runDaemon } from './runtime/daemon.ts';
 import { writePid } from './runtime/inbox.ts';
 
@@ -19,8 +20,12 @@ try {
   assertDirectorReady(config);
   mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
   writePid(paths.pidFile);
-  const app = await createApp(config, paths);
-  await runDaemon(app, { once, bake });
+  if (once || bake) {
+    await runDaemon(await createApp(config, paths), { once, bake });
+  } else {
+    // 常驻：config.json 改了就换上新的
+    await supervise(config, paths);
+  }
 } catch (error) {
   console.error(errorText(error));
   process.exitCode = 1;

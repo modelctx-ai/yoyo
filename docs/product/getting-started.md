@@ -12,7 +12,7 @@ status: stable
 | -------- | ------------------------------- | ---------------------------------------------------------------------- |
 | 适合     | 只想用                          | 要改 yoyo                                                              |
 | 系统     | macOS，Apple 芯片               | macOS。别的系统只能用[控制台模式](#不接桌宠试一试)                     |
-| 另外要装 | 不用                            | Node ≥22.18、pnpm 10、ctx、dsh-pet；听写还要 `ffmpeg` 和 `whisper-cli` |
+| 另外要装 | 不用                            | Node ≥22.18、pnpm 10、ctx；听写还要 `ffmpeg` 和 `whisper-cli` |
 | 配置在   | `~/.yoyo/config.json`           | yoyo 目录的 `config.json`                                              |
 | 命令     | `./yoyo start`、`./yoyo <领域>` | `pnpm start`、`pnpm yoyo <领域>`                                       |
 
@@ -64,12 +64,13 @@ cp config.example.json config.json
 
 ## 启动桌宠
 
-用 dsh-pet 的官方独立模式启动：
+另开一个终端：
 
 ```sh
-cd /path/to/dsh-pet/dsh-pet
-npm run build && npm run standalone
+pnpm pet
 ```
+
+桌宠是 npm 上的 dsh-pet，`pnpm install` 时已经装好，跑的是它的独立模式；第一次开会下载它用的 Electron。右键菜单按 `config.json` 的 `pet.menu` 排，见[配置](configuration.md#右键菜单)。
 
 ## 运行
 
@@ -84,7 +85,7 @@ npm run build && npm run standalone
 
 # 开关
 
-说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，重启常驻进程生效。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
+说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，存好一两秒内生效，不用重启；右键「管理」打开的管理页里也能直接点。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
 
 # 不接桌宠试一试
 

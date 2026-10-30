@@ -69,6 +69,7 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
   const sql = {
     contacts: db.prepare('SELECT id, name, yoyo, note, created_at AS createdAt FROM contacts ORDER BY created_at'),
     insertContact: db.prepare('INSERT INTO contacts (id, name, yoyo, note, created_at) VALUES (?, ?, ?, ?, ?)'),
+    removeContact: db.prepare('DELETE FROM contacts WHERE id = ?'),
     schedule: db.prepare(
       'SELECT id, title, kind, time, date, repeat, weekday, enabled, last_fired AS lastFired FROM schedule ORDER BY time',
     ),
@@ -76,6 +77,7 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       'INSERT INTO schedule (id, title, kind, time, date, repeat, weekday, enabled, last_fired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ),
     markFired: db.prepare('UPDATE schedule SET last_fired = ? WHERE id = ?'),
+    removeSchedule: db.prepare('DELETE FROM schedule WHERE id = ?'),
     clips: db.prepare('SELECT text, at FROM clipboard ORDER BY id DESC LIMIT ?'),
     insertClip: db.prepare('INSERT INTO clipboard (text, at) VALUES (?, ?)'),
     pruneClips: db.prepare('DELETE FROM clipboard WHERE id NOT IN (SELECT id FROM clipboard ORDER BY id DESC LIMIT ?)'),
@@ -102,6 +104,9 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       insert(contact) {
         sql.insertContact.run(contact.id, contact.name, contact.yoyo, contact.note, contact.createdAt);
       },
+      remove(id) {
+        return Number(sql.removeContact.run(id).changes) > 0;
+      },
     },
     schedule: {
       list() {
@@ -122,6 +127,9 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       },
       markFired(id, occurrence) {
         sql.markFired.run(occurrence, id);
+      },
+      remove(id) {
+        return Number(sql.removeSchedule.run(id).changes) > 0;
       },
     },
     clipboard: {

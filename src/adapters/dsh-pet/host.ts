@@ -9,6 +9,9 @@ import { errorText } from '../../app/log.ts';
 import type { PetChatMessage, PetSaying, WorkStatus } from '../../kernel/types.ts';
 import type { Logger, PetHost } from '../../ports/index.ts';
 
+/** 桌宠独立模式一次模型请求最多等多久：它允许的上限。 */
+export const CHAT_TIMEOUT_MS = 60_000;
+
 export interface DshPetHostOptions {
   readonly pet: PetConfig;
   readonly logger: Logger;
@@ -111,7 +114,8 @@ export function createDshPetHost(options: DshPetHostOptions): PetHost {
     async bindChat(binding) {
       const baseUrl = binding.baseUrl.trim().replace(/\/+$/, '');
       if (!baseUrl || !binding.model || !binding.apiKey) throw new Error('config.json 的 llm 不完整');
-      // 只接右键对话，不打开桌宠自己的周期碎碎念：碎碎念由 yoyo 发
+      // 只接右键对话，不打开桌宠自己的周期碎碎念：碎碎念由 yoyo 发。
+      // 回答是 yoyo 跑完整的一轮（可能调工具），给桌宠允许的最长等待
       const saved = await client.setStandaloneAi({
         protocol: 'openai-compatible',
         baseUrl,
@@ -119,6 +123,7 @@ export function createDshPetHost(options: DshPetHostOptions): PetHost {
         apiKey: binding.apiKey,
         enabled: true,
         automaticWhispers: false,
+        timeoutMs: CHAT_TIMEOUT_MS,
       });
       if (!saved.enabled) throw new Error('对话渠道没有接上');
       return { model: saved.model || binding.model };

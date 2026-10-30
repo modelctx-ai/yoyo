@@ -529,6 +529,7 @@ describe('dsh-pet 客户端', () => {
       apiKey: 'secret',
       enabled: true,
       automaticWhispers: false,
+      timeoutMs: 60_000,
       tools: true,
     };
 
@@ -547,6 +548,7 @@ describe('dsh-pet 客户端', () => {
       apiKey: 'secret',
       enabled: true,
       automaticWhispers: false,
+      timeoutMs: 60_000,
     });
   });
 

@@ -119,6 +119,24 @@ describe('config', () => {
     assert.equal(parseConfig({ stage: 'console' }).stage, 'console');
   });
 
+  test('右键菜单：缺省藏掉网站、余额和桌宠自己的碎碎念，yoyo 的项放第一层', () => {
+    assert.deepEqual(parseConfig({}).pet.menu, { hide: ['open-site', 'show-balance', 'whisper'], top: true });
+    assert.deepEqual(parseConfig({ pet: { menu: { hide: [], top: 'false' } } }).pet.menu, { hide: [], top: false });
+    assert.deepEqual(parseConfig({ pet: { menu: { hide: 'chat', top: 1 } } }).pet.menu, {
+      hide: ['open-site', 'show-balance', 'whisper'],
+      top: true,
+    });
+    assert.deepEqual(parseConfig({ pet: { menu: null } }).pet.menu.hide, ['open-site', 'show-balance', 'whisper']);
+  });
+
+  test('管理页：缺省打开、随机端口；端口写错按 0', () => {
+    assert.deepEqual(parseConfig({}).web, { enabled: true, port: 0 });
+    assert.deepEqual(parseConfig({ web: { enabled: 'false', port: '8765' } }).web, { enabled: false, port: 8765 });
+    assert.equal(parseConfig({ web: { port: 70_000 } }).web.port, 0);
+    assert.equal(parseConfig({ web: { port: 1.5 } }).web.port, 0);
+    assert.equal(parseConfig({ web: null }).web.enabled, true);
+  });
+
   test('整段写成 null 或者不是对象，当没写', () => {
     const config = parseConfig({ ...FIRST, llm: null, listen: null, speech: null, context: 'x', mcpServers: null });
     assert.equal(config.llm.apiKey, '');

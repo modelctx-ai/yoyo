@@ -57,3 +57,8 @@ jobs:
           printf '{"stage":"console","weather":{"enabled":false}}\n' >"$home/config.json"
           YOYO_HOME="$home" YOYO_CONFIG="$home/config.json" node "$home/lib/yoyo/main.mjs" --once
           YOYO_HOME="$home" YOYO_CONFIG="$home/config.json" node "$home/lib/yoyo/cli.mjs" log tail
+          # 安装包里的桌宠：按锁文件 deploy 一份打过补丁的 dsh-pet，经 yoyo 的 pet 入口开到帮助为止
+          pnpm --filter @yoyo/pet-release deploy --prod --legacy --config.node-linker=hoisted "$home/pet" >/dev/null
+          grep -q yoyoArrangeMenu "$home/pet/node_modules/dsh-pet/runtime/electron-helper/sprite.js"
+          YOYO_HOME="$home" YOYO_CONFIG="$home/config.json" YOYO_PET_ENTRY="$home/pet/node_modules/dsh-pet/lib/standalone.js" \
+            node "$home/lib/yoyo/pet.mjs" --help

@@ -3,7 +3,16 @@ import { describe, test } from 'vite-plus/test';
 
 import type { ActivityEvent, ScheduleItem } from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
-import { GRACE_MS, addSchedule, dueItems, isDue, occurrenceKey, reminderLine, saveFired } from './schedule.ts';
+import {
+  GRACE_MS,
+  addSchedule,
+  dueItems,
+  isDue,
+  occurrenceKey,
+  reminderLine,
+  removeSchedule,
+  saveFired,
+} from './schedule.ts';
 
 function item(overrides: Partial<ScheduleItem> = {}): ScheduleItem {
   return {
@@ -33,6 +42,12 @@ function memoryRepos() {
       },
       markFired: (id, occurrence) => {
         fired.push([id, occurrence]);
+      },
+      remove: (id) => {
+        const index = items.findIndex((entry) => entry.id === id);
+        if (index < 0) return false;
+        items.splice(index, 1);
+        return true;
       },
     },
     activity: {
@@ -144,6 +159,16 @@ describe('schedule', () => {
       repos.schedule.list().map((entry) => entry.title),
       ['喝水', '倒垃圾', '交周报'],
     );
+  });
+
+  test('删掉日程记一条 schedule-remove；没有这条就是 null', () => {
+    const { repos, events } = memoryRepos();
+    const alarm = addSchedule(repos, { title: '喝水', time: '15:30', repeat: 'daily' });
+    assert.deepEqual(removeSchedule(repos, alarm.id), alarm);
+    assert.deepEqual(repos.schedule.list(), []);
+    assert.deepEqual(events.at(-1), { type: 'schedule-remove', id: alarm.id, title: '喝水' });
+    assert.equal(removeSchedule(repos, alarm.id), null);
+    assert.equal(events.length, 2);
   });
 
   test('响过以后只标记这一次', () => {

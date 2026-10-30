@@ -47,7 +47,7 @@ export function memoryLogger(): MemoryLogger {
 
 export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos {
   const now = options.now ?? (() => new Date());
-  const contacts: Contact[] = [];
+  let contacts: Contact[] = [];
   let schedule: ScheduleItem[] = [];
   const clips: ClipEntry[] = [];
   let pack: MemePack | null = null;
@@ -59,12 +59,22 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
     contacts: {
       list: () => [...contacts],
       insert: (contact) => void contacts.push(contact),
+      remove: (id) => {
+        const before = contacts.length;
+        contacts = contacts.filter((contact) => contact.id !== id);
+        return contacts.length < before;
+      },
     },
     schedule: {
       list: () => schedule.toSorted((a, b) => a.time.localeCompare(b.time)),
       insert: (item) => void schedule.push(item),
       markFired: (id, occurrence) => {
         schedule = schedule.map((item) => (item.id === id ? { ...item, lastFired: occurrence } : item));
+      },
+      remove: (id) => {
+        const before = schedule.length;
+        schedule = schedule.filter((item) => item.id !== id);
+        return schedule.length < before;
       },
     },
     clipboard: {

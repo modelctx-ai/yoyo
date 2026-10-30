@@ -3,7 +3,7 @@ import { describe, test } from 'vite-plus/test';
 
 import type { ActivityEvent, Contact } from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
-import { addContact } from './contacts.ts';
+import { addContact, removeContact } from './contacts.ts';
 
 /** 内存里的联系人和行为记录。 */
 function memoryRepos() {
@@ -14,6 +14,12 @@ function memoryRepos() {
       list: () => [...contacts],
       insert: (contact) => {
         contacts.push(contact);
+      },
+      remove: (id) => {
+        const index = contacts.findIndex((contact) => contact.id === id);
+        if (index < 0) return false;
+        contacts.splice(index, 1);
+        return true;
       },
     },
     activity: {
@@ -56,5 +62,14 @@ describe('contacts', () => {
     const other = addContact(repos, { name: '小李', yoyo: 'yoyo://xiaoli@example' });
     assert.equal(other.note, '');
     assert.notEqual(other.id, contact.id);
+  });
+
+  test('删掉联系人记一条 contact-remove；没有这个人就是 null', () => {
+    const { repos, contacts, events } = memoryRepos();
+    const contact = addContact(repos, { name: '小王', yoyo: 'yoyo://xiaowang@example' });
+    assert.deepEqual(removeContact(repos, contact.id), contact);
+    assert.equal(contacts.length, 0);
+    assert.deepEqual(events.at(-1), { type: 'contact-remove', id: contact.id, name: '小王' });
+    assert.equal(removeContact(repos, contact.id), null);
   });
 });

@@ -1,0 +1,9 @@
+{
+  "name": "@yoyo/pet-release",
+  "version": "0.0.0",
+  "private": true,
+  "description": "安装包里的桌宠：只用来让 package.sh 按 yoyo 的锁文件和补丁 `pnpm deploy` 出一份平铺的 dsh-pet。版本和根目录的 dsh-pet 保持一致。",
+  "dependencies": {
+    "dsh-pet": "0.3.8"
+  }
+}
