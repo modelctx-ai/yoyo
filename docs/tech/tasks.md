@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: 子任务
-description: 主线程把要花时间的事派给后台的子 agent：结构化的目标、验收标准和 todo，子 agent 边做边更新，做完把结果交回主线程。存在哪、工具、规则、怎么跑、怎么回到主线程、命令行和工作台。
+description: 主线程把要花时间的事派给后台的子 agent：结构化的目标、验收标准和 todo，子 agent 边做边更新，做完把结果和交付物交回主线程。存在哪、工具、交付物、规则、怎么跑、怎么回到主线程、命令行和工作台。
 resource: src/runtime/tasks.ts
 tags: [runtime, brain, tasks]
 status: stable
@@ -9,6 +9,12 @@ sources:
   - id: runner
     resource: src/runtime/tasks.ts
     title: 子任务的跑法
+  - id: artifacts
+    resource: src/features/tasks/artifacts.ts
+    title: 交付物
+  - id: files
+    resource: src/storage/artifacts.ts
+    title: 交付物的文件
   - id: rules
     resource: src/features/tasks/tasks.ts
     title: 子任务的规则
@@ -62,6 +68,8 @@ sources:
 
 `yoyo.db` 的 `agent_tasks` 表，一个子任务一行，编号从 1 往上数；验收标准、todo、验收结果存成 JSON 列。子 agent 每一轮的输入、说的话、工具调用和结果，记在 ctx 的会话 `task:<编号>` 里，和主线程的会话在同一个存储。[^repos] [^context]
 
+交付物另外放：文件在 `~/.yoyo/artifacts/<编号>/<文件名>`，`yoyo.db` 的 `artifacts` 表一个文件一行（编号、子任务、文件名、类型、大小、时间），同一个子任务里文件名不重复。见下面的「交付物」。
+
 # 工具
 
 主线程和子 agent 用两份注册表，各自看不到对方的：[^tools] [^container]
@@ -73,12 +81,24 @@ sources:
 | 主线程   | `task_cancel`                                              | 主人说不用做了时用                                                                                       |
 | 子 agent | `task_plan`                                                | 拆 todo（或重新拆）：给整份清单，和原来一字不差的项保留状态                                              |
 | 子 agent | `task_todo`                                                | 改一项的状态：开始标在做，做完马上标做完，不用做标跳过并写原因                                           |
+| 子 agent | `task_deliver`                                             | 交一个文件：整理好的 Markdown、CSV、JSON、图片（base64），见下面的「交付物」                             |
 | 子 agent | `task_finish`                                              | 交结果和逐条验收                                                                                         |
 | 子 agent | `task_fail`                                                | 确实做不了：说清楚卡在哪、要什么                                                                         |
 
 * `task_create`、`task_cancel` 只在 `llm.tools` 和 `tasks.enabled` 都打开时有；`yoyo` 在 `llm.tools` 打开时就有。看子任务不另做工具，和主人在终端里敲的是同一套命令。此外每一轮的事实里列着还在排队和在做的子任务（来源 `tasks`），主人问「周报弄好没」不用先查。
-* 子 agent 那份：本地工具（搜索、天气、日程、`yoyo`），主线程那边经 MCP 和记忆执行的工具原样带过去，加上上面四个；没有派子任务的，子 agent 不会再派子任务。
+* 子 agent 那份：本地工具（搜索、天气、日程、`yoyo`），主线程那边经 MCP 和记忆执行的工具原样带过去，加上上面五个；没有派子任务的，子 agent 不会再派子任务。
 * 子 agent 的工具都要带上任务编号，只对正在做的那个有效。工具调用不知道自己在哪个会话里，所以由参数带；编号对不上、任务已经结束，都回一句话说明。
+
+# 交付物
+
+子任务交回来的不只一段文字：整理好的周报、对比表、图，用 `task_deliver({ id, name, content, encoding? })` 交成文件。[^artifacts] [^files]
+
+* **只能写进自己那个目录。** 文件放在 `~/.yoyo/artifacts/<编号>/`。文件名只留最后一段（`../../x.md` 变成 `x.md`），去掉控制字符；空的、`.` 开头的、超过 100 字的不收。存的时候再挡一次：拼出来的路径出了这个子任务的目录就报错。目录 0700、文件 0600。不给通用的写文件工具。
+* **只交给在做的那个子任务。** 排队的、已经结束的交不了。
+* **大小和个数。** 单个最多 5 MB，一个子任务最多 20 个；同名的再交一次换成新的，编号不变。
+* **类型按扩展名。** `md`、`txt`、`csv`、`tsv`、`json` 是文本，`png`、`jpg`、`gif`、`webp` 是图片，工作台里直接看；HTML、SVG 能带脚本，和别的一样只给下载。
+* **回到主线程。** 写回主会话的那条加一行「交付物（在工作台里）：周报.md（1.2 KB）」，`<task-notification>` 里多一段 `<artifacts>`，转告时让它说「周报放在工作台里了」。`yoyo task show` 也列出来。
+* **删。** 子任务不删，交付物跟着留着；不要了在工作台或命令行里一个个删，文件和记录一起删。
 
 # 子 agent 类型
 
@@ -188,16 +208,21 @@ model: claude-haiku-5-5
 | `yoyo task add --title … --goal … --criteria "a；b" --agent …` | 自己派一个，验收标准用分号隔开，类型不写是 `general` |
 | `yoyo task agents`                            | 有哪些类型：名字、什么时候用、工具、模型、从哪来           |
 | `yoyo task cancel <编号>`                     | 取消                                                       |
+| `yoyo artifact list [--task <编号>]`           | 交付物：编号、子任务、大小、类型、文件名                   |
+| `yoyo artifact show <编号>`                    | 文本的打出内容，别的打出类型和位置                         |
+| `yoyo artifact rm <编号>`                      | 删一个，文件和记录一起删                                   |
 
-工作台侧栏列着子任务（在做的排最前，标题旁写着几件在做、几件排队），点开是详情：状态、进度条、目标、验收标准（交了以后带上满足没有和凭什么）、todo、结果、过程。在做的每 4 秒刷新。接口见[管理页](web.md#接口)。
+工作台侧栏列着子任务（在做的排最前，标题旁写着几件在做、几件排队），点开是详情：状态、进度条、目标、验收标准（交了以后带上满足没有和凭什么）、todo、结果、交付物、过程。交付物一行一个：文本和图片能展开预览，浏览器里能下载，yoyo.app 的窗口里换成「在访达里显示」（WKWebView 下载不了），都能删。在做的每 4 秒刷新。接口见[管理页](web.md#接口)。
 
 # 还没做
 
-* 交付物（文件、表格、图）：现在结果只有文字，见[工作台](workbench.md)的提案。
+* 交付物只能由子 agent 写出内容交上来；用别的程序生成的文件（例如画图脚本的输出）还交不了，要等能跑命令的工具。
 * 子任务过程里要问主人的事：现在只能交不了，说清楚要什么，由主线程转告。
 * 工作台里自己派子任务（现在只能经主线程或命令行）。
 
 [^runner]: 子任务的跑法
+[^artifacts]: 交付物
+[^files]: 交付物的文件
 [^rules]: 子任务的规则
 [^tools]: 本地工具
 [^agents]: 子 agent 类型

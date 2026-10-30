@@ -1,7 +1,7 @@
 ---
 type: Design
 title: 工作台
-description: yoyo 的两种形态：桌宠陪着、工作台干活。工作台已经有的（主聊天、子任务、心迹、日程、轨迹、设置），和提案中的交付物；分期。
+description: yoyo 的两种形态：桌宠陪着、工作台干活。工作台已经有的（主聊天、子任务和交付物、心迹、日程、轨迹、设置）；分期。
 resource: src/web/page.ts
 tags: [web, product, design]
 status: proposed
@@ -44,14 +44,13 @@ yoyo 是一个常驻进程，两个入口：
 
 工作台里，聊天列表的「子任务」一栏列着它们（状态、todo 进度），点开是详情；主聊天里派出去和做完的各是一张卡片。
 
-# 提案：交付物
+# 交付物（已做）
 
-任务产出的东西：一段整理好的文字、一个 Markdown、一张图、一个表格。
+子任务产出的文件：整理好的 Markdown、表格、图。子 agent 用 `task_deliver` 交，存在 `~/.yoyo/artifacts/<子任务编号>/`，表 `artifacts` 记一条；规则见[子任务](tasks.md#交付物)。
 
-* **存在哪**：`~/.yoyo/artifacts/<子任务编号>/<文件名>`，表 `artifacts`（id、子任务、文件名、类型、大小、时间）。
-* **怎么来**：子 agent 的工具 `deliver({ id, name, content })`，只能写进自己子任务的那个目录，文件名去掉路径；单个最大 5 MB。不给通用的写文件工具。
-* **怎么看**：子任务详情里列出它的交付物，顶栏「交付物」列出全部；文本和 Markdown 直接预览，图片显示，别的下载。yoyo.app 里多一个「在访达里显示」。
-* **接口**：`GET /api/artifacts?task=`、`GET /api/artifacts/:id`（原文，带对的 `content-type` 和 `content-disposition`）、`DELETE /api/artifacts/:id`。
+* **怎么看**：子任务详情里结果下面一块「交付物」，一行一个：文件名、大小、时间。文本（Markdown、CSV、JSON）展开是原文，图片展开显示；HTML、SVG 和别的只给下载。浏览器里能下载；yoyo.app 的窗口里下载不了，换成「在访达里显示」。都能删。
+* **接口**：`GET /api/artifacts?task=`、`GET /api/artifacts/:id`（原文，带对的 `content-type` 和 `content-disposition`，关在沙箱里）、`DELETE /api/artifacts/:id`、`POST /api/artifacts/:id/reveal`，见[管理页](web.md#接口)。
+* **还没做**：顶栏列出全部交付物的一页；Markdown 排版好再显示（现在是原文）。
 
 # 分期
 
@@ -59,8 +58,8 @@ yoyo 是一个常驻进程，两个入口：
 | -- | ---------------------------------------------------------------------------- | ---- |
 | W0 | 工作台外壳、主聊天能打字、心迹/日程/轨迹/设置换样式                          | 已做 |
 | W1 | 子任务：主线程派、子 agent 拆 todo 边做边标、验收后交回主线程、工作台看进度  | 已做 |
-| W2 | 交付物：`deliver`、面板、预览                                                | 提案 |
-| W3 | 工作台里流式显示回复；子任务并行；子任务中途问主人                           | 提案 |
+| W2 | 交付物：`task_deliver`、子任务详情里列出、预览、下载或在访达里显示、删       | 已做 |
+| W3 | 子任务并行（已做）；工作台里流式显示回复；子任务中途问主人                   | 部分 |
 
 # 还没定
 
