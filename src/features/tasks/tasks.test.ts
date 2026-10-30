@@ -12,10 +12,12 @@ import {
   finishTask,
   planTodos,
   progress,
+  relayPrompt,
   resultNote,
   runningTask,
   taskBrief,
   taskDetail,
+  taskNotification,
   taskRow,
   tasksFact,
   updateTodo,
@@ -94,6 +96,19 @@ describe('子任务', () => {
     assert.deepEqual(progress(repos.agentTasks.get(task.id)!), { done: 1, total: 2 });
   });
 
+  test('同一时间只有一项在做：上一项没标完就开始下一项，说清楚是哪项', () => {
+    const { repos, task } = rig();
+    planTodos(repos, task.id, ['一', '二'], NOW);
+    updateTodo(repos, task.id, 1, 'in_progress', undefined, NOW);
+    assert.throws(
+      () => updateTodo(repos, task.id, 2, 'in_progress', undefined, NOW),
+      /第 1 项还在做，先标做完或跳过，再开始第 2 项/,
+    );
+    updateTodo(repos, task.id, 1, 'in_progress', '还在弄', NOW);
+    updateTodo(repos, task.id, 1, 'done', undefined, NOW);
+    assert.equal(updateTodo(repos, task.id, 2, 'in_progress', undefined, NOW).todos[1]?.state, 'in_progress');
+  });
+
   test('交结果：todo 没做完、验收标准没对齐或没满足都交不了，说清楚差什么', () => {
     const { repos, task } = rig();
     planTodos(repos, task.id, ['收集进展', '写成周报'], NOW);
@@ -157,6 +172,34 @@ describe('子任务', () => {
 });
 
 describe('子任务做完以后', () => {
+  test('交给主线程的通知：照 Claude Code 的 <task-notification>，做完带结果和验收，没做成带原因', () => {
+    const { repos, task } = rig();
+    planTodos(repos, task.id, ['写'], NOW);
+    updateTodo(repos, task.id, 1, 'done', undefined, NOW);
+    const done = finishTask(repos, task.id, 'A 上线', CHECKS, NOW);
+    assert.equal(
+      taskNotification(done),
+      [
+        '<task-notification>',
+        '<task-id>1</task-id>',
+        '<status>completed</status>',
+        '<title>整理周报</title>',
+        '<result>\nA 上线\n</result>',
+        '<checks>\n✓ 三个项目都有：A、B、C 各一段\n✓ 每项不超过三行：最长两行\n</checks>',
+        '</task-notification>',
+      ].join('\n'),
+    );
+    assert.match(relayPrompt(done), /<\/task-notification>\n\n你派出去的子任务做完了。/);
+    const other = createAgentTask(repos, { title: '查东西', goal: '查', origin: 'main' }, NOW);
+    repos.agentTasks.update(other.id, { state: 'running' }, NOW.getTime());
+    const failed = failTask(repos, other.id, '没有权限', NOW);
+    assert.match(
+      taskNotification(failed),
+      /<status>failed<\/status>\n<title>查东西<\/title>\n<error>没有权限<\/error>/,
+    );
+    assert.match(relayPrompt(failed), /没做成。用一两句话告诉主人卡在哪/);
+  });
+
   test('写回主线程的话、桌宠报的那一声', () => {
     const { repos, task } = rig();
     planTodos(repos, task.id, ['写'], NOW);

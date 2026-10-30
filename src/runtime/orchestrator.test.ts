@@ -23,8 +23,8 @@ import { resolvePaths } from '../app/paths.ts';
 import { petChatEntries, sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import type { YoyoMemory } from '../brain/memory.ts';
-import type { ScheduleItem } from '../kernel/types.ts';
-import type { Clipboard } from '../ports/index.ts';
+import type { AgentTask, ScheduleItem } from '../kernel/types.ts';
+import type { Clipboard, Repos } from '../ports/index.ts';
 import type { Director } from './director.ts';
 import { drain, enqueue } from './inbox.ts';
 import {
@@ -69,6 +69,8 @@ function orchestratorRig(
     readonly clipboard?: Clipboard;
     readonly model?: LanguageModel | null;
     readonly memory?: YoyoMemory;
+    /** 编排器建好之前先往库里放东西。 */
+    readonly seed?: (repos: Repos) => void;
   } = {},
 ): OrchestratorRig {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
@@ -76,6 +78,7 @@ function orchestratorRig(
   const clock = { now: T0 };
   const logger = memoryLogger();
   const repos = memoryRepos({ now: () => new Date(clock.now) });
+  options.seed?.(repos);
   const paths = resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') });
   const context = createContext({
     store: createMemoryStore({ now: () => clock.now }),
@@ -443,34 +446,62 @@ describe('orchestrator 跑模型', () => {
     await orchestrator.close();
   });
 
-  test('子任务做完、没做成，桌宠各说一声；取消的不说；tasks.notify 关着就只记下不说', async () => {
-    const { orchestrator, calls, repos } = orchestratorRig({ state: { nextWhisper: T0 + 3_600_000 } });
-    const finished = (title: string, state: 'done' | 'failed' | 'cancelled') => {
+  test('子任务结束：叫醒主线程，把 <task-notification> 交给回复的 agent，它的转告由桌宠说出来；取消的不叫醒', async () => {
+    const model = createScriptedModel([
+      { type: 'text', text: '周报整理好了，三个项目都写进去了。' },
+      { type: 'text', text: '资料没查成，得给我那个文档的权限。' },
+    ]);
+    const { orchestrator, calls, repos } = orchestratorRig({ model, state: { nextWhisper: T0 + 3_600_000 } });
+    const finished = (title: string, state: 'done' | 'failed' | 'cancelled', patch: Partial<AgentTask> = {}) => {
       const task = repos.agentTasks.create({ title, goal: '目标', criteria: [], origin: 'main' }, T0);
-      repos.agentTasks.update(task.id, { state, finishedAt: T0 }, T0);
+      repos.agentTasks.update(task.id, { state, finishedAt: T0, ...patch }, T0);
+      orchestrator.relayTask(task.id);
       return task.id;
     };
-    finished('周报', 'done');
-    finished('查资料', 'failed');
+    finished('周报', 'done', { result: 'A 上线\nB 在测' });
+    finished('查资料', 'failed', { error: '没有权限' });
     finished('算了', 'cancelled');
     await orchestrator.tick();
     assert.deepEqual(
       calls.filter((call) => call.startsWith('speak:')),
-      ['speak:「周报」做好啦，结果放在工作台里。', 'speak:「查资料」没做成，原因写在工作台里。'],
+      ['speak:周报整理好了，三个项目都写进去了。', 'speak:资料没查成，得给我那个文档的权限。'],
+    );
+    const first = JSON.stringify(model.doGenerateCalls[0]?.prompt);
+    assert.match(first, /<task-notification>.*<task-id>1<\/task-id>.*<status>completed<\/status>.*<result>.*A 上线/);
+    assert.match(first, /用一两句话把结论告诉主人/);
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[1]?.prompt),
+      /<status>failed<\/status>.*<error>没有权限<\/error>/,
     );
     assert.ok(repos.agentTasks.list().every((task) => task.announcedAt !== null));
     await orchestrator.tick();
-    assert.equal(calls.filter((call) => call.startsWith('speak:')).length, 2, '说过的不再说');
+    assert.equal(calls.filter((call) => call.startsWith('speak:')).length, 2, '转告过的不再说');
+    await orchestrator.close();
+  });
 
-    const quiet = orchestratorRig({ config: { tasks: { notify: false } }, state: { nextWhisper: T0 + 3_600_000 } });
-    const task = quiet.repos.agentTasks.create({ title: '周报', goal: '目标', criteria: [], origin: 'main' }, T0);
-    quiet.repos.agentTasks.update(task.id, { state: 'done', finishedAt: T0 }, T0);
+  test('子任务结束：没配模型就报一声固定的；tasks.notify 关着只记下不说；上次没转告的开始时补上', async () => {
+    const seed = (repos: Repos) => {
+      const task = repos.agentTasks.create({ title: '周报', goal: '目标', criteria: [], origin: 'main' }, T0);
+      repos.agentTasks.update(task.id, { state: 'done', finishedAt: T0 }, T0);
+    };
+    const plain = orchestratorRig({ seed, state: { nextWhisper: T0 + 3_600_000 } });
+    await plain.orchestrator.tick();
+    assert.deepEqual(
+      plain.calls.filter((call) => call.startsWith('speak:')),
+      ['speak:「周报」做好啦，结果放在工作台里。'],
+    );
+
+    const quiet = orchestratorRig({
+      seed,
+      config: { tasks: { notify: false } },
+      state: { nextWhisper: T0 + 3_600_000 },
+    });
     await quiet.orchestrator.tick();
     assert.deepEqual(
       quiet.calls.filter((call) => call.startsWith('speak:')),
       [],
     );
-    assert.notEqual(quiet.repos.agentTasks.get(task.id)?.announcedAt, null);
+    assert.notEqual(quiet.repos.agentTasks.get(1)?.announcedAt, null);
   });
 
   test('右键对话：没配模型就报错；调用方取消就停', async () => {

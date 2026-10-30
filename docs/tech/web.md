@@ -109,7 +109,7 @@ sources:
 
 # 页面
 
-一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
+一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data:`）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
 
 改页面时注意：脚本放在模板字符串里，不能写反引号和 `${`；CSP 不许写 `style` 属性，样式都放样式表，脚本要改样式就改 class 或 `node.style`。
 
