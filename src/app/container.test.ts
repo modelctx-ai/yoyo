@@ -368,6 +368,48 @@ describe('container', () => {
     await off.close();
   });
 
+  test('碎碎念间隔：没配 pace.decision 是固定间隔，借不到 memory.decision；配了是决策的；配得不对记一行、按固定间隔', async () => {
+    const decision = { provider: 'typesafe', model: 'jev-latest', apiKey: 'jev-key' };
+    const plain = await createApp(
+      parseConfig({ stage: 'console', intervalSec: 600, memory: { enabled: true, decision } }),
+      tempPaths(),
+      { logger: memoryLogger() },
+    );
+    assert.equal(plain.pacer.name, 'fixed');
+    assert.deepEqual(
+      await plain.pacer.next({
+        now: 0,
+        tone: 'warm',
+        line: { text: '嗨', kind: 'whisper' },
+        talked: false,
+        unanswered: 1,
+        sinceTalkMs: null,
+      }),
+      {
+        source: 'fixed',
+        ms: 600_000,
+      },
+    );
+    await plain.close();
+
+    const decided = await createApp(parseConfig({ stage: 'console', pace: { decision } }), tempPaths(), {
+      logger: memoryLogger(),
+    });
+    assert.notEqual(decided.pacer.name, 'fixed');
+    await decided.close();
+
+    const logger = memoryLogger();
+    const wrong = await createApp(
+      parseConfig({ stage: 'console', pace: { decision: { provider: 'typesafe', apiKey: 'jev-key' } } }),
+      tempPaths(),
+      { logger },
+    );
+    assert.equal(wrong.pacer.name, 'fixed');
+    assert.ok(logger.lines.some((line) => line.includes('pace.decision 不对')));
+    assert.ok(!logger.lines.join('\n').includes('jev-key'));
+    await wrong.close();
+  });
+
   test('换配置重建时接着用上一个的排期、管理页端口和令牌；端口被占了就随机挑', async () => {
     const first = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger() });
     const web = await first.openWeb();

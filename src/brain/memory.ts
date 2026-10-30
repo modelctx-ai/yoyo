@@ -1,7 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 import {
-  redact,
   type ContextSource,
   type DecisionModel,
   type Entry,
@@ -15,13 +14,13 @@ import {
   type SourceRef,
 } from '@modelctx-ai/ctx';
 import { createMemory } from '@modelctx-ai/ctx-memory';
-import { createDecisionModel, createExtractionModel, type SystemOneSpec } from '@modelctx-ai/ctx-models';
+import { createDecisionModel, createExtractionModel } from '@modelctx-ai/ctx-models';
 import { createSqliteMemoryStore } from '@modelctx-ai/ctx-sqlite';
 
-import type { MemoryConfig, SystemOneConfig } from '../app/config.ts';
-import { errorText } from '../app/log.ts';
+import type { MemoryConfig } from '../app/config.ts';
 import type { Logger } from '../ports/index.ts';
 import { currentTask, type TaskDeps } from './sources.ts';
+import { createSystemOne } from './system-one.ts';
 
 /** 回复用的记忆来源：画像加按最近一条用户话召回的事实。 */
 export const MEMORY_SOURCE = 'memory';
@@ -96,17 +95,6 @@ export function createYoyoMemory(options: YoyoMemoryOptions): YoyoMemory {
   return { memory, store: options.store };
 }
 
-/** 配置里的一节写成 `SystemOneSpec`：空着的项不带。 */
-export function systemOneSpec(config: SystemOneConfig): SystemOneSpec {
-  return {
-    provider: config.provider,
-    model: config.model,
-    ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
-    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-    ...(config.accountId ? { accountId: config.accountId } : {}),
-  };
-}
-
 export interface SystemOneModels {
   readonly decision?: DecisionModel;
   readonly extraction?: ExtractionModel;
@@ -122,18 +110,22 @@ export function createSystemOneModels(
   logger: Logger,
   secrets: readonly string[] = [],
 ): SystemOneModels {
-  function make<T>(key: 'decision' | 'extraction', fallback: string, build: (spec: SystemOneSpec) => T): T | undefined {
-    const section = config[key];
-    if (!section) return undefined;
-    try {
-      return build(systemOneSpec(section));
-    } catch (error) {
-      logger.warn(`config.json 的 memory.${key} 不对：${redact(errorText(error), secrets)}，${fallback}`);
-      return undefined;
-    }
-  }
-  const decision = make('decision', '门控用启发式', createDecisionModel);
-  const extraction = make('extraction', '提取交给 llm 的模型', createExtractionModel);
+  const decision = createSystemOne(
+    config.decision,
+    'memory.decision',
+    '门控用启发式',
+    createDecisionModel,
+    logger,
+    secrets,
+  );
+  const extraction = createSystemOne(
+    config.extraction,
+    'memory.extraction',
+    '提取交给 llm 的模型',
+    createExtractionModel,
+    logger,
+    secrets,
+  );
   return { ...(decision ? { decision } : {}), ...(extraction ? { extraction } : {}) };
 }
 

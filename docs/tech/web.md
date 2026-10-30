@@ -40,7 +40,7 @@ sources:
 
 # 在哪跑
 
-常驻进程启动时由组装根开，只开一次，关闭应用时一起关；`web.enabled` 关掉就不开。它和编排器在同一个进程，直接读编排器的排期（下一句碎碎念、最近一次说话）。记忆没打开时库里也可能有以前记的，管理页照样打开记忆库，能看、能删。[^container] [^daemon]
+常驻进程启动时由组装根开，只开一次，关闭应用时一起关；`web.enabled` 关掉就不开。它和编排器在同一个进程，直接读编排器的排期（下一句碎碎念、这一次间隔是怎么定的、最近一次说话）。记忆没打开时库里也可能有以前记的，管理页照样打开记忆库，能看、能删。[^container] [^daemon]
 
 * 只听 `127.0.0.1`，端口缺省随机（`web.port` 可以固定）。日志记一行地址，不带令牌。
 * 打开的地址是 `http://127.0.0.1:<端口>/#token=<令牌>`，记进 kv 的 `web-url`。
@@ -67,7 +67,7 @@ sources:
 
 | 接口 | 做什么 |
 | --- | --- |
-| `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、最近一次说话、日程和联系人条数、等批准的个数（`approvals`）、是不是在 yoyo.app 的窗口里（`app`）、能不能在访达里显示（`reveal`） |
+| `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、`lastPace`（这一次间隔是怎么定的：`source` 是 `fixed`、`decided`、`fallback`，加隔多少秒 `sec`、挑的档 `option` 和把握 `confidence`，或退回的原因 `reason`，再加一句短说明 `note`；还没说过是 null）、最近一次说话、日程和联系人条数、等批准的个数（`approvals`）、是不是在 yoyo.app 的窗口里（`app`）、能不能在访达里显示（`reveal`） |
 | `GET /api/context?limit=` | 最近的上下文，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）；子任务写回来的那条是 `kind: 'task'`，带编号 `task` 和状态 `state`；批准请求有了结论写回来的是 `kind: 'approval'`，带编号 `approval` 和状态 `state`。缺省 40 条，最多 200 |
 | `GET /api/tasks` | 最近 50 个子任务：编号、标题、状态（`queued`、`running`、`waiting` 等回答、`done`、`failed`、`cancelled`）、谁派的、时间、todo 进度 |
 | `GET /api/tasks/:id` | 一个子任务的全部，加上 `progress` 和最近 300 步过程（`steps`：收到、说、调用、结果）。等回答的带着 `question`、`askedAt`，答过的带 `answer`、`answeredAt`；带着它要批准的事 `approvals`（概要，同 `GET /api/approvals`）。没有回 404 |

@@ -46,7 +46,7 @@ sources:
 | 主人怎么看、改、删               | `facts.close` / `forget`、`core` 的历史    |
 | 存在哪里、和什么共用             | `createSqliteMemoryStore({ database, prefix })` |
 
-和上下文一样：yoyo 不碰记忆的存储结构和判断逻辑，只给配置、主题、节律和界面。接线都在 `src/brain/memory.ts`：`createYoyoMemory`（按 `config.memory` 调 `createMemory`）、`memorySources`（两个来源）、`memorySessions`（记忆读到的日志）、`createSystemOneModels`（决策、提取模型），组装根按 `memory.enabled` 才建。[^memory] [^container]
+和上下文一样：yoyo 不碰记忆的存储结构和判断逻辑，只给配置、主题、节律和界面。接线都在 `src/brain/memory.ts`：`createYoyoMemory`（按 `config.memory` 调 `createMemory`）、`memorySources`（两个来源）、`memorySessions`（记忆读到的日志）、`createSystemOneModels`（决策、提取模型；按配置造 System One 模型的 `systemOneSpec`、`createSystemOne` 在 `system-one.ts`，碎碎念的间隔模型 `pace.decision` 也用它，但不借 `memory.decision`），组装根按 `memory.enabled` 才建。[^memory] [^container]
 
 # 桌宠记什么
 

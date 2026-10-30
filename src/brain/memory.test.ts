@@ -26,12 +26,12 @@ import {
   createYoyoMemory,
   memorySecrets,
   memorySources,
-  systemOneSpec,
   openMemoryStore,
   type YoyoMemory,
 } from './memory.ts';
 import { replyInstructions } from './prompts.ts';
 import { taskSource } from './sources.ts';
+import { systemOneSpec } from './system-one.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 

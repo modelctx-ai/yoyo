@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
 
 import { cacheFile } from '../adapters/voice/fish.ts';
+import { paceOptionsFrom } from '../kernel/pace.ts';
 import { MEMORY_TOPICS, assertDirectorReady, loadConfig, parseConfig, speechReady } from './config.ts';
 
 /** 第一版的 config.example.json（af306de）。 */
@@ -232,6 +233,66 @@ describe('config', () => {
     assert.deepEqual(config.anysearch.command, ['node', 'cli.js', '8080']);
     assert.equal((config as Record<string, unknown>)['extra'], 1);
     assert.equal(parseConfig({ anysearch: { command: 'node cli.js' } }).anysearch.command, undefined);
+  });
+
+  test('pace：缺省四档、把握 0.4、最近 6 条对话；没配决策模型', () => {
+    const { pace } = parseConfig(FIRST);
+    assert.equal(pace.decision, undefined);
+    assert.deepEqual(
+      pace.options.map((option) => [option.id, option.ms]),
+      [
+        ['5m', 300_000],
+        ['15m', 900_000],
+        ['30m', 1_800_000],
+        ['1h', 3_600_000],
+      ],
+    );
+    assert.deepEqual(pace.options, paceOptionsFrom(undefined));
+    assert.equal(pace.minConfidence, 0.4);
+    assert.equal(pace.recent, 6);
+    assert.deepEqual(parseConfig({ pace: null }).pace, pace);
+    assert.deepEqual(parseConfig({ pace: 'fast' }).pace, pace);
+  });
+
+  test('pace 配了：决策模型和 memory.decision 各是各的，档位按秒写', () => {
+    const config = parseConfig({
+      memory: { decision: { provider: 'cloudflare', model: 'clef-flash', accountId: 'acc', apiKey: 'cf-key' } },
+      pace: {
+        decision: { provider: 'typesafe', model: 'jev-latest', apiKey: 'jev-key' },
+        options: [600, '1800', 7200],
+        minConfidence: '0.6',
+        recent: 0,
+      },
+    });
+    assert.equal(config.pace.decision?.provider, 'typesafe');
+    assert.equal(config.pace.decision?.apiKey, 'jev-key');
+    assert.equal(config.memory.decision?.provider, 'cloudflare');
+    assert.deepEqual(
+      config.pace.options.map((option) => option.id),
+      ['10m', '30m', '2h'],
+    );
+    assert.equal(config.pace.minConfidence, 0.6);
+    assert.equal(config.pace.recent, 0);
+    assert.equal(parseConfig({ pace: { decision: 'jev' } }).pace.decision, undefined);
+  });
+
+  test('pace 写错按缺省值：档位去掉不合法的、少于 60 的、重复的；剩下不到两档用缺省；数超出范围按缺省', () => {
+    const fallback = parseConfig({}).pace.options;
+    const trimmed = parseConfig({ pace: { options: [3600, 'x', 30, 900, 900, null, 3600] } }).pace.options;
+    assert.deepEqual(
+      trimmed.map((option) => option.ms),
+      [900_000, 3_600_000],
+    );
+    assert.deepEqual(parseConfig({ pace: { options: [900] } }).pace.options, fallback);
+    assert.deepEqual(parseConfig({ pace: { options: [10, 20] } }).pace.options, fallback);
+    assert.deepEqual(parseConfig({ pace: { options: [] } }).pace.options, fallback);
+    assert.deepEqual(parseConfig({ pace: { options: '300,900' } }).pace.options, fallback);
+    assert.equal(parseConfig({ pace: { minConfidence: 2 } }).pace.minConfidence, 0.4);
+    assert.equal(parseConfig({ pace: { minConfidence: 'x' } }).pace.minConfidence, 0.4);
+    assert.equal(parseConfig({ pace: { recent: -1 } }).pace.recent, 6);
+    assert.equal(parseConfig({ pace: { recent: 99 } }).pace.recent, 6);
+    assert.equal(parseConfig({ pace: { recent: 2.5 } }).pace.recent, 6);
+    assert.equal(parseConfig({ pace: { recent: 'x' } }).pace.recent, 6);
   });
 
   test('memory：缺省关着，六个主题，theta 0.6，衰减 0.5 / 0.55，画像 600，夜里 03:00；模型不配就没有', () => {

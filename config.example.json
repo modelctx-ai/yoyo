@@ -79,6 +79,11 @@
   "context": {
     "keep": 40
   },
+  "pace": {
+    "options": [300, 900, 1800, 3600],
+    "minConfidence": 0.4,
+    "recent": 6
+  },
   "memory": {
     "enabled": false,
     "gate": { "theta": 0.6 },

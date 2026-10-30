@@ -61,6 +61,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .status { display: flex; flex-direction: column; gap: 3px; font-size: 12px; padding: 10px; border-radius: 10px; background: var(--panel); }
 .status .item { display: flex; align-items: center; gap: 8px; color: var(--muted); min-width: 0; }
 .status .item span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status .item.wrap { align-items: flex-start; }
+.status .item.wrap .dot { margin-top: 5px; }
+.status .item.wrap span:last-child { white-space: normal; overflow-wrap: anywhere; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .dot.ok { background: var(--ok); } .dot.off { background: var(--warn); } .dot.run { background: var(--accent); } .dot.fail { background: var(--danger); }
 .quick { display: flex; gap: 6px; }
@@ -576,8 +579,8 @@ function loadStatus() {
     canReveal = Boolean(s.reveal);
     inApp = Boolean(s.app);
     var items = [];
-    function item(state, text) {
-      items.push(h("div", { class: "item" }, [h("span", { class: "dot" + (state === undefined ? "" : state ? " ok" : " off") }), h("span", { text: text })]));
+    function item(state, text, wrap) {
+      items.push(h("div", { class: "item" + (wrap ? " wrap" : "") }, [h("span", { class: "dot" + (state === undefined ? "" : state ? " ok" : " off") }), h("span", { text: text })]));
     }
     if (s.pet) item(s.pet.reachable, s.pet.reachable ? "桌宠连着" : "桌宠没连上");
     else item(undefined, "控制台舞台");
@@ -586,7 +589,7 @@ function loadStatus() {
     item(s.memory.enabled, s.memory.enabled ? "记住了 " + s.memory.facts + " 件事" : "记忆没打开");
     if (s.approvals) item(false, s.approvals + " 件事等你批准");
     if (s.pet && s.pet.work && s.pet.work.task) item(undefined, "在忙：" + s.pet.work.task);
-    if (s.nextWhisper) item(undefined, "下一句碎碎念 " + when(s.nextWhisper));
+    if (s.nextWhisper) item(undefined, "下一句碎碎念 " + when(s.nextWhisper) + (s.lastPace ? " · " + s.lastPace.note : ""), Boolean(s.lastPace));
     fill($("#status"), items, "");
     var mood = !s.pet ? "控制台里" : !s.pet.reachable ? "桌宠没连上" : s.pet.work && s.pet.work.task ? "陪你" + s.pet.work.task : "在桌面上";
     $("#mood").replaceChildren(h("span", { class: "dot " + (s.pet && s.pet.reachable ? "ok" : "off") }), h("span", { text: mood }));
@@ -615,8 +618,17 @@ var TRAIL = {
   "contact-add": "加联系人", "contact-remove": "删联系人", "memory-forget": "忘掉一件事", "memory-retire": "退役一条规矩",
   "memory-core-edit": "改画像", "memory-consolidate": "整理记忆", "config-edit": "改配置", "config-switch": "改开关",
   "approval-ask": "要你批准", "approval-approve": "批准了", "approval-deny": "拒绝了", "approval-expire": "批准过期", "approval-run": "照做了",
-  "task-ask": "子任务提问", "task-answer": "回答了子任务", "delay": "让路", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
+  "task-ask": "子任务提问", "task-answer": "回答了子任务", "delay": "让路", "pace": "定了间隔", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
 };
+
+var PACE_WHY = { error: "没判成", timeout: "超时", unsure: "没把握" };
+
+/** 轨迹里「定了间隔」那一行：隔多久，挑的哪一档，或为什么退回固定间隔。 */
+function paceDetail(item) {
+  var gap = item.sec >= 3600 && item.sec % 3600 === 0 ? item.sec / 3600 + " 小时" : Math.round(item.sec / 60) + " 分钟";
+  if (item.source === "decided") return "隔 " + gap + "（挑了 " + item.option + "）";
+  return "隔 " + gap + "（" + (PACE_WHY[item.reason] || "没判成") + "，按固定间隔）";
+}
 
 /** 整份配置：读到时的指纹，和框里改过没有。开关改了以后，框里没动过就跟着刷新。 */
 var configVersion = "";
@@ -679,7 +691,7 @@ var views = {
         var at = Date.parse(item.at);
         var day = dayOf(at);
         if (day !== lastDay) { nodes.push(h("div", { class: "day", text: day })); lastDay = day; }
-        var detail = item.text || item.title || item.query || item.name || item.until || "";
+        var detail = item.text || item.title || item.query || item.name || item.until || (item.type === "pace" ? paceDetail(item) : "");
         nodes.push(row(clock(at), (TRAIL[item.type] || item.type) + (detail ? "  " + detail : ""), null));
       });
       fill($("#activity-list"), nodes, "还没有记录");

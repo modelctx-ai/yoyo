@@ -11,6 +11,7 @@ import { APPROVAL_EVENT, TASK_EVENT, taskSession, taskSteps } from '../brain/con
 import { ApprovalError, decideApproval } from '../features/approvals/approvals.ts';
 import { artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
 import { TaskError, answerTask, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
+import { paceNote, type PaceDecision, type PaceOptions } from '../kernel/pace.ts';
 import type { AgentTask, Approval, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
@@ -29,7 +30,12 @@ export interface WebDeps {
   readonly memory: MemoryStore;
   readonly host: Pick<PetHost, 'name' | 'workStatus'>;
   /** 编排器的排期：下一句碎碎念、最近一次说话。常驻进程里才有。 */
-  readonly schedule?: () => { readonly nextWhisper: number; readonly lastTalk: number };
+  readonly schedule?: () => {
+    readonly nextWhisper: number;
+    readonly lastTalk: number;
+    /** 最近一次说完以后，下一句的间隔是怎么定的。 */
+    readonly lastPace?: PaceDecision | null;
+  };
   /** 工作台里和 yoyo 聊一句，返回回复。常驻进程里才有。 */
   readonly talk?: (text: string) => Promise<string>;
   /** 子任务交付物的文件；不给就看不了、删不了原文。 */
@@ -170,6 +176,14 @@ export function contextItem(entry: Entry): ContextItem | null {
   return null;
 }
 
+/** 下一句的间隔是怎么定的，给页面看：来源、隔多少秒、挑的档和把握或退回的原因，再加一句短的说明。 */
+export function paceView(pace: PaceDecision, options: PaceOptions): Record<string, unknown> {
+  const base = { source: pace.source, sec: Math.round(pace.ms / 1000), note: paceNote(pace, options) };
+  if (pace.source === 'fixed') return base;
+  if (pace.source === 'decided') return { ...base, option: pace.option, confidence: pace.confidence };
+  return { ...base, reason: pace.reason };
+}
+
 export function createWebApi(deps: WebDeps): (method: string, path: string, body?: unknown) => Promise<ApiResult> {
   const { config, repos, memory } = deps;
   const now = deps.now ?? (() => new Date());
@@ -198,6 +212,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       channel: repos.kv.get('channel-base') !== null,
       mcpServers: Object.keys(config.mcpServers),
       nextWhisper: schedule ? schedule.nextWhisper : null,
+      lastPace: schedule?.lastPace ? paceView(schedule.lastPace, config.pace.options) : null,
       lastTalk: schedule && schedule.lastTalk > 0 ? schedule.lastTalk : null,
       alarms: repos.schedule.list().length,
       contacts: repos.contacts.list().length,
