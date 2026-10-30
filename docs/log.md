@@ -2,6 +2,7 @@
 
 ## 2026-10-30
 
+* **更新** 碎碎念的间隔可以交给决策模型（#34）：配置的选项表加 `pace.decision`、`pace.options`、`pace.minConfidence`、`pace.recent`，`intervalSec` 写明是没判成时的间隔，新加「碎碎念的间隔」一节（交出去什么、`recent: 0`、判不出来怎样、和 `memory.decision` 各配各的）；运行时原则第 1 条写明间隔由 `WhisperPacer` 定、什么时候问、什么时候退回 `intervalSec`，`sources` 加 `brain/pace.ts`；架构的 `kernel`、`ports`、`brain`、组装根和一拍的第 6 步跟上；功能介绍跟上。`config.example.json` 加 `pace`。
 * **更新** [子任务](tech/tasks.md)加「交付物」一节：`task_deliver` 交文件，只能写进自己那个目录（文件名只留最后一段，存时再挡一次），只交给在做的，单个 5 MB、一个子任务 20 个，同名换新，类型按扩展名、HTML 和 SVG 只给下载，写回主线程和 `<task-notification>` 带上交付物，子任务不删、交付物留着、一个个删。工具表、存在哪、命令行表（`yoyo artifact`）、工作台、「还没做」跟上。[工作台](tech/workbench.md)的交付物从提案改成已做，分期 W2 已做、W3 部分；[管理页](tech/web.md)接口表加四条交付物接口和 `status` 的 `app`、`reveal`，CSP 加 `blob:`；[命令原则](tech/cli-principles.md)给 agent 的表加 `artifact`、`search` 加 `files`；数据加 `artifacts/`；架构的端口、`features/tasks`、`storage` 跟上；日常使用的子任务一节和命令行跟上。
 * **更新** [子任务](tech/tasks.md)改成几件一起跑：「怎么跑」写明同时做 `tasks.concurrency` 件、空位马上补、各自取消、退出时在做的都放回排队、共享数据（同时写不会写坏，一模一样的日程不重复加）；工具表的 `task_list`、`task_show` 换成 `yoyo` 工具；命令行表加 `--state`；工作台侧栏、「和 Claude Code 的对应」跟上，「还没做」去掉一次一件。配置的开关表和选项表加 `tasks.concurrency`，日常使用、架构跟上。
 * **更新** [命令原则](tech/cli-principles.md)加第 10、11 条和「给 agent 用」一节：命令行是 yoyo 对外的能力层，标了 `agent` 的只读动作经 `YOYO_AGENT=1` 给 agent，yoyo 自己的 agent 经 `yoyo` 工具另起进程调；给 agent 的命令表，新加的 `yoyo search`。架构的目录表加 `cli/search.ts`、`app/cli.ts`，发版的启动脚本加 `YOYO_CLI`，日常使用的常用命令加 `search`。

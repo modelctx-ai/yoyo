@@ -10,6 +10,11 @@
     }
   },
   "intervalSec": 300,
+  "pace": {
+    "options": [300, 900, 1800, 3600],
+    "minConfidence": 0.4,
+    "recent": 6
+  },
   "speech": {
     "baseUrl": "https://api.fish.audio/v1/tts",
     "apiKey": "",

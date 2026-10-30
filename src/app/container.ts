@@ -41,6 +41,7 @@ import {
 } from '../brain/memory.ts';
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
+import { createWhisperPacer, recentLines } from '../brain/pace.ts';
 import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
 import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
@@ -57,6 +58,7 @@ import type {
   Transcriber,
   UrlOpener,
   WebSearch,
+  WhisperPacer,
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
 import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
@@ -97,6 +99,8 @@ export interface AppServices {
   readonly harness: Harness;
   /** 舞台上的动作：说、听、提醒、预合成、压缩。 */
   readonly director: Director;
+  /** 说完一句碎碎念以后定下一句隔多久：配了 `pace.decision` 问决策模型，没配按 `intervalSec`。 */
+  readonly pacer: WhisperPacer;
   /** 什么时候、在哪个会话上跑一轮：拍子、让路、收件箱、到点，模型经它交给 harness。 */
   readonly orchestrator: YoyoOrchestrator;
 }
@@ -274,6 +278,14 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   // 碎碎念和回复都是 `record: false`：运行不写 `ctx.run.*`，不占会话，崩溃也没有断掉的运行要恢复，所以这里不配 `owner`，也不 `recover`。
   // 以后打开 `record` 时要做两件事：createYoyoOrchestrator 里的 createOrchestrator 配 `owner: 'yoyo'`（常驻进程和命令行共用一个库），
   // 并在 `start()` 和第一次 `submit` 之前 `await orchestrator.recover()`，否则崩溃留下的未结束运行会让会话一直 `session_busy`。
+  const pacer = use('pacer', () =>
+    createWhisperPacer(config, {
+      logger,
+      work: () => host.workStatus(),
+      recent: (limit) => recentLines(context.store, context.session, limit),
+      secrets: [config.llm.apiKey],
+    }),
+  );
   const orchestrator = use('orchestrator', () =>
     createYoyoOrchestrator({
       config,
@@ -287,6 +299,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       director,
       model,
       memory,
+      pacer,
       ...(factSources ? { factSources } : {}),
       ...(overrides.resume?.schedule ? { state: overrides.resume.schedule } : {}),
     }),
@@ -355,6 +368,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     memory,
     harness,
     director,
+    pacer,
     orchestrator,
     tasks,
     openChannel() {

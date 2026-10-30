@@ -92,11 +92,11 @@ flowchart TB
 
 | 目录 | 内容 |
 | --- | --- |
-| `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路、气泡时长和记录类型。不做 IO |
-| `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`（macOS 上还能在访达里显示）、`WebSearch`、`Repos`、`ArtifactFiles`（交付物的文件）、`Logger` |
+| `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路和间隔档位、气泡时长和记录类型。不做 IO |
+| `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`（macOS 上还能在访达里显示）、`WebSearch`、`Repos`、`ArtifactFiles`（交付物的文件）、`WhisperPacer`（碎碎念说完以后定下一句隔多久）、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换，`YOYO_APP` 指出所在的 yoyo.app）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问）、`tasks`（子任务的规则：开、拆 todo、标状态、交文件、交结果，和给人、给模型看的文字；子 agent 类型） |
-| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`pace.ts`（碎碎念的间隔：按 `intervalSec`，或问决策模型挑一档）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现；`artifacts.ts` 是交付物的文件（`~/.yoyo/artifacts/`） |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台同时做几件，结果写回主线程，见[子任务](tasks.md)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
@@ -105,7 +105,7 @@ flowchart TB
 | `src/app/cli.ts` | agent 的 `yoyo` 工具怎么跑命令行：另起 Node 进程、`YOYO_AGENT=1`、超时和输出上限 |
 | `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
 | `src/app/update.ts` | yoyo.app 的自我更新：从 GitHub Release 取最新版本、下载校验 dmg、取出新的 app 交给 `swap.sh`，见[发版](release.md#app-内更新) |
-| `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
+| `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，碎碎念的间隔，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
 | `src/pet.ts` | 桌宠入口：按 `pet.menu` 设好右键菜单的环境变量，再加载 dsh-pet 的独立模式入口 |
 | `patches/` | npm 上 dsh-pet 的补丁，`pnpm install` 时打上 |
@@ -143,7 +143,7 @@ flowchart LR
 3. 取走收件箱里的请求：命令、菜单和按键交来的「听一句」「碎碎念」。
 4. 到点的闹钟和任务，由导演提醒；子任务结束、结果写回主会话以后排进来的，叫醒主线程把 `<task-notification>` 交给回复的 agent 跑一轮，导演说出它的转告（`tasks.notify`），见[子任务](tasks.md#回到主线程)。
 5. `memes.enabled` 打开、离下一句日常碎碎念还有 20 秒以上，就让导演去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
-6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。
+6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。说出口了，下一句隔多久交给 `WhisperPacer`：按 `intervalSec`，或者配了 `pace.decision` 时问决策模型，见[运行时原则](runtime-principles.md#什么时候开口)。
 7. 配了 `context.compactAt` 时，每 10 分钟最多让导演看一次要不要压缩；压一次最多等 60 秒，超时这次就不压。
 8. 打开记忆时：这一拍写过用户话或回复（听到一句、桌宠对话并进新条目），就在后台门控一次，不等；上一次还没完就留到下一拍。
 9. 打开记忆时：过了 `memory.consolidateAt`、今天没整理过、30 分钟没对话、有待处理的笔记，就在后台整理一次，最多 10 分钟。见[记忆](memory.md)。

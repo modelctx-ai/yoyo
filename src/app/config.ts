@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { z } from 'zod';
 
+import { DEFAULT_PACE_SEC, paceOptions } from '../kernel/pace.ts';
+
 /**
  * config.json 的结构。和旧代码一样宽松，旧配置原样可用：
  * - 所有键都有缺省值，认不出的键保留不报错；整段写成 null（或不是对象）当没写。
@@ -249,11 +251,33 @@ const memory = z.looseObject({
   consolidateAt: clockTime('03:00'),
 });
 
+/** 碎碎念间隔的候选档（秒）：数字可以写成字符串，整理成档位见 `paceOptions`；不是数组按缺省四档。 */
+const paceSeconds = z
+  .preprocess((value) => (Array.isArray(value) ? value : undefined), z.array(z.unknown()).optional())
+  .transform((items) =>
+    paceOptions(
+      items === undefined ? DEFAULT_PACE_SEC : items.map((item) => (textOf(item)?.trim() ? Number(item) : Number.NaN)),
+    ),
+  );
+
+/** 说完一句碎碎念以后隔多久说下一句：配了决策模型就按上下文挑一档，没配按 `intervalSec`。 */
+const pace = z.looseObject({
+  /** System One 的决策模型（例如 TypeSafe 的 Jev）。不配就按 `intervalSec`；和 `memory.decision` 各配各的。 */
+  decision: systemOne,
+  /** 候选的间隔，秒，至少两档。 */
+  options: paceSeconds,
+  /** 挑中那档的概率低于它，这一次按 `intervalSec`。 */
+  minConfidence: unit(0.4),
+  /** 最近几条对话原文一起交给决策模型；0 是只交时间、有没有回应这些。 */
+  recent: z.coerce.number().int().min(0).max(40).catch(6).default(6),
+});
+
 export const configSchema = z.looseObject({
   /** `dsh-pet` 驱动桌宠；`console` 只在终端打印，用来在没有桌宠的机器上调试。 */
   stage: z.enum(['dsh-pet', 'console']).catch('dsh-pet').default('dsh-pet'),
   pet: z.preprocess(objectOrNothing, pet.prefault({})),
   intervalSec: finite(300),
+  pace: z.preprocess(objectOrNothing, pace.prefault({})),
   speech: z.preprocess(objectOrNothing, speech.prefault({})),
   llm: z.preprocess(objectOrNothing, llm.prefault({})),
   listen: z.preprocess(objectOrNothing, listen.prefault({})),
@@ -292,6 +316,7 @@ export type WebConfig = Config['web'];
 export type TasksConfig = Config['tasks'];
 export type MemoryConfig = Config['memory'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
+export type PaceConfig = Config['pace'];
 
 function describeIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join('.') || '(根)'}：${issue.message}`).join('；');

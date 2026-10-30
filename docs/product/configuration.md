@@ -54,7 +54,11 @@ status: stable
 | `pet.id`、`pet.surface`                    | `main`、`desktop`                                | 哪一只、哪一端；不同的 `pet.id` 各有一份对话记忆                                                    |
 | `pet.menu.hide`                            | `["open-site", "show-balance", "whisper"]`       | 藏起来的桌宠自带菜单项，写 `[]` 全留着；见[右键菜单](#右键菜单)                                     |
 | `pet.menu.top`                             | `true`                                           | yoyo 的菜单项放第一层；`false` 收进「更多」                                                         |
-| `intervalSec`                              | `300`                                            | 日常碎碎念的间隔，最少 60                                                                           |
+| `intervalSec`                              | `300`                                            | 日常碎碎念的间隔，最少 60；配了 `pace.decision` 时是没判成时的间隔                                  |
+| `pace.decision`                            | 不写                                             | System One 的决策模型，按这一刻的情况挑下一句碎碎念隔多久；见[碎碎念的间隔](#碎碎念的间隔)          |
+| `pace.options`                             | `[300, 900, 1800, 3600]`                         | 能挑的间隔（秒），至少两档；少于 60 的丢掉，不到两档用缺省                                          |
+| `pace.minConfidence`                       | `0.4`                                            | 挑中那档的把握低于它，这一次按 `intervalSec`                                                        |
+| `pace.recent`                              | `6`                                              | 最近几句对话原文一起交给决策模型，0 到 40；`0` 只交时间、有没有回应这些                             |
 | `speech.apiKey`、`speech.referenceId`      | 空                                               | Fish Audio 的密钥和声音；驱动桌宠时必填，控制台模式没填就只出字                                     |
 | `speech.baseUrl`、`speech.model`           | `https://api.fish.audio/v1/tts`、`s2.1-pro-free` | Fish Audio 的接口和模型                                                                             |
 | `speech.autoplay`                          | `true`                                           | `false` 只出字，不放语音                                                                            |
@@ -230,6 +234,25 @@ sandbox:
 * 缺省能读的文件服务器照样能读，包括写着密钥的 `config.json` 和对话记忆所在的 `yoyo.db`。不想让它读，就写进 `filesystem.denyRead`。
 * 服务器 `env` 里的密钥照样交给它。
 * 它能连的域名上，它想发什么都能发。
+
+# 碎碎念的间隔
+
+不配的话，日常碎碎念按 `intervalSec` 隔一样久。配了 `pace.decision`，每说完一句，yoyo 把这一刻的情况交给决策模型，从 `pace.options` 里挑下一句隔多久：你刚回过话、在闲聊，就隔短一点；在专心做事、连着几句没理、夜深了，就隔长一点。
+
+```json
+{
+  "pace": {
+    "decision": { "provider": "typesafe", "model": "jev-latest", "apiKey": "<令牌>" },
+    "options": [300, 900, 1800, 3600]
+  }
+}
+```
+
+* 交给决策模型的是：现在几点、刚说的那句、你有没有回应、连着几句没人理、离上次说话多久、桌宠看到你在做什么，和最近 `pace.recent` 句对话原文。不想把原文交出去就写 `"recent": 0`。
+* 30 秒内有对话就顺延、没说成一分钟后再试，这些照旧。
+* 判不出来（模型出错、10 秒没回、把握低于 `pace.minConfidence`）这一句就按 `intervalSec`，出错只记一行。`provider` 是 `cloudflare` 时要写 `accountId`；写得不对启动时记一行，按 `intervalSec`。
+* 和 `memory.decision` 各配各的：只配了记忆的，碎碎念的间隔不变。
+* 密钥只留在本机，报错和记录里都抹掉。每次挑的结果记在行为里（`pace`）。
 
 # 记忆
 

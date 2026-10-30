@@ -568,7 +568,7 @@ var TRAIL = {
   "listen-request": "听一句", "search": "搜索", "schedule-add": "加日程", "schedule-remove": "删日程",
   "contact-add": "加联系人", "contact-remove": "删联系人", "memory-forget": "忘掉一件事", "memory-retire": "退役一条规矩",
   "memory-core-edit": "改画像", "memory-consolidate": "整理记忆", "config-edit": "改配置", "config-switch": "改开关",
-  "delay": "让路", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
+  "delay": "让路", "pace": "定下一句的间隔", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
 };
 
 /** 整份配置：读到时的指纹，和框里改过没有。开关改了以后，框里没动过就跟着刷新。 */

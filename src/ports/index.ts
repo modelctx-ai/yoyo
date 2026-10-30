@@ -2,6 +2,7 @@
  * 应用依赖的外部能力，只有接口。实现放在 `src/adapters/`，由 `src/app/container.ts` 组装。
  * 换平台、换服务商、写测试替身，都只需要另给一份实现。
  */
+import type { PaceDecision, PaceInput } from '../kernel/pace.ts';
 import type {
   ActivityEvent,
   ActivityRecord,
@@ -210,4 +211,12 @@ export interface Repos {
   readonly tasks: TaskRepo;
   readonly agentTasks: AgentTaskRepo;
   readonly artifacts: ArtifactRepo;
+}
+
+// ---------- 碎碎念的间隔 ----------
+
+/** 说完一句碎碎念以后，决定隔多久说下一句。不抛错：没判成就返回 `fallback`。 */
+export interface WhisperPacer {
+  readonly name: string;
+  next(input: PaceInput, signal?: AbortSignal): Promise<PaceDecision>;
 }

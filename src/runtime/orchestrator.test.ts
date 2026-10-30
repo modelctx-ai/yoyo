@@ -24,7 +24,8 @@ import { petChatEntries, sessionFor, yoyoProjection } from '../brain/context.ts'
 import { createYoyoHarness } from '../brain/harness.ts';
 import type { YoyoMemory } from '../brain/memory.ts';
 import type { AgentTask, ScheduleItem } from '../kernel/types.ts';
-import type { Clipboard, Repos } from '../ports/index.ts';
+import type { PaceDecision, PaceInput } from '../kernel/pace.ts';
+import type { Clipboard, Repos, WhisperPacer } from '../ports/index.ts';
 import type { Director } from './director.ts';
 import { drain, enqueue } from './inbox.ts';
 import {
@@ -40,7 +41,7 @@ import {
   memeDue,
   memeIdle,
   nextAfterSpeak,
-  whisperIntervalMs,
+  paceInput,
   whisperStep,
   type ScheduleState,
   type YoyoOrchestrator,
@@ -69,6 +70,7 @@ function orchestratorRig(
     readonly clipboard?: Clipboard;
     readonly model?: LanguageModel | null;
     readonly memory?: YoyoMemory;
+    readonly pacer?: WhisperPacer;
     /** 编排器建好之前先往库里放东西。 */
     readonly seed?: (repos: Repos) => void;
   } = {},
@@ -97,6 +99,7 @@ function orchestratorRig(
     director: fakeDirector(calls, options.director),
     model: options.model ?? null,
     ...(options.memory ? { memory: options.memory } : {}),
+    ...(options.pacer ? { pacer: options.pacer } : {}),
     clock: () => clock.now,
     state: { nextWhisper: T0, ...options.state },
   });
@@ -113,13 +116,6 @@ describeOrchestratorContract(
 );
 
 describe('orchestrator 节奏', () => {
-  test('碎碎念间隔：至少一分钟，没写或写错按 5 分钟', () => {
-    assert.equal(whisperIntervalMs(300), 300_000);
-    assert.equal(whisperIntervalMs(10), 60_000);
-    assert.equal(whisperIntervalMs(0), 300_000);
-    assert.equal(whisperIntervalMs(Number.NaN), 300_000);
-  });
-
   test('对话一出现，碎碎念就顺延到结束后 30 秒，再说话就再顺延', () => {
     assert.deepEqual(whisperStep(1_000, 900, 999), { kind: 'wait' });
     assert.deepEqual(whisperStep(1_000, 900, 1_000), { kind: 'delay', until: 900 + 30_000 });
@@ -296,6 +292,92 @@ describe('orchestrator 一拍', () => {
     await orchestrator.tick();
     assert.equal(spoken.length, 2);
     assert.equal(state.nextWhisper, T0 + WHISPER_RETRY_MS + 300_000);
+  });
+
+  test('说完一句交给定间隔的：按它定的排下一句，记一笔；让路照旧叠上去', async () => {
+    const inputs: PaceInput[] = [];
+    const decided: PaceDecision = { source: 'decided', ms: 1_800_000, option: '30m', confidence: 0.82 };
+    const pacer: WhisperPacer = {
+      name: 'spy',
+      next: async (input) => {
+        inputs.push(input);
+        return decided;
+      },
+    };
+    const { orchestrator, state, repos, clock } = orchestratorRig({ pacer });
+    await orchestrator.tick();
+    assert.equal(state.nextWhisper, T0 + 1_800_000);
+    assert.deepEqual(state.lastPace, decided);
+    assert.deepEqual(inputs[0], {
+      now: T0,
+      tone: 'lively',
+      line: { text: '我在呢', kind: 'whisper' },
+      talked: false,
+      unanswered: 1,
+      sinceTalkMs: null,
+    });
+    const record = repos.activity.list(5).at(-1);
+    assert.deepEqual(
+      [record?.type, record?.['source'], record?.['sec'], record?.['option'], record?.['confidence']],
+      ['pace', 'decided', 1800, '30m', 0.82],
+    );
+
+    // 第二句还是没人理；第三句之前主人说过话，从头数
+    clock.now = state.nextWhisper;
+    await orchestrator.tick();
+    assert.equal(inputs[1]?.unanswered, 2);
+    state.lastTalk = clock.now + 1;
+    clock.now = state.nextWhisper = clock.now + 60_000;
+    await orchestrator.tick();
+    assert.equal(state.nextWhisper, clock.now + 1_800_000);
+    assert.equal(inputs[2]?.unanswered, 1);
+    assert.equal(inputs[2]?.sinceTalkMs, 59_999);
+  });
+
+  test('没判成退回 intervalSec 也记一笔；按 intervalSec 的不记；没说出口、没说成都不问', async () => {
+    let decision: PaceDecision = { source: 'fallback', ms: 300_000, reason: 'timeout' };
+    let asked = 0;
+    const pacer: WhisperPacer = {
+      name: 'spy',
+      next: async () => {
+        asked++;
+        return decision;
+      },
+    };
+    const rig = orchestratorRig({ pacer });
+    await rig.orchestrator.tick();
+    assert.equal(rig.state.nextWhisper, T0 + 300_000);
+    const record = rig.repos.activity.list(5).at(-1);
+    assert.deepEqual([record?.type, record?.['source'], record?.['reason']], ['pace', 'fallback', 'timeout']);
+    decision = { source: 'fixed', ms: 300_000 };
+    rig.clock.now = rig.state.nextWhisper;
+    const before = rig.repos.activity.list(50).length;
+    await rig.orchestrator.tick();
+    assert.equal(rig.repos.activity.list(50).length, before);
+
+    const silent = orchestratorRig({ pacer, director: { choose: async () => null } });
+    await silent.orchestrator.tick();
+    assert.equal(silent.state.nextWhisper, T0 + 300_000);
+    const failing = orchestratorRig({
+      pacer,
+      director: {
+        speak: async () => {
+          throw new Error('拿不到桌宠占用锁');
+        },
+      },
+    });
+    await failing.orchestrator.tick();
+    assert.equal(failing.state.nextWhisper, T0 + WHISPER_RETRY_MS);
+    assert.equal(asked, 2, '只有说出口的两句问过');
+  });
+
+  test('连着几句没人回应：念完有回应清零；上一句之后有过对话从这句重新数', () => {
+    const line = { text: '在吗', tone: 'calm', cue: '', action: '', kind: 'whisper' } as const;
+    const base = { lastTalk: 0, unanswered: 3, whisperedAt: 1_000 };
+    assert.equal(paceInput({ line, talked: false }, base, 5_000).unanswered, 4);
+    assert.equal(paceInput({ line, talked: true }, base, 5_000).unanswered, 0);
+    assert.equal(paceInput({ line, talked: false }, { ...base, lastTalk: 2_000 }, 5_000).unanswered, 1);
+    assert.equal(paceInput({ line, talked: false }, { ...base, lastTalk: 2_000 }, 5_000).sinceTalkMs, 3_000);
   });
 
   test('收件箱里的请求出错照旧：只记日志，不动下一句碎碎念的时间', async () => {
