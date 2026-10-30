@@ -43,6 +43,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 9px 10px; cursor: pointer; text-align: left; color: var(--soft-text); }
 .nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item .count { margin-left: auto; min-width: 20px; padding: 0 7px; border-radius: 999px; background: var(--warm-soft); color: var(--warm); font-size: 12px; font-style: normal; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
 .nav-item[aria-current="page"] { background: var(--panel); color: var(--accent-strong); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 30, 60, .06); }
 .section-title { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 1px; padding: 18px 10px 6px; }
 .section-title .count { margin-left: auto; font-weight: 400; letter-spacing: 0; }
@@ -86,6 +87,17 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .card.ask .question { white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; }
 .card.ask textarea { min-height: 84px; }
 .card.ask .acts { display: flex; justify-content: flex-end; margin-top: 8px; }
+.apv { display: flex; flex-direction: column; gap: 12px; }
+.apv-group { display: flex; flex-direction: column; gap: 12px; }
+.apv-head { display: flex; gap: 10px; align-items: flex-start; }
+.apv-head .what { flex: 1; min-width: 0; font-weight: 600; word-break: break-word; }
+.apv-head .side-note { flex: none; padding-top: 3px; }
+.apv .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.apv .param { display: flex; flex-direction: column; gap: 4px; }
+.apv .param .k { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 1px; }
+.apv .preview { margin: 0; }
+.apv .why { color: var(--muted); font-size: 13px; }
+.apv.settled { opacity: .88; }
 .card.pending { background: var(--side); border-style: dashed; color: var(--muted); }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .card-head .side-note { margin-left: auto; }
@@ -239,6 +251,7 @@ form.inline input[name="title"], form.inline input[name="name"], form.inline inp
   .msg { max-width: 94%; } .event { margin-left: 0; max-width: 100%; }
   .composer .keys { display: none; }
   .row { flex-wrap: wrap; } .row .who { width: auto; }
+  .apv-head { flex-wrap: wrap; } .apv-head .side-note { flex-basis: 100%; padding-top: 0; }
 }
 `;
 
@@ -260,6 +273,7 @@ const ICONS: Readonly<Record<string, string>> = {
   doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
   image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m21 16-5-5-8 8"/>',
   file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  shield: '<path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-4"/>',
 };
 
 function icon(name: string): string {
@@ -374,7 +388,7 @@ var DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 
 // ---- 对话 ----
 
-var thread = { signature: "", pending: false, query: "", tasks: "" };
+var thread = { signature: "", pending: false, query: "", tasks: "", approvals: "" };
 var VIA = { "dsh-pet": "桌宠对话" };
 var TASK_STATES = { queued: "排队", running: "在做", waiting: "等回答", done: "做完", failed: "没做成", cancelled: "取消了" };
 var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
@@ -387,6 +401,14 @@ var canReveal = false;
 var inApp = false;
 /** 最近的子任务，按编号：对话里的卡片据此显示进度 */
 var taskIndex = {};
+/** 待批准：最近一次取回来的列表、按编号的摘要、展开了哪几条、取回来的完整参数 */
+var approvalList = [];
+var approvalIndex = {};
+var approvalOpen = {};
+var approvalDetails = {};
+var APPROVAL_STATES = { pending: "等批准", approved: "批准了", denied: "拒绝了", expired: "过期了" };
+var TOOL_LABELS = { read: "读文件", write: "写文件", edit: "改文件", bash: "跑命令" };
+var PARAM_LABELS = { path: "路径", content: "内容", old: "原文", "new": "换成", all: "每处都换", command: "命令", timeout: "最长几秒", offset: "从第几行", limit: "读几行" };
 var factFilter = "";
 var memoryFacts = [];
 var TOPICS = { owner: "主人", work: "工作", people: "身边的人", routine: "作息", taste: "喜好", fix: "纠正" };
@@ -451,14 +473,31 @@ function taskResultCard(item) {
   return eventRow(kind, iconName, lines[0], detail, null, item.text, function () { if (item.task) openTaskView(item.task); });
 }
 
+/** yoyo 想做一件要批准的事：还在等就提醒去批，批过了写结论。点开去「待批准」 */
+function approvalAskCard(event) {
+  var item = approvalIndex[event.id];
+  var who = event.task ? "子任务 #" + event.task + " 想做的" : "yoyo 想做的";
+  var pending = !item || item.state === "pending";
+  var kind = !item || item.state === "pending" ? "ask" : item.state === "approved" ? "done" : "failed";
+  return eventRow(kind, "shield", "要你批准：" + (event.text || ""), who + (pending ? " · 在「待批准」里点批准或拒绝" : ""), item ? APPROVAL_STATES[item.state] : "", event.text || "", function () { show("approvals"); });
+}
+
+/** 批准请求有了结论，写回主线程的那一条 */
+function approvalResultCard(item) {
+  var lines = item.text.split("\n");
+  var detail = lines.slice(1).join("\n").replace(/^结果：\n?/, "").replace(/\*\*/g, "");
+  var kind = item.state === "approved" ? "done" : "failed";
+  return eventRow(kind, item.state === "approved" ? "check" : "cross", lines[0], detail, null, item.text, function () { show("approvals"); });
+}
+
 /** 对话和新加的日程按时间排在一起，隔了一刻钟以上就插一行时间 */
 function renderThread(items, events, force) {
   var merged = items.map(function (item) { return { at: item.at, item: item }; });
   events.forEach(function (event) {
-    if (event.type === "schedule-add" || event.type === "task-add") merged.push({ at: Date.parse(event.at), event: event });
+    if (event.type === "schedule-add" || event.type === "task-add" || event.type === "approval-ask") merged.push({ at: Date.parse(event.at), event: event });
   });
   merged.sort(function (a, b) { return a.at - b.at; });
-  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0) + ":" + thread.tasks;
+  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0) + ":" + thread.tasks + ":" + thread.approvals;
   if (!force && signature === thread.signature) return;
   thread.signature = signature;
   var box = $("#thread");
@@ -468,8 +507,8 @@ function renderThread(items, events, force) {
   merged.forEach(function (entry) {
     if (entry.at - last > 15 * 60000) nodes.push(h("div", { class: "when", text: when(entry.at) }));
     last = entry.at;
-    if (entry.item) nodes.push(entry.item.kind === "task" ? taskResultCard(entry.item) : message(entry.item));
-    else nodes.push(entry.event.type === "task-add" ? taskAddedCard(entry.event) : alarmCard(entry.event));
+    if (entry.item) nodes.push(entry.item.kind === "task" ? taskResultCard(entry.item) : entry.item.kind === "approval" ? approvalResultCard(entry.item) : message(entry.item));
+    else nodes.push(entry.event.type === "task-add" ? taskAddedCard(entry.event) : entry.event.type === "approval-ask" ? approvalAskCard(entry.event) : alarmCard(entry.event));
   });
   var inner = $("#thread-inner");
   fill(inner, nodes, "还没聊过。在下面打一句话，或者右键桌宠的「对话」。");
@@ -545,6 +584,7 @@ function loadStatus() {
     item(Boolean(s.llm.model), s.llm.model ? "模型 " + s.llm.model : "没配模型");
     if (s.pet) item(s.channel, s.channel ? "右键对话由 yoyo 回答" : "右键对话没接上");
     item(s.memory.enabled, s.memory.enabled ? "记住了 " + s.memory.facts + " 件事" : "记忆没打开");
+    if (s.approvals) item(false, s.approvals + " 件事等你批准");
     if (s.pet && s.pet.work && s.pet.work.task) item(undefined, "在忙：" + s.pet.work.task);
     if (s.nextWhisper) item(undefined, "下一句碎碎念 " + when(s.nextWhisper));
     fill($("#status"), items, "");
@@ -574,7 +614,8 @@ var TRAIL = {
   "listen-request": "听一句", "search": "搜索", "schedule-add": "加日程", "schedule-remove": "删日程",
   "contact-add": "加联系人", "contact-remove": "删联系人", "memory-forget": "忘掉一件事", "memory-retire": "退役一条规矩",
   "memory-core-edit": "改画像", "memory-consolidate": "整理记忆", "config-edit": "改配置", "config-switch": "改开关",
-  "delay": "让路", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
+  "approval-ask": "要你批准", "approval-approve": "批准了", "approval-deny": "拒绝了", "approval-expire": "批准过期", "approval-run": "照做了",
+  "task-ask": "子任务提问", "task-answer": "回答了子任务", "delay": "让路", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
 };
 
 /** 整份配置：读到时的指纹，和框里改过没有。开关改了以后，框里没动过就跟着刷新。 */
@@ -584,7 +625,10 @@ var configDirty = false;
 var views = {
   chat: { title: "和 yoyo", sub: "桌宠上聊的、语音说的、这里打的，都在这一条里", load: function () {
     // 先拿子任务：对话里派出去的那张卡片要显示进度
-    return Promise.all([loadTasks().catch(function () {}).then(function () { return loadThread(false); }), loadStatus()]);
+    return Promise.all([Promise.all([loadTasks().catch(function () {}), loadApprovals().catch(function () {})]).then(function () { return loadThread(false); }), loadStatus()]);
+  } },
+  approvals: { title: "待批准", sub: "yoyo 想做、要你点头的事：读写文件、跑命令", load: function () {
+    return loadApprovals();
   } },
   task: { title: "子任务", sub: "yoyo 派到后台的事", load: function () {
     if (!openTask) return Promise.resolve();
@@ -800,6 +844,116 @@ function sizeLabel(bytes) {
   return (bytes / 1048576).toFixed(1).replace(/\.0$/, "") + " MB";
 }
 
+/** 取回批准请求的列表：更新侧栏的个数和对话里卡片的状态，在「待批准」页就重画 */
+function loadApprovals() {
+  return api("GET", "/api/approvals").then(function (list) {
+    approvalList = list;
+    approvalIndex = {};
+    list.forEach(function (item) { approvalIndex[item.id] = item; });
+    var waiting = list.filter(function (item) { return item.state === "pending"; }).length;
+    var count = $("#approval-count");
+    count.textContent = String(waiting);
+    count.hidden = waiting === 0;
+    thread.approvals = list.map(function (item) { return item.id + item.state; }).join(",");
+    if (current === "approvals") renderApprovals();
+  });
+}
+
+/** 参数摊开：每个字段一块，内容、原文、命令原样放进去 */
+function paramsNode(input) {
+  var rows = [];
+  if (input && typeof input === "object") {
+    Object.keys(input).forEach(function (key) {
+      var value = input[key];
+      var text = typeof value === "string" ? value : JSON.stringify(value);
+      rows.push(h("div", { class: "param" }, [h("div", { class: "k", text: PARAM_LABELS[key] || key }), h("pre", { class: "preview", text: text })]));
+    });
+  } else {
+    rows.push(h("pre", { class: "preview", text: String(input) }));
+  }
+  return h("div", { class: "params" }, rows);
+}
+
+function reloadApprovals() {
+  loadApprovals().catch(fail);
+  loadTasks().catch(function () {});
+  if (current === "task") views.task.load().catch(function () {});
+  loadStatus().catch(function () {});
+}
+
+function decide(item, verdict, button, other) {
+  button.disabled = true;
+  other.disabled = true;
+  api("POST", "/api/approvals/" + item.id + "/" + verdict, {}).then(function () {
+    toast(verdict === "approve" ? "批准了，yoyo 马上照做" : "拒绝了，不做");
+    reloadApprovals();
+  }, function (error) {
+    button.disabled = false;
+    other.disabled = false;
+    fail(error);
+    reloadApprovals();
+  });
+}
+
+/** 一条批准请求：工具、摘要、谁要的；能展开看完整参数；等批准的有「批准」「拒绝」，批过的写结论和结果 */
+function approvalCard(item, redraw) {
+  var open = Boolean(approvalOpen[item.id]);
+  var pending = item.state === "pending";
+  var who = item.task ? "子任务 #" + item.task : "yoyo";
+  var head = h("div", { class: "apv-head" }, [
+    h("span", { class: "tag work", text: TOOL_LABELS[item.tool] || item.tool }),
+    h("div", { class: "what", text: item.summary }),
+    h("span", { class: "side-note", text: who + " · " + when(item.createdAt) }),
+  ]);
+  var parts = [head];
+  if (!pending) {
+    parts.push(h("div", { class: "why" }, [h("span", { class: "badge " + (item.state === "approved" ? "done" : item.state === "denied" ? "failed" : "waiting"), text: APPROVAL_STATES[item.state] }), document.createTextNode(item.note ? " " + item.note : "")]));
+  }
+  var toggle = h("button", { class: "plain", type: "button", "aria-expanded": String(open), text: open ? "收起参数" : (pending ? "看完整参数" : "看参数和结果"), onclick: function () {
+    approvalOpen[item.id] = !open;
+    if (!open && !approvalDetails[item.id]) {
+      api("GET", "/api/approvals/" + item.id).then(function (detail) { approvalDetails[item.id] = detail; redraw(); }, fail);
+    }
+    redraw();
+  } });
+  var acts = [toggle];
+  if (pending) {
+    var deny = h("button", { class: "plain", type: "button", text: "拒绝" });
+    var approve = h("button", { class: "primary", type: "button", text: "批准" });
+    deny.addEventListener("click", function () { decide(item, "deny", deny, approve); });
+    approve.addEventListener("click", function () { decide(item, "approve", approve, deny); });
+    acts.push(deny, approve);
+  }
+  if (open) {
+    var detail = approvalDetails[item.id];
+    if (!detail) parts.push(h("div", { class: "empty", text: "取回来……" }));
+    else {
+      parts.push(paramsNode(detail.input));
+      if (detail.result) parts.push(h("div", { class: "param" }, [h("div", { class: "k", text: "做完的结果" }), h("pre", { class: "preview", text: detail.result })]));
+    }
+  }
+  parts.push(h("div", { class: "acts" }, acts));
+  return h("section", { class: "card apv" + (pending ? " ask" : " settled") }, parts);
+}
+
+/** 「待批准」页：等批准的在上面，下面是最近批过、拒绝过、过期的 */
+function renderApprovals() {
+  var pending = approvalList.filter(function (item) { return item.state === "pending"; });
+  var settled = approvalList.filter(function (item) { return item.state !== "pending"; });
+  var nodes = [];
+  if (pending.length) {
+    nodes.push(labelRow("等你批准", pending.length + " 件"));
+    pending.forEach(function (item) { nodes.push(approvalCard(item, renderApprovals)); });
+  } else {
+    nodes.push(card([labelRow("等你批准"), h("div", { class: "empty", text: "没有要批准的。config.json 里 files.read、write、edit、bash 写成 ask，yoyo 想动手时就会停在这里等你点头。" })]));
+  }
+  if (settled.length) {
+    nodes.push(labelRow("最近处理过的", settled.length + " 件"));
+    settled.forEach(function (item) { nodes.push(approvalCard(item, renderApprovals)); });
+  }
+  fill($("#approvals-page"), [h("div", { class: "col-main" }, nodes)], "");
+}
+
 /** 回答框里写了一半的话：4 秒一刷新不能丢，按子任务记 */
 var answerDraft = { id: 0, text: "" };
 
@@ -836,7 +990,10 @@ function renderTask(task, artifacts) {
   if (cancel) $("#bar-actions").appendChild(cancel);
 
   var main = [card([labelRow("目标"), h("div", { class: "text", text: task.goal })])];
-  if (task.state === "waiting" && task.question) main.unshift(answerCard(task));
+  var asking = (task.approvals || []).filter(function (item) { return item.state === "pending"; });
+  if (task.state === "waiting" && asking.length) {
+    main.unshift(h("div", { class: "apv-group" }, [labelRow("等你批准", task.askedAt ? when(task.askedAt) : ""), h("div", { class: "side-note", text: "子任务在等这几件事：批准了它接着做，拒绝了它换个办法。" })].concat(asking.map(function (item) { return approvalCard(item, function () { renderTask(task, artifacts); }); }))));
+  } else if (task.state === "waiting" && task.question) main.unshift(answerCard(task));
   var progressNote = task.progress.total ? task.progress.done + " / " + task.progress.total : "";
   var todoNodes = [labelRow("todo", progressNote)];
   if (task.progress.total) {
@@ -1012,6 +1169,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (current === "chat") loadThread(false).catch(function () {});
     if (current === "task") views.task.load().catch(function () {});
     if (current === "chat" || current === "task") loadTasks().catch(function () {});
+    loadApprovals().catch(function () {});
   }, 4000);
   setInterval(function () {
     if (document.hidden || current !== "chat") return;
@@ -1029,7 +1187,7 @@ function navButton(view: string, name: string, label: string): string {
 
 const BODY = String.raw`
 <div id="locked">从桌宠右键的「管理」或 <code>yoyo web open</code> 打开这一页。</div>
-<div id="icons" hidden>${['alarm', 'task', 'check', 'cross', 'doc', 'image', 'file'].map((name) => `<span data-icon="${name}">${icon(name)}</span>`).join('')}</div>
+<div id="icons" hidden>${['alarm', 'task', 'check', 'cross', 'doc', 'image', 'file', 'shield'].map((name) => `<span data-icon="${name}">${icon(name)}</span>`).join('')}</div>
 <div class="app" id="app">
   <aside class="side">
     <div class="me">
@@ -1038,6 +1196,7 @@ const BODY = String.raw`
     </div>
     <nav class="nav">
       ${navButton('chat', 'chat', '对话')}
+      <button class="nav-item" data-view="approvals" type="button">${icon('shield')}<span>待批准</span><em class="count" id="approval-count" hidden>0</em></button>
       ${navButton('memory', 'memory', '记忆')}
       ${navButton('alarms', 'alarm', '日程')}
       ${navButton('activity', 'trail', '轨迹')}
@@ -1117,6 +1276,7 @@ const BODY = String.raw`
         <div id="alarm-list"></div>
       </div>
     </div></section>
+    <section class="view scroll" id="approvals"><div class="page" id="approvals-page"></div></section>
     <section class="view scroll" id="task"><div class="page" id="task-page"></div></section>
     <section class="view scroll" id="activity"><div class="page"><div class="panel" id="activity-list"></div></div></section>
     <section class="view scroll" id="contacts"><div class="page">

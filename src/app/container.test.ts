@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { describe, test } from 'vite-plus/test';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
+import { decideApproval } from '../features/approvals/approvals.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { Director } from '../runtime/director.ts';
 import { fakeDirector, memoryLogger } from '../runtime/testing.ts';
@@ -152,6 +153,78 @@ describe('container', () => {
       [true, true, false],
     );
     assert.ok(existsSync(paths.workspaceDir));
+    await app.close();
+  });
+
+  test('先问：ask 的工具照样有；主线程调了只记请求，批准后常驻进程照做、结果写回主会话、叫醒主线程转告', async () => {
+    const usage = {
+      inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 1, text: 1, reasoning: 0 },
+    };
+    const toolCall = {
+      content: [
+        {
+          type: 'tool-call' as const,
+          toolCallId: 'w1',
+          toolName: 'write',
+          input: JSON.stringify({ path: 'notes/周报.md', content: '# 周报\n' }),
+        },
+      ],
+      finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+      usage,
+      warnings: [],
+    };
+    const say = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+      usage,
+      warnings: [],
+    });
+    const model = new MockLanguageModelV4({
+      doGenerate: [toolCall, say('周报要你在工作台里批准才写'), say('周报写好了，在 notes 里')],
+    });
+    const calls: string[] = [];
+    const paths = tempPaths();
+    const app = await createApp(
+      parseConfig({ stage: 'console', llm: { ...LLM, tools: true }, files: { write: 'ask' } }),
+      paths,
+      { logger: memoryLogger(), model, director: fakeDirector(calls, { choose: async () => null }) },
+    );
+    assert.equal(app.tools?.has('write'), true, 'ask 的工具照样有');
+    assert.match(app.tools?.get('write')?.description ?? '', /要主人在工作台里批准才会真的做/);
+    assert.equal(await app.orchestrator.chat('把周报写进 notes'), '周报要你在工作台里批准才写');
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[1]?.prompt),
+      /要主人在工作台里批准才会做：「写 notes\/周报.md（新建，1 行，9 B）」（批准请求 #1）/,
+    );
+    const [request] = app.repos.approvals.list();
+    assert.deepEqual([request?.state, request?.task, request?.tool], ['pending', null, 'write']);
+    assert.equal(existsSync(join(paths.workspaceDir, 'notes', '周报.md')), false, '没批准不写');
+
+    // 主人在工作台里批准；常驻进程看一遍：照做、写回主会话
+    decideApproval(app.repos, request!.id, 'approved', new Date(), 'web');
+    await app.approvals!.step();
+    assert.equal(readFileSync(join(paths.workspaceDir, 'notes', '周报.md'), 'utf8'), '# 周报\n');
+    const events = (await app.context.entries()).filter((entry) => entry.type === 'event' && entry.kind === 'approval');
+    assert.match(
+      events[0]?.type === 'event' ? (events[0].text ?? '') : '',
+      /批准请求 #1「写 notes\/周报.md（新建，1 行，9 B）」：主人在工作台里批准了，已经照做/,
+    );
+    // 下一拍：叫醒主线程转告，桌宠说出来
+    await app.orchestrator.tick();
+    assert.ok(calls.includes('speak:周报写好了，在 notes 里'), calls.join('\n'));
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[2]?.prompt),
+      /<approval-notification>[^]*<status>approved<\/status>/,
+    );
+    const offered = model.doGenerateCalls[2]?.tools?.map((item) => item.name) ?? [];
+    assert.equal(offered.includes('write'), false, '转告那一轮不给读写文件的工具，ask 也一样');
+    await app.close();
+  });
+
+  test('没有读写文件的工具（llm.tools 关着）：没有批准的常驻进程', async () => {
+    const app = await createApp(parseConfig({ stage: 'console', llm: LLM }), tempPaths(), { logger: memoryLogger() });
+    assert.equal(app.approvals, null);
     await app.close();
   });
 

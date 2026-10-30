@@ -57,6 +57,7 @@ sources:
 | `context tail` | 最近的对话 |
 | `memory core`、`facts`、`history <id>`、`rules` | 画像、记住的事、一条事实的来源、归纳出的程序 |
 | `task list [--state …]`、`show <编号>`、`log <编号>`、`agents` | 子任务和子 agent 类型 |
+| `approval list [--state …]`、`show <编号>` | 要批准的事（读写文件、跑命令的开关写成 `ask`）和它们的完整参数；批准、拒绝（`approve`、`deny`）改东西，不开给 agent，模型批不了自己的请求 |
 | `artifact list [--task <编号>]`、`show <编号>` | 子任务交的文件：列出来、打出文本的内容 |
 | `search <词>... [--in chat,tasks,files,facts,alarms,contacts] [--limit N]` | 在对话、子任务、交付物（按文件名）、记住的事、日程、联系人里一起找，几个词都要有，每类新的在前；一行开头是哪一类，带着能接着查的编号 [^search] |
 | `log tail` | 最近做过的事 |

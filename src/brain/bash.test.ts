@@ -10,6 +10,8 @@ import { createToolRegistry, type LocalToolRegistry, type ToolOutput } from '@mo
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { memoryLogger, memoryRepos } from '../runtime/testing.ts';
+import type { ActionTable, AskDeps } from './action.ts';
+import { createApprovalGate } from './approvals.ts';
 import { BASH_HEAD, BASH_TAIL, addBashTool, bashAnswer, commandHead, prepareBash } from './bash.ts';
 import { createFileAccess } from './files.ts';
 
@@ -23,7 +25,12 @@ interface Call {
 }
 
 /** 一个假的主目录，PATH 上有一个 srt（包着 fake-srt，把每次收到的东西记到文件里）。 */
-function rig(files: Record<string, unknown> = {}, sandbox: Record<string, unknown> = {}, installed = true) {
+function rig(
+  files: Record<string, unknown> = {},
+  sandbox: Record<string, unknown> = {},
+  installed = true,
+  ask: AskDeps = {},
+) {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-bash-home-'));
   const paths = resolvePaths({ YOYO_HOME: join(home, '.yoyo'), YOYO_CONFIG: join(home, '.yoyo', 'config.json') });
   mkdirSync(join(home, '.yoyo', 'artifacts', '3'), { recursive: true });
@@ -56,7 +63,9 @@ function rig(files: Record<string, unknown> = {}, sandbox: Record<string, unknow
     tmpRoot: join(home, 'tmp'),
   });
   const registry = createToolRegistry();
-  if (prepared) addBashTool(registry, { access, repos, sandbox: prepared, config: config.files, env, graceMs: 200 });
+  if (prepared) {
+    addBashTool(registry, { access, repos, sandbox: prepared, config: config.files, env, graceMs: 200, ...ask });
+  }
   const calls = (): Call[] =>
     existsSync(log)
       ? readFileSync(log, 'utf8')
@@ -164,6 +173,46 @@ describe('bash 工具', () => {
       bashAnswer({ code: null, signal: 'SIGKILL', timedOut: false, output: 'a\n' }, 5),
       /^被信号 SIGKILL 杀掉了，没有退出码。输出：\na$/,
     );
+  });
+});
+
+describe('bash 工具：ask 要先批准', () => {
+  test('调了只记批准请求，不跑；批准后照动作跑，命令和平时一样经沙箱；没装沙箱照样没有', async () => {
+    const actions: ActionTable = new Map();
+    const repos = memoryRepos();
+    const { registry, calls, workspace } = rig({ bash: 'ask' }, {}, true, {
+      actions,
+      gate: createApprovalGate({ repos }),
+    });
+    assert.match(registry.list()[0]?.description ?? '', /要主人在工作台里批准才会真的做/);
+    const picked = registry.toolSet(['bash'], { session: 'pet:main', runId: 'run_3' })['bash'];
+    const output = (await picked!.execute!(
+      { command: 'echo 你好;\n  pwd' },
+      { toolCallId: 'c1', messages: [], context: {} },
+    )) as ToolOutput;
+    assert.match(
+      output.type === 'text' ? output.text : '',
+      /要主人在工作台里批准才会做：「跑命令：echo 你好; pwd」（批准请求 #1）/,
+    );
+    assert.deepEqual(calls(), [], '没批准不跑');
+    const [request] = repos.approvals.list();
+    assert.deepEqual(
+      [request?.tool, request?.summary, request?.runId, JSON.parse(request?.input ?? '{}')],
+      ['bash', '跑命令：echo 你好; pwd', 'run_3', { command: 'echo 你好;\n  pwd' }],
+    );
+    assert.equal(await actions.get('bash')!.perform(JSON.parse(request!.input)), `退出码 0\n你好\n${workspace}`);
+    assert.equal(calls().length, 1, '批准后跑了一次，经沙箱');
+    // 空命令不用等批准就告诉模型
+    const empty = (await picked!.execute!(
+      { command: '  ' },
+      { toolCallId: 'c2', messages: [], context: {} },
+    )) as ToolOutput;
+    assert.equal(empty.type === 'text' ? empty.text : '', '要给命令');
+    assert.equal(repos.approvals.list().length, 1);
+
+    const none = rig({ bash: 'ask' }, {}, false);
+    assert.deepEqual(none.registry.list(), []);
+    assert.match(none.logger.lines[0] ?? '', /没有 bash 工具：沙箱程序 srt 找不到/);
   });
 });
 

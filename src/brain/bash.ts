@@ -2,14 +2,15 @@
  * `bash` 工具：跑一条命令，一律经沙箱程序（缺省 srt，见 `sandbox.ts`）：只能写工作区和一个临时目录，
  * 数据目录、配置、`~/.ssh` 这些读不到（和 `read` 同一份规则），网络缺省全关、按 `files.bashNetwork` 放行，
  * 有超时和输出上限。沙箱程序找不到、`sandbox.policy` 读不出，就没有这个工具，不退回到不加沙箱的跑法。
- * 不问主人：范围本身就是把关，和 `read`、`write`、`edit` 一样只在主人发起的那一轮给。每次都记进轨迹。
+ * 范围本身就是把关，和 `read`、`write`、`edit` 一样只在主人发起的那一轮给；开关是 `ask` 时每次跑之前还要主人在工作台里批准
+ * （`action.ts`），批准以后照同样的沙箱跑。每次都记进轨迹。
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { tool, type LocalToolRegistry } from '@modelctx-ai/ctx';
+import type { LocalToolRegistry } from '@modelctx-ai/ctx';
 import { z } from 'zod';
 
 import type { FilesConfig, SandboxConfig } from '../app/config.ts';
@@ -17,6 +18,7 @@ import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { inside } from '../features/files/access.ts';
 import type { Logger, Repos } from '../ports/index.ts';
+import { FileError, addGated, defineAction, type AskDeps } from './action.ts';
 import type { FileAccess } from './files.ts';
 import { findProgram, prepareBashSandbox, sandboxArgv, type SandboxLauncher } from './sandbox.ts';
 
@@ -196,7 +198,7 @@ function ensureTmpDir(dir: string): void {
  * 沙箱打不打开（`sandbox.enabled`）管的是 MCP 服务器，和这里无关。
  */
 export function prepareBash(deps: PrepareBashDeps): BashSandbox | null {
-  if (deps.files.bash !== 'allow') return null;
+  if (deps.files.bash === 'deny') return null;
   const { workspace, readable, denied } = deps.access.rules;
   try {
     const tmpDir = tmpDirOf(deps.tmpRoot ?? tmpdir());
@@ -222,11 +224,12 @@ export function prepareBash(deps: PrepareBashDeps): BashSandbox | null {
   }
 }
 
-export interface BashToolDeps {
+export interface BashToolDeps extends AskDeps {
   readonly access: FileAccess;
   readonly repos: Pick<Repos, 'activity'>;
   readonly sandbox: BashSandbox;
-  readonly config: Pick<FilesConfig, 'bashNetwork' | 'bashTimeout' | 'bashMaxTimeout'>;
+  /** `bash` 是 `allow` 直接跑，`ask` 要批准。 */
+  readonly config: Pick<FilesConfig, 'bash' | 'bashNetwork' | 'bashTimeout' | 'bashMaxTimeout'>;
   /** 命令的环境变量来源，缺省 `process.env`；只挑 `ENV_KEEP` 里的。 */
   readonly env?: NodeJS.ProcessEnv;
   /** 超时后到强杀的等待，测试里缩短。 */
@@ -247,19 +250,26 @@ export function addBashTool(registry: LocalToolRegistry, deps: BashToolDeps): vo
   const max = config.bashMaxTimeout;
   const fallback = Math.min(config.bashTimeout, max);
   const network = config.bashNetwork.length > 0 ? `只能连：${config.bashNetwork.join('、')}` : '不能上网';
-  registry.addTool(
-    'bash',
-    tool({
-      description:
-        `在沙箱里跑一条命令（bash），工作目录是工作区（${access.workspace}）。只能写工作区，别处只读；配置、yoyo 自己的数据和密钥读不到；${network}。` +
-        `每次都是新开的 shell，cd 和变量不会留到下一次；没有输入，别跑要交互的。` +
-        `stdout 和 stderr 合在一起交回，第一行是退出码，太长会省略中间。默认最多跑 ${fallback} 秒，用 timeout 可以要更久，最多 ${max} 秒，超时就杀掉。` +
-        `读写文件优先用 read、write、edit；用命令生成的文件（例如画图脚本的输出）放在工作区里，再用 task_deliver 的 path 交。`,
-      inputSchema: z.object({
-        command: z.string().describe('要跑的命令，例如「ls -la」「python3 plot.py」'),
-        timeout: z.number().positive().optional().describe(`最多跑几秒，缺省 ${fallback}，最多 ${max}`),
-      }),
-      execute: async (input, options) => {
+  const schema = z.object({
+    command: z.string().describe('要跑的命令，例如「ls -la」「python3 plot.py」'),
+    timeout: z.number().positive().optional().describe(`最多跑几秒，缺省 ${fallback}，最多 ${max}`),
+  });
+  addGated(registry, deps, {
+    name: 'bash',
+    permission: config.bash,
+    description:
+      `在沙箱里跑一条命令（bash），工作目录是工作区（${access.workspace}）。只能写工作区，别处只读；配置、yoyo 自己的数据和密钥读不到；${network}。` +
+      `每次都是新开的 shell，cd 和变量不会留到下一次；没有输入，别跑要交互的。` +
+      `stdout 和 stderr 合在一起交回，第一行是退出码，太长会省略中间。默认最多跑 ${fallback} 秒，用 timeout 可以要更久，最多 ${max} 秒，超时就杀掉。` +
+      `读写文件优先用 read、write、edit；用命令生成的文件（例如画图脚本的输出）放在工作区里，再用 task_deliver 的 path 交。`,
+    schema,
+    action: defineAction(
+      schema,
+      (input) => {
+        if (!input.command.trim()) throw new FileError('要给命令');
+        return `跑命令：${commandHead(input.command)}`;
+      },
+      async (input, signal) => {
         if (!input.command.trim()) return '要给命令';
         const seconds = Math.min(input.timeout ?? fallback, max);
         const clamped = input.timeout !== undefined && input.timeout > max;
@@ -268,7 +278,7 @@ export function addBashTool(registry: LocalToolRegistry, deps: BashToolDeps): vo
           cwd: access.workspace,
           env: sandboxEnv(deps.env ?? process.env, sandbox.tmpDir),
           timeoutMs: seconds * 1000,
-          signal: options?.abortSignal,
+          signal,
           graceMs: deps.graceMs ?? KILL_GRACE_MS,
         });
         repos.activity.record({
@@ -281,6 +291,6 @@ export function addBashTool(registry: LocalToolRegistry, deps: BashToolDeps): vo
         });
         return bashAnswer(run, seconds, clamped ? `\n（timeout 超过上限，按 ${max} 秒算）` : '');
       },
-    }),
-  );
+    ),
+  });
 }

@@ -74,6 +74,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
     tasks: { list: () => [] },
     agentTasks: sqlite.agentTasks,
     artifacts: sqlite.artifacts,
+    approvals: sqlite.approvals,
   };
 }
 

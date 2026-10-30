@@ -219,6 +219,50 @@ export interface Artifact {
   readonly createdAt: number;
 }
 
+/** 要主人批准的一次工具调用：等批准、批准了、拒绝了、过期了。 */
+export type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired';
+
+/**
+ * 模型调了开关是 `ask` 的工具（`files.read`、`write`、`edit`、`bash`）：不当场做，记成一条等主人在工作台里批准。
+ * 批准了由常驻进程照原参数做一次，结果交回主线程（或等批准的子任务）。
+ */
+export interface Approval {
+  readonly id: number;
+  /** 工具名：`read`、`write`、`edit`、`bash`。 */
+  readonly tool: string;
+  /** 给人看的一句：「写 notes/周报.md（新建，12 行）」「跑命令：python plot.py」。 */
+  readonly summary: string;
+  /** 完整参数，JSON。 */
+  readonly input: string;
+  /** 子任务里要的是哪个子任务；主线程那一轮是 null。 */
+  readonly task: number | null;
+  /** 哪一轮要的（运行编号），记下来对账；没有就是 null。 */
+  readonly runId: string | null;
+  readonly state: ApprovalState;
+  readonly createdAt: number;
+  /** 批准、拒绝或过期的时间。 */
+  readonly decidedAt: number | null;
+  /** 开始照做的时间；批准了才有，进程停在中途也留着，不会做第二遍。 */
+  readonly ranAt: number | null;
+  /** 照做以后工具回的话。 */
+  readonly result: string | null;
+  /** 过期的原因，例如等太久、子任务已经取消。 */
+  readonly note: string | null;
+  /** 结果交回主线程（或子任务）的时间。 */
+  readonly announcedAt: number | null;
+}
+
+export interface ApprovalInput {
+  readonly tool: string;
+  readonly summary: string;
+  readonly input: string;
+  readonly task: number | null;
+  readonly runId: string | null;
+}
+
+/** 能改的字段。 */
+export type ApprovalPatch = Partial<Pick<Approval, 'result' | 'note' | 'announcedAt'>>;
+
 /** 能改的字段。 */
 export type AgentTaskPatch = Partial<
   Pick<

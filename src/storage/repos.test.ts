@@ -189,6 +189,50 @@ describe('createRepos', () => {
     assert.deepEqual(repos.tasks.list(), ['修天气地点', '写测试']);
   });
 
+  test('批准请求：建、按状态和子任务列、批准只能一次、开始做只能领一次、改结果', () => {
+    const { repos } = fresh();
+    const base = { tool: 'write', summary: '写 a.md', input: '{"path":"a.md"}', task: null, runId: 'run_1' };
+    const first = repos.approvals.create(base, 100);
+    repos.approvals.create({ ...base, tool: 'bash', task: 7, runId: null }, 200);
+    assert.deepEqual(first, {
+      id: 1,
+      ...base,
+      state: 'pending',
+      createdAt: 100,
+      decidedAt: null,
+      ranAt: null,
+      result: null,
+      note: null,
+      announcedAt: null,
+    });
+    assert.deepEqual(
+      repos.approvals.list().map((item) => item.id),
+      [2, 1],
+      '新的在前',
+    );
+    assert.deepEqual(
+      repos.approvals.list({ task: 7 }).map((item) => item.id),
+      [2],
+    );
+    assert.equal(repos.approvals.claim(1, 150), null, '没批准的领不走');
+
+    assert.equal(repos.approvals.decide(1, 'approved', 300)?.state, 'approved');
+    assert.equal(repos.approvals.decide(1, 'denied', 301), null, '已经批准的不能再改');
+    assert.deepEqual(
+      repos.approvals.list({ states: ['pending'] }).map((item) => item.id),
+      [2],
+    );
+    assert.equal(repos.approvals.claim(1, 310)?.ranAt, 310);
+    assert.equal(repos.approvals.claim(1, 311), null, '只能领一次');
+    assert.equal(repos.approvals.update(1, { result: '写好了', announcedAt: 320 })?.result, '写好了');
+    assert.equal(repos.approvals.get(1)?.announcedAt, 320);
+
+    const expired = repos.approvals.decide(2, 'expired', 400, '等太久');
+    assert.deepEqual([expired?.state, expired?.decidedAt, expired?.note], ['expired', 400, '等太久']);
+    assert.equal(repos.approvals.get(99), null);
+    assert.equal(repos.approvals.update(99, { result: 'x' }), null);
+  });
+
   test('没建表的库也能直接用', () => {
     const repos = createRepos(new DatabaseSync(':memory:'));
     repos.kv.set('channel-base', 'http://127.0.0.1:4000/v1');

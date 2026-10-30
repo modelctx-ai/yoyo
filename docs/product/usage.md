@@ -54,7 +54,7 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 * 配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到。
 * 它主动转告子任务结果的那一句不会动文件；写和改都记在工作台的轨迹里。
 
-不想要哪个，把 `files.read`、`files.write`、`files.edit` 设成 `deny`。
+不想要哪个，把 `files.read`、`files.write`、`files.edit` 设成 `deny`；想让它动手前先问你，设成 `ask`，见下面「动手前先问你」。
 
 装了沙箱程序（srt，见[装 srt](configuration.md#装-srt)）的话，yoyo 还能跑命令：「用 python 把这份数据画成一张图」「数一数工作区里有多少个 md 文件」。
 
@@ -62,6 +62,16 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 * 没装沙箱程序就没有这个能力，yoyo 启动时记一行，不会换成不加沙箱的跑法。不想要就把 `files.bash` 设成 `deny`。
 * 每条命令（前面一段和退出码）都记在工作台的轨迹里；转告子任务结果那一句不会跑命令。
 * 命令生成的文件（例如画图脚本输出的图）放在工作区里，交给子任务去做时，它能把文件交到子任务的交付物里。详细的规则见[让 yoyo 跑命令](configuration.md#让-yoyo-跑命令)。
+
+## 动手前先问你
+
+`files.read`、`files.write`、`files.edit`、`files.bash` 写成 `ask`（见[每次先问你](configuration.md#每次先问你)），yoyo 想读、写、改文件或跑命令时不会马上做，先在工作台里记一条等你批准，并告诉你一声（「周报写好了，要你在工作台里批一下我才能写」）。
+
+* **在哪批**：工作台侧栏的「待批准」，旁边的数字是还在等的件数。每条写着要做什么，点「看完整参数」展开：写的内容、改的原文和新文、整条命令。点「批准」，yoyo 马上照做一次，结果回到和 yoyo 的对话里，她会告诉你做成没有；点「拒绝」就不做，她也会说一声，不会自己再试。
+* **命令行**：`pnpm yoyo approval list` 看等着的和最近处理过的，`approval show 3` 看完整参数，`approval approve 3`、`approval deny 3`。
+* **子任务要的**：子任务停在「等回答」，对话里是一张「要你批准」的卡片，子任务详情最上面也列着，批准或拒绝完它接着做；一个子任务同时要几件，都有了结论它才接着做。
+* **等太久按拒绝**：24 小时没批（`files.askTimeout` 可以改，`0` 是一直等）就过期，不做，yoyo 照常告诉你。
+* 这些只能你批：yoyo 自己批不了，也不会因为你对她说「批准」就算数；要在工作台或命令行里点。
 
 # 按键
 
@@ -144,6 +154,10 @@ pnpm yoyo task agents          # 有哪些子 agent 类型
 pnpm yoyo task add --title 整理周报 --goal "本周三个项目的进展" --criteria "三个项目都有；每项三行内" --agent writer
 pnpm yoyo task answer 3 蓝色   # 回答在等回答的子任务，它接着做
 pnpm yoyo task cancel 3
+pnpm yoyo approval list              # 要你批准的事（读写文件、跑命令开关写成 ask 的）
+pnpm yoyo approval show 3            # 完整参数：写的内容、改的原文和新文、命令
+pnpm yoyo approval approve 3         # 批准：常驻进程照做一次
+pnpm yoyo approval deny 3            # 拒绝
 pnpm yoyo artifact list --task 3     # 子任务 3 交的文件
 pnpm yoyo artifact show 5            # 打出文本交付物的内容
 pnpm yoyo artifact rm 5

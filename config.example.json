@@ -73,7 +73,8 @@
     "bash": "allow",
     "bashNetwork": [],
     "bashTimeout": 120,
-    "bashMaxTimeout": 600
+    "bashMaxTimeout": 600,
+    "askTimeout": 24
   },
   "context": {
     "keep": 40

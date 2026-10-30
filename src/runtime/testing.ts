@@ -112,6 +112,7 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
     // 子任务和交付物的读写有 JSON 列和自增 id，直接用内存里的 SQLite，不另写一份
     agentTasks: sqlite.agentTasks,
     artifacts: sqlite.artifacts,
+    approvals: sqlite.approvals,
   };
 }
 

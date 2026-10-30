@@ -42,8 +42,8 @@ status: stable
 | `tasks.enabled`     | `true`                       | 子任务：yoyo 把要花时间的事派到后台做，见[日常使用](usage.md#子任务) |
 | `tasks.notify`      | `true`                       | 子任务做完、没做成或要问你时，yoyo 用自己的话告诉你，桌宠说出来 |
 | `tasks.concurrency` | `2`                          | 子任务同时做几件，1 到 8，多的排队；写错按 2             |
-| `files.read`、`files.write`、`files.edit` | `allow` | yoyo 能读、写、改文件（只在工作区里写），`deny` 不给；见[读写文件](../tech/files.md) |
-| `files.bash` | `allow` | yoyo 能在沙箱里跑命令，`deny` 不给；沙箱程序（srt）没装就没有，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
+| `files.read`、`files.write`、`files.edit` | `allow` | yoyo 能读、写、改文件（只在工作区里写）：`allow` 直接做，`ask` 每次先在工作台里问你，`deny` 不给；见[每次先问你](#每次先问你) |
+| `files.bash` | `allow` | yoyo 能在沙箱里跑命令：`allow`、`ask`、`deny` 同上；沙箱程序（srt）没装就没有，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
 
 关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
@@ -91,8 +91,9 @@ status: stable
 | `tasks.enabled`、`tasks.notify`、`tasks.concurrency`、`tasks.answerTimeout` | `true`、`true`、`2`、`24` | 子任务开不开（yoyo 要 `llm.tools` 打开才能派，命令行和工作台照样能看）、做完或要问你时 yoyo 主动转告不转告、同时做几件（1 到 8）、子任务问了你以后等多少小时没回答就按没做成结束（`0` 是一直等，写错按 24）；等回答的不占做事的名额 |
 | `files.workspace` | 空 | yoyo 读写文件的工作区，能读能写；空着是 `~/.yoyo/workspace`，`~` 开头算主目录 |
 | `files.readable`、`files.denyRead` | `[]`、`[]` | 另外能读（不能写）的目录或文件；另外读不到的，盖过 `readable`。配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到 |
-| `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自给不给，`deny` 不给，写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给 |
-| `files.bash` | `allow` | 跑命令的 `bash` 给不给，`deny` 不给，写错按 `allow`。一律经沙箱程序跑，沙箱程序找不到就没有；规则同上，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
+| `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自怎么给：`allow` 直接做，`ask` 给但每次动手前要你在工作台里批准，`deny` 不给；写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给（`allow`、`ask` 都一样） |
+| `files.bash` | `allow` | 跑命令的 `bash` 怎么给，三个值同上，写错按 `allow`。一律经沙箱程序跑，沙箱程序找不到就没有；规则同上，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
+| `files.askTimeout` | `24` | 开关是 `ask` 的工具，等你批准等多少小时没批就按拒绝算，`0` 是一直等；写错按 24 |
 | `files.bashNetwork` | `[]` | 命令能连的域名，例如 `["pypi.org", "files.pythonhosted.org"]`；不写就是网络全关 |
 | `files.bashTimeout`、`files.bashMaxTimeout` | `120`、`600` | 命令没说时最多跑几秒，和它自己最多能要几秒（1 到 3600）；写错按缺省 |
 
@@ -265,6 +266,25 @@ sandbox:
 ```
 
 不会退回到不加沙箱跑。装 srt 见[装 srt](#装-srt)。转告子任务结果那一轮不给命令；子任务里只有 `general` 能用，`research`、`writer` 不能。
+
+# 每次先问你
+
+`files.read`、`files.write`、`files.edit`、`files.bash` 各自能写成 `allow`（直接做，缺省）、`ask`（每次动手前先问你）、`deny`（不给）：
+
+```json
+{
+  "llm": { "tools": true },
+  "files": { "write": "ask", "edit": "ask", "bash": "ask", "askTimeout": 24 }
+}
+```
+
+写成 `ask` 的工具，yoyo 照样能调，但不会马上做：它在工作台里记一条「待批准」，侧栏的「待批准」旁边出现个数，yoyo 会告诉你去批。每条写着要做什么（「写 notes/周报.md（新建，12 行）」「跑命令：python plot.py」），点开能看完整内容（写的全文、改的原文和新文、整条命令），你点「批准」yoyo 才照原样做一次，点「拒绝」就不做，结果都会回到 yoyo 那里，她会告诉你。也可以用命令行：`yoyo approval list` 看有哪些，`yoyo approval approve 3`、`yoyo approval deny 3`。
+
+* **批准不能扩大范围**：不在工作区和只读目录里的、配置和密钥，批准了也读写不了，yoyo 会直接被拒，不会让你批。
+* **等太久按拒绝**：`files.askTimeout` 小时（缺省 24）没批，这条过期，不做。
+* **命令也一样**：`bash` 写成 `ask`，批准了才跑，照样经沙箱。
+* 子任务里调了也一样：子任务停在「等回答」，你批准或拒绝以后它接着做；它不收一句话的回答来代替批准。
+* 转告子任务结果的那一轮、碎碎念都不会碰这些工具。
 
 # 记忆
 
