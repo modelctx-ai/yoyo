@@ -56,6 +56,7 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
   const spoken = new Map<string, number>();
   const kv = new Map<string, string>();
   const tasks: string[] = [];
+  const sqlite = createRepos(new DatabaseSync(':memory:'), now);
   return {
     contacts: {
       list: () => [...contacts],
@@ -108,8 +109,9 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
       set: (key, value) => void kv.set(key, value),
     },
     tasks: { list: () => [...tasks] },
-    // 子任务的读写有 JSON 列和自增 id，直接用内存里的 SQLite，不另写一份
-    agentTasks: createRepos(new DatabaseSync(':memory:'), now).agentTasks,
+    // 子任务和交付物的读写有 JSON 列和自增 id，直接用内存里的 SQLite，不另写一份
+    agentTasks: sqlite.agentTasks,
+    artifacts: sqlite.artifacts,
   };
 }
 

@@ -175,6 +175,17 @@ form.inline input[name="title"], form.inline input[name="name"], form.inline inp
 .bar-track { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-bottom: 10px; }
 .bar-track > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .card .text { white-space: pre-wrap; word-break: break-word; }
+.file { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.file:first-of-type { border-top: 0; }
+.file .chip { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex: none; background: var(--accent-soft); color: var(--accent-strong); }
+.file .chip svg { width: 18px; height: 18px; }
+.file .main { flex: 1; min-width: 0; }
+.file .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.file .note { color: var(--muted); font-size: 13px; }
+.file .acts { display: flex; gap: 4px; flex: none; }
+.file .acts button.plain { padding: 4px 10px; font-size: 13px; }
+.preview { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--side); padding: 12px 14px; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.preview-img { display: block; max-width: 100%; max-height: 420px; margin: 0 0 10px; border-radius: 12px; border: 1px solid var(--line); }
 .badge { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 12px; background: var(--hover); color: var(--muted); }
 .badge.running { background: var(--accent-soft); color: var(--accent-strong); }
 .badge.done { background: var(--ok-soft); color: var(--ok-strong); }
@@ -240,6 +251,9 @@ const ICONS: Readonly<Record<string, string>> = {
   cross: '<path d="M6 6l12 12M18 6 6 18"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   task: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
+  doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m21 16-5-5-8 8"/>',
+  file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
 };
 
 function icon(name: string): string {
@@ -359,6 +373,12 @@ var VIA = { "dsh-pet": "桌宠对话" };
 var TASK_STATES = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "取消了" };
 var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
 var openTask = 0;
+/** 交付物：展开预览的那个，和取回来的原文（按编号和时间，交了新的就重新取） */
+var artifactOpen = 0;
+var artifactBlobs = {};
+/** 常驻进程能在访达里显示；在 yoyo.app 的窗口里下载不了，只给在访达里显示 */
+var canReveal = false;
+var inApp = false;
 /** 最近的子任务，按编号：对话里的卡片据此显示进度 */
 var taskIndex = {};
 var factFilter = "";
@@ -508,6 +528,8 @@ function grow() {
 
 function loadStatus() {
   return api("GET", "/api/status").then(function (s) {
+    canReveal = Boolean(s.reveal);
+    inApp = Boolean(s.app);
     var items = [];
     function item(state, text) {
       items.push(h("div", { class: "item" }, [h("span", { class: "dot" + (state === undefined ? "" : state ? " ok" : " off") }), h("span", { text: text })]));
@@ -560,7 +582,11 @@ var views = {
   } },
   task: { title: "子任务", sub: "yoyo 派到后台的事", load: function () {
     if (!openTask) return Promise.resolve();
-    return Promise.all([api("GET", "/api/tasks/" + openTask).then(renderTask), loadTasks()]);
+    var id = openTask;
+    return Promise.all([
+      Promise.all([api("GET", "/api/tasks/" + id), api("GET", "/api/artifacts?task=" + id)]).then(function (got) { renderTask(got[0], got[1]); }),
+      loadTasks(),
+    ]);
   } },
   memory: { title: "记忆", sub: "yoyo 记得的你：画像、记得的事、规矩。记错的可以删", load: function () {
     return api("GET", "/api/memory").then(function (m) {
@@ -690,7 +716,84 @@ function markIcon(name) {
   return iconNode(name);
 }
 
-function renderTask(task) {
+/** 取一个交付物的原文：要带令牌，所以不用链接，取成 Blob */
+function artifactBlob(artifact) {
+  var key = artifact.id + ":" + artifact.createdAt;
+  if (artifactBlobs[key]) return Promise.resolve(artifactBlobs[key]);
+  return fetch("/api/artifacts/" + artifact.id, { headers: { authorization: "Bearer " + token } }).then(function (response) {
+    if (response.status === 401) lock();
+    if (!response.ok) return response.json().catch(function () { return {}; }).then(function (data) { throw new Error(data.error || ("出错了（" + response.status + "）")); });
+    return response.blob();
+  }).then(function (blob) {
+    artifactBlobs[key] = blob;
+    return blob;
+  });
+}
+
+function download(artifact) {
+  artifactBlob(artifact).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    var link = h("a", { href: url, download: artifact.name });
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }, fail);
+}
+
+/** 预览：文本原样显示，图片显示；取回来以后放进占好的位置 */
+function previewNode(artifact) {
+  var box = h("div", { class: "preview", text: "取回来……" });
+  artifactBlob(artifact).then(function (blob) {
+    if (artifact.view === "image") {
+      var img = h("img", { class: "preview-img", alt: artifact.name });
+      // 在做的子任务每 4 秒重画一次：同一张图只建一个地址
+      blob.url = blob.url || URL.createObjectURL(blob);
+      img.src = blob.url;
+      box.replaceWith(img);
+    } else {
+      return blob.text().then(function (text) { box.textContent = text; });
+    }
+  }).catch(function (error) { box.textContent = error.message || String(error); });
+  return box;
+}
+
+var FILE_ICONS = { text: "doc", image: "image", file: "file" };
+
+function artifactsCard(task, artifacts) {
+  var rows = [labelRow("交付物", artifacts.length ? artifacts.length + " 个" : "")];
+  artifacts.forEach(function (artifact) {
+    var opened = artifactOpen === artifact.id;
+    var acts = [];
+    if (artifact.view !== "file") acts.push(h("button", { class: "plain", type: "button", text: opened ? "收起" : "预览", onclick: function () {
+      artifactOpen = opened ? 0 : artifact.id;
+      renderTask(task, artifacts);
+    } }));
+    if (!inApp) acts.push(h("button", { class: "plain", type: "button", text: "下载", onclick: function () { download(artifact); } }));
+    if (canReveal) acts.push(h("button", { class: "plain", type: "button", text: "在访达里显示", onclick: function () {
+      api("POST", "/api/artifacts/" + artifact.id + "/reveal", {}).catch(fail);
+    } }));
+    acts.push(h("button", { class: "danger", type: "button", text: "删除", onclick: confirmThen("删掉「" + artifact.name + "」？文件一起删。", function () {
+      api("DELETE", "/api/artifacts/" + artifact.id).then(function () { toast("删了"); views.task.load(); }, fail);
+    }) }));
+    rows.push(h("div", { class: "file" }, [
+      h("span", { class: "chip" }, [iconNode(FILE_ICONS[artifact.view] || "file")]),
+      h("div", { class: "main" }, [h("div", { class: "name", text: artifact.name, title: artifact.name }), h("div", { class: "note", text: sizeLabel(artifact.size) + " · " + when(artifact.createdAt) })]),
+      h("div", { class: "acts" }, acts),
+    ]));
+    if (opened) rows.push(previewNode(artifact));
+  });
+  return card(rows);
+}
+
+function sizeLabel(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1).replace(/\.0$/, "") + " KB";
+  return (bytes / 1048576).toFixed(1).replace(/\.0$/, "") + " MB";
+}
+
+function renderTask(task, artifacts) {
+  artifacts = artifacts || [];
   var open = task.state === "queued" || task.state === "running";
   var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
   $("#title").textContent = task.title;
@@ -734,6 +837,7 @@ function renderTask(task) {
   if (task.result) main.push(card([labelRow("结果"), h("div", { class: "text" }, rich(task.result))]));
   else if (task.error) main.push(card([labelRow("没做成"), h("div", { class: "text", text: task.error })]));
   else if (open) main.push(card([labelRow("结果"), h("div", { text: "还在做。交了以后结果放在这里，也会回到和 yoyo 的对话里。" })], "pending"));
+  if (artifacts.length) main.push(artifactsCard(task, artifacts));
 
   var labels = { input: "收到", say: "说", call: "调用工具", result: "工具回了" };
   var steps = task.steps.map(function (step) {
@@ -886,7 +990,7 @@ function navButton(view: string, name: string, label: string): string {
 
 const BODY = String.raw`
 <div id="locked">从桌宠右键的「管理」或 <code>yoyo web open</code> 打开这一页。</div>
-<div id="icons" hidden>${['alarm', 'task', 'check', 'cross'].map((name) => `<span data-icon="${name}">${icon(name)}</span>`).join('')}</div>
+<div id="icons" hidden>${['alarm', 'task', 'check', 'cross', 'doc', 'image', 'file'].map((name) => `<span data-icon="${name}">${icon(name)}</span>`).join('')}</div>
 <div class="app" id="app">
   <aside class="side">
     <div class="me">

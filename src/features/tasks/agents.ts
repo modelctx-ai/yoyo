@@ -6,7 +6,13 @@
  */
 
 /** 子 agent 自己的任务工具，哪种类型都有。 */
-export const TASK_TOOL_NAMES: readonly string[] = ['task_plan', 'task_todo', 'task_finish', 'task_fail'];
+export const TASK_TOOL_NAMES: readonly string[] = [
+  'task_plan',
+  'task_todo',
+  'task_deliver',
+  'task_finish',
+  'task_fail',
+];
 
 export const DEFAULT_AGENT = 'general';
 

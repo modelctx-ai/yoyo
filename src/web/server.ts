@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 
 import { errorText } from '../app/log.ts';
 import type { Logger } from '../ports/index.ts';
-import { createWebApi, type WebDeps } from './api.ts';
+import { createWebApi, type ApiFile, type WebDeps } from './api.ts';
 import { pageHtml } from './page.ts';
 
 export interface WebServer {
@@ -43,6 +43,23 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/**
+ * 原样回一个交付物。不在本页的源里执行：`sandbox` 加 `default-src 'none'`，HTML、SVG 这类只给下载。
+ * 文件名用 RFC 5987 的写法，中文名下载下来不乱。
+ */
+function sendFile(res: ServerResponse, file: ApiFile): void {
+  const text = file.type.startsWith('text/') || file.type === 'application/json';
+  const ascii = file.name.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  res.writeHead(200, {
+    ...COMMON_HEADERS,
+    'content-type': text ? `${file.type}; charset=utf-8` : file.type,
+    'content-length': String(file.bytes.length),
+    'content-disposition': `${file.inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    'content-security-policy': "sandbox; default-src 'none'",
+  });
+  res.end(file.bytes);
+}
+
 function page(res: ServerResponse): void {
   const nonce = randomBytes(16).toString('base64');
   res.writeHead(200, {
@@ -53,7 +70,8 @@ function page(res: ServerResponse): void {
       `script-src 'nonce-${nonce}'`,
       `style-src 'nonce-${nonce}'`,
       "connect-src 'self'",
-      "img-src 'self' data:",
+      // 交付物的图片先用令牌取回来，再经 blob: 地址显示
+      "img-src 'self' data: blob:",
       "base-uri 'none'",
       "form-action 'none'",
       "frame-ancestors 'none'",
@@ -114,6 +132,7 @@ export function startWeb(options: WebOptions): Promise<WebServer> {
       }
     }
     const result = await api(method, path, body);
+    if (result.file) return sendFile(res, result.file);
     send(res, result.status, result.body);
   }
 

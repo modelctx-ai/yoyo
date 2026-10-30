@@ -24,7 +24,7 @@ export const MAX_ROUNDS = 6;
 export const TASK_POLL_MS = 2000;
 
 export interface TaskRunnerDeps {
-  readonly repos: Pick<Repos, 'agentTasks' | 'activity'>;
+  readonly repos: Pick<Repos, 'agentTasks' | 'activity' | 'artifacts'>;
   readonly logger: Logger;
   /** 子任务专用的编排器：`record: true`，配了自己的 `owner`，开始前先 `recover`。 */
   readonly runs: Pick<Orchestrator, 'submit' | 'recover'>;
@@ -143,7 +143,10 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     }
     const final = repos.agentTasks.get(task.id) ?? task;
     // 结果写回主线程：主线程下一轮看得到，工作台的主聊天里也有
-    await main.append(eventEntry(TASK_EVENT, { text: resultNote(final), meta: { id: final.id, state: final.state } }));
+    const artifacts = repos.artifacts.list({ task: final.id });
+    await main.append(
+      eventEntry(TASK_EVENT, { text: resultNote(final, artifacts), meta: { id: final.id, state: final.state } }),
+    );
     deps.onFinished?.(final);
     logger.info(`子任务 #${final.id} ${final.state === 'done' ? '做完了' : `停在「${final.state}」`}`);
     return final;

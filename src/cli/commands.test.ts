@@ -11,6 +11,7 @@ import { resolvePaths, type Paths } from '../app/paths.ts';
 import type { UpdateSystem } from '../app/update.ts';
 import { createYoyoContext, taskSession } from '../brain/context.ts';
 import { openMemoryStore } from '../brain/memory.ts';
+import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { localDateKey } from '../kernel/time.ts';
 import { directorAlive, drain, writePid } from '../runtime/inbox.ts';
 import {
@@ -495,6 +496,39 @@ describe('commands', () => {
     ]);
   });
 
+  test('artifact：列、打出内容、删；task show 和 search 里也有', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('artifact', 'list'), ['还没有交付物']);
+    await run('task', 'add', '--title', '整理周报', '--goal', '本周');
+    env.repos().agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    const md = deliverArtifact(env.repos(), env.files(), { id: 1, name: '周报.md', content: '# 周报\nA 上线' }, NOW);
+    const png = deliverArtifact(
+      env.repos(),
+      env.files(),
+      { id: 1, name: '图.png', content: 'iVBORw0KGgo=', encoding: 'base64' },
+      NOW,
+    );
+    assert.deepEqual(await run('artifacts', 'list', '--task', '#1'), [
+      `${png.id}\t#1\t8 B\timage/png\t图.png`,
+      `${md.id}\t#1\t17 B\ttext/markdown\t周报.md`,
+    ]);
+    assert.deepEqual(await run('artifact', 'list', '--task', '2'), ['子任务 #2 没交文件']);
+    assert.deepEqual(await run('artifact', 'show', String(md.id)), ['# 周报\nA 上线']);
+    assert.deepEqual(await run('artifact', 'show', String(png.id)), [
+      `图.png\timage/png\t${env.files().path(1, '图.png')}`,
+    ]);
+    assert.match((await run('task', 'show', '1'))[0]!, /\n交付物：\n图\.png（8 B）\n周报\.md（17 B）/);
+    assert.deepEqual(await run('search', '周报', '--in', 'files'), [
+      `交付物\t${md.id}\t#1\t周报.md`,
+      '',
+      '下一步：yoyo artifact show <编号>',
+    ]);
+    assert.deepEqual(await run('artifact', 'rm', String(md.id)), ['删了 周报.md']);
+    assert.equal(env.files().read(1, '周报.md'), null);
+    await assert.rejects(run('artifact', 'show', String(md.id)), /没有交付物/);
+    await assert.rejects(run('artifact', 'rm', 'x'), /要给交付物编号/);
+  });
+
   test('agent 那部分：只读的查询，不含改东西、碰桌宠和网络的', () => {
     const { env } = cli();
     assert.deepEqual(
@@ -507,6 +541,7 @@ describe('commands', () => {
         'context tail',
         'memory core,facts,history,rules',
         'task list,show,log,agents',
+        'artifact list,show',
         'search all',
         'log tail',
       ],

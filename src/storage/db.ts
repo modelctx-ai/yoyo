@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   updated_at INTEGER NOT NULL,
   announced_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS artifacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (task_id, name)
+);
 CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

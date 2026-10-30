@@ -27,6 +27,13 @@ export function createMacOpener(): UrlOpener {
       });
       child.unref();
     },
+    reveal(path) {
+      const child = spawn('open', ['-R', path], { stdio: 'ignore', detached: true });
+      child.once('error', () => {
+        /* 访达打不开就算了 */
+      });
+      child.unref();
+    },
   };
 }
 

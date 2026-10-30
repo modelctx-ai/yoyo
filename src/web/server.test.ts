@@ -11,7 +11,9 @@ import { createMemoryStore as createMemory } from '@modelctx-ai/ctx-memory';
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
+import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { drain } from '../runtime/inbox.ts';
+import { createArtifactFiles } from '../storage/artifacts.ts';
 import { memoryLogger, memoryRepos } from '../runtime/testing.ts';
 import { startWeb, type WebServer } from './server.ts';
 
@@ -58,6 +60,8 @@ describe('web 管理页', () => {
   });
   let unreachable = false;
   let web: WebServer;
+  const files = createArtifactFiles(paths.artifactsDir);
+  const revealed: string[] = [];
 
   async function call(method: string, path: string, body?: unknown): Promise<{ status: number; data: unknown }> {
     const response = await fetch(new URL(path, web.origin), {
@@ -91,6 +95,8 @@ describe('web 管理页', () => {
         return `收到：${text}`;
       },
       now: () => new Date(T0),
+      files,
+      reveal: (path) => void revealed.push(path),
       logger,
     });
   });
@@ -327,6 +333,54 @@ describe('web 管理页', () => {
       task: task.id,
       state: 'cancelled',
     });
+  });
+
+  test('交付物：按子任务列；原文带对的类型，HTML 只给下载，都关在沙箱里；能在访达里显示、能删', async () => {
+    const task = repos.agentTasks.create(
+      { title: '出周报', goal: '本周进展', criteria: [], agent: 'writer', origin: 'main' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running' }, T0);
+    const md = deliverArtifact(repos, files, { id: task.id, name: '周报.md', content: '# 周报' }, new Date(T0));
+    const page = deliverArtifact(
+      repos,
+      files,
+      { id: task.id, name: '页.html', content: '<script>1</script>' },
+      new Date(T0 + 1),
+    );
+    const list = (await call('GET', `/api/artifacts?task=${task.id}`)).data as { name: string; view: string }[];
+    assert.deepEqual(
+      list.map((item) => [item.name, item.view]),
+      [
+        ['页.html', 'file'],
+        ['周报.md', 'text'],
+      ],
+    );
+    assert.deepEqual((await call('GET', '/api/artifacts?task=999')).data, []);
+
+    const auth = { authorization: `Bearer ${web.token}` };
+    const text = await raw(web, 'GET', `/api/artifacts/${md.id}`, { headers: auth });
+    assert.equal(text.status, 200);
+    assert.equal(text.body, '# 周报');
+    assert.equal(text.headers['content-type'], 'text/markdown; charset=utf-8');
+    assert.equal(text.headers['content-security-policy'], "sandbox; default-src 'none'");
+    assert.equal(text.headers['x-content-type-options'], 'nosniff');
+    assert.match(
+      String(text.headers['content-disposition']),
+      /^inline; filename="__\.md"; filename\*=UTF-8''%E5%91%A8%E6%8A%A5\.md$/,
+    );
+    const html = await raw(web, 'GET', `/api/artifacts/${page.id}`, { headers: auth });
+    assert.match(String(html.headers['content-disposition']), /^attachment;/);
+    assert.equal((await raw(web, 'GET', `/api/artifacts/${md.id}`)).status, 401, '原文也要令牌');
+    assert.equal((await call('GET', '/api/artifacts/999')).status, 404);
+
+    assert.deepEqual((await call('POST', `/api/artifacts/${md.id}/reveal`, {})).data, { revealed: md.id });
+    assert.deepEqual(revealed, [files.path(task.id, '周报.md')]);
+    assert.equal((await call('DELETE', `/api/artifacts/${md.id}`)).status, 200);
+    assert.equal(files.read(task.id, '周报.md'), null);
+    assert.equal((await call('DELETE', `/api/artifacts/${md.id}`)).status, 404);
+    const status = (await call('GET', '/api/status')).data as { app: boolean; reveal: boolean };
+    assert.deepEqual([status.app, status.reveal], [false, true]);
   });
 
   test('说一句、听一句交给收件箱，下一拍做', async () => {

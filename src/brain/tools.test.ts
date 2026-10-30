@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
@@ -17,6 +20,8 @@ import { generateReply } from './compose.ts';
 import { recordUser, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
 import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
+import { createAgentTask } from '../features/tasks/tasks.ts';
+import { createArtifactFiles } from '../storage/artifacts.ts';
 import { createRepos } from '../storage/repos.ts';
 import { addTaskWorkerTools, createYoyoTools, splitCommand } from './tools.ts';
 
@@ -32,6 +37,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
   const schedule: ScheduleItem[] = [];
   const events: ActivityRecord[] = [];
   const kv = new Map<string, string>();
+  const sqlite = createRepos(new DatabaseSync(':memory:'));
   return {
     events,
     contacts: { list: () => [], insert: () => {}, remove: () => false },
@@ -63,7 +69,8 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
       },
     },
     tasks: { list: () => [] },
-    agentTasks: createRepos(new DatabaseSync(':memory:')).agentTasks,
+    agentTasks: sqlite.agentTasks,
+    artifacts: sqlite.artifacts,
   };
 }
 
@@ -244,6 +251,29 @@ describe('brain/tools', () => {
     const checks = [{ criterion: '三个项目都有', met: true, evidence: '有' }];
     assert.equal(await run(worker, 'task_finish', { id: 1, result: '周报', checks }), '交好了，子任务 #1 做完');
     assert.equal(await run(main, 'task_cancel', { id: 1 }), '子任务 #1 已经「做完」');
+  });
+
+  test('task_deliver：给了放文件的地方才有；交进在做的那个子任务，规则不让的原样交回', async () => {
+    const repos = memoryRepos();
+    const files = createArtifactFiles(join(mkdtempSync(join(tmpdir(), 'yoyo-deliver-')), 'artifacts'));
+    const worker = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(worker, { repos, now: () => NOW, files });
+    assert.ok(worker.get('task_deliver'));
+    const plain = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(plain, { repos, now: () => NOW });
+    assert.equal(plain.get('task_deliver'), undefined);
+
+    createAgentTask(repos, { title: '整理周报', goal: '本周进展', origin: 'main' }, NOW);
+    assert.equal(
+      await run(worker, 'task_deliver', { id: 1, name: '周报.md', content: '# 周报' }),
+      '子任务 #1 现在是「排队」，不能再改',
+    );
+    repos.agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    assert.equal(
+      await run(worker, 'task_deliver', { id: 1, name: '../周报.md', content: '# 周报' }),
+      '交好了：周报.md（8 B），子任务 #1 一共交了 1 个文件',
+    );
+    assert.equal(Buffer.from(files.read(1, '周报.md')!).toString('utf8'), '# 周报');
   });
 
   test('task_create：说明里列出子 agent 类型，能挑一种，挑了没有的回一句话', async () => {

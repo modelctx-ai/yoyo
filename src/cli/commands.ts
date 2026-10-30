@@ -38,6 +38,7 @@ import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
 import type { AgentProfile } from '../features/tasks/agents.ts';
+import { artifactRow, artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
 import {
   STATE_LABELS,
   TaskError,
@@ -47,10 +48,11 @@ import {
   taskRow,
 } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
-import type { AgentTaskState, InboxRequest } from '../kernel/types.ts';
-import type { Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
+import type { AgentTaskState, Artifact, InboxRequest } from '../kernel/types.ts';
+import type { ArtifactFiles, Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
 import { compactContext } from '../runtime/compact.ts';
 import { directorAlive, enqueue } from '../runtime/inbox.ts';
+import { createArtifactFiles } from '../storage/artifacts.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { flagText, type Domain } from './registry.ts';
@@ -74,6 +76,8 @@ export interface CommandEnv {
   host(): PetHost;
   /** 和导演同一套组装。用完要 close。 */
   app(): Promise<App>;
+  /** 子任务交付物的文件。 */
+  files(): ArtifactFiles;
   /** 自我更新要碰的网络、命令和进程。 */
   updater(): UpdateSystem;
   /** 装着的版本：安装包里 `lib/VERSION` 写的，从源码跑时是 null。 */
@@ -111,6 +115,7 @@ export function createCommandEnv(paths: Paths, options: CommandEnvOptions = {}):
     opener: () => overrides.opener ?? createPlatformOpener(),
     host: () => overrides.host ?? createPetHost(env.config(), logger),
     app: () => createApp(env.config(), paths, { logger, db: env.db(), repos: env.repos(), ...overrides }),
+    files: () => overrides.artifactFiles ?? createArtifactFiles(paths.artifactsDir),
     updater: () => options.updater ?? createUpdateSystem(),
     installed: () => (options.installed !== undefined ? options.installed : installedVersion(paths.root)),
   };
@@ -143,6 +148,14 @@ function taskStates(value: string): AgentTaskState[] {
   const wrong = picked.filter((item) => !(all as string[]).includes(item));
   if (wrong.length > 0) throw new Error(`没有「${wrong.join('、')}」这种状态，有：${all.join('、')}`);
   return picked as AgentTaskState[];
+}
+
+function artifactOf(env: CommandEnv, args: readonly string[]): Artifact {
+  const id = Number(args[0]);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('要给交付物编号，例如 yoyo artifact show 3');
+  const item = env.repos().artifacts.get(id);
+  if (!item) throw new Error(`没有交付物 ${id}`);
+  return item;
 }
 
 function taskId(args: readonly string[]): number {
@@ -602,7 +615,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
           run(_flags, args) {
             const task = env.repos().agentTasks.get(taskId(args));
             if (!task) throw new Error(`没有子任务 #${args[0]}`);
-            env.out(taskDetail(task));
+            env.out(taskDetail(task, env.repos().artifacts.list({ task: task.id })));
           },
         },
         {
@@ -661,6 +674,51 @@ export function buildDomains(env: CommandEnv): Domain[] {
           run(_flags, args) {
             const task = guard(() => cancelAgentTask(env.repos(), taskId(args), env.now()));
             env.out(`取消了子任务 #${task.id}`);
+          },
+        },
+      ],
+    },
+    {
+      name: 'artifact',
+      aliases: ['artifacts'],
+      summary: '子任务交的文件',
+      detail:
+        '子 agent 用 task_deliver 交的文件，存在 ~/.yoyo/artifacts/<子任务编号>/。子任务不删，交付物跟着留着；不要了用 rm 一个个删。',
+      verbs: [
+        {
+          name: 'list',
+          summary: '最近的交付物：编号、子任务、大小、类型、文件名',
+          flags: ['task'],
+          agent: true,
+          run(flags) {
+            const task = flagText(flags, 'task');
+            const items = env.repos().artifacts.list(task ? { task: Number(task.replace(/^#/, '')) } : { limit: 50 });
+            if (items.length === 0)
+              return env.out(task ? `子任务 #${task.replace(/^#/, '')} 没交文件` : '还没有交付物');
+            for (const item of items) env.out(artifactRow(item));
+          },
+        },
+        {
+          name: 'show',
+          summary: '打出一个交付物：文字的打内容，别的打位置',
+          usage: '<编号>',
+          agent: true,
+          run(_flags, args) {
+            const item = artifactOf(env, args);
+            const path = env.files().path(item.task, item.name);
+            if (artifactView(item.type) !== 'text') return env.out(`${item.name}\t${item.type}\t${path}`);
+            const bytes = env.files().read(item.task, item.name);
+            if (!bytes) throw new Error(`${item.name} 的文件不在了：${path}`);
+            env.out(Buffer.from(bytes).toString('utf8'));
+          },
+        },
+        {
+          name: 'rm',
+          summary: '删掉一个交付物，文件和记录一起删',
+          usage: '<编号>',
+          run(_flags, args) {
+            const item = removeArtifact(env.repos(), env.files(), artifactOf(env, args).id);
+            env.out(`删了 ${item?.name ?? ''}`);
           },
         },
       ],
@@ -727,9 +785,9 @@ export function buildDomains(env: CommandEnv): Domain[] {
     },
     {
       name: 'search',
-      summary: '在对话、子任务、记住的事、日程、联系人里找',
+      summary: '在对话、子任务、交付物、记住的事、日程、联系人里找',
       detail:
-        '几个词都要有，不分大小写；每类最多 --limit 条（缺省 8），新的在前。--in 只找哪几类：chat、tasks、facts、alarms、contacts，逗号分开。',
+        '几个词都要有，不分大小写；每类最多 --limit 条（缺省 8），新的在前。--in 只找哪几类：chat、tasks、files、facts、alarms、contacts，逗号分开。',
       fallback: 'all',
       verbs: [
         {
@@ -754,6 +812,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
                     }
                   : {}),
                 ...(kinds.has('tasks') ? { tasks: repos.agentTasks.list({ limit: 500 }) } : {}),
+                ...(kinds.has('files') ? { artifacts: repos.artifacts.list({ limit: 500 }) } : {}),
                 ...(kinds.has('facts') ? { facts: await allFacts(openMemoryStore(env.db()), { open: true }) } : {}),
                 ...(kinds.has('alarms') ? { schedule: repos.schedule.list() } : {}),
                 ...(kinds.has('contacts') ? { contacts: repos.contacts.list() } : {}),

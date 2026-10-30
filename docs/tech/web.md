@@ -67,11 +67,15 @@ sources:
 
 | 接口 | 做什么 |
 | --- | --- |
-| `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、最近一次说话、日程和联系人条数 |
+| `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、最近一次说话、日程和联系人条数、是不是在 yoyo.app 的窗口里（`app`）、能不能在访达里显示（`reveal`） |
 | `GET /api/context?limit=` | 最近的上下文，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）；子任务写回来的那条是 `kind: 'task'`，带编号 `task` 和状态 `state`。缺省 40 条，最多 200 |
 | `GET /api/tasks` | 最近 50 个子任务：编号、标题、状态、谁派的、时间、todo 进度 |
 | `GET /api/tasks/:id` | 一个子任务的全部，加上 `progress` 和最近 300 步过程（`steps`：收到、说、调用、结果）。没有回 404 |
 | `POST /api/tasks/:id/cancel` | 取消；已经结束的回 409 |
+| `GET /api/artifacts?task=` | 交付物，新的在前，带 `view`（`text`、`image`、`file`：工作台直接看还是只给下载）；不给 `task` 列最近的 |
+| `GET /api/artifacts/:id` | 原文，不是 JSON：对的 `content-type`（文本带 `charset=utf-8`），能看的 `inline`、别的 `attachment`，文件名按 RFC 5987 写；带 `content-security-policy: sandbox; default-src 'none'`，就算直接打开也不在本页的源里跑。要令牌，所以页面用 `fetch` 取成 Blob 再预览、下载 |
+| `DELETE /api/artifacts/:id` | 删一个交付物，文件和记录一起删；记 `artifact-remove` |
+| `POST /api/artifacts/:id/reveal` | 在访达里选中这个文件（`open -R`）。只有 macOS 上有，别处回 503 |
 | `POST /api/chat` | 工作台聊一句：`{ text }`，去掉首尾空白，最多 4000 字；回 `{ reply }`。问答记进日志、记 `chat-workbench`。常驻进程外回 503，没回上来回 502 和原因 |
 | `GET /api/activity?limit=` | 做过的事，缺省 50 条，最多 500 |
 | `GET /api/memory` | 画像、仍然成立的事实（按开始成立的时间）、没退役的规矩 |
@@ -109,7 +113,7 @@ sources:
 
 # 页面
 
-一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data:`）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
+一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data: blob:`，`blob:` 给交付物的图片预览）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
 
 改页面时注意：脚本放在模板字符串里，不能写反引号和 `${`；CSP 不许写 `style` 属性，样式都放样式表，脚本要改样式就改 class 或 `node.style`。
 

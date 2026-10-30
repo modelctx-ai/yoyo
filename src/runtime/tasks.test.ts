@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
 
 import { createContext, createMemoryStore, createOrchestrator, type Context } from '@modelctx-ai/ctx';
@@ -11,6 +14,7 @@ import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
 import { cancelAgentTask, createAgentTask } from '../features/tasks/tasks.ts';
 import type { Repos } from '../ports/index.ts';
 import { MAX_ROUNDS, createTaskRunner } from './tasks.ts';
+import { createArtifactFiles } from '../storage/artifacts.ts';
 import { memoryLogger, memoryRepos } from './testing.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
@@ -74,7 +78,8 @@ function rig(model: MockLanguageModelV4 | null, concurrency?: number): Rig {
   const logger = memoryLogger();
   const main = createContext({ store: createMemoryStore(), session: sessionFor('main'), projection: mainProjection });
   const worker = createYoyoTools({ repos, search: null });
-  addTaskWorkerTools(worker, { repos, now: () => new Date(T0) });
+  const files = createArtifactFiles(join(mkdtempSync(join(tmpdir(), 'yoyo-tasks-')), 'artifacts'));
+  addTaskWorkerTools(worker, { repos, now: () => new Date(T0), files });
   const harness = createYoyoHarness(createTaskContext(main, { tools: worker }));
   const runs = createOrchestrator({ harness, store: main.store, owner: 'yoyo-tasks' });
   const finished: Promise<boolean>[] = [];
@@ -145,6 +150,7 @@ describe('子任务的跑法', () => {
       [
         call('task_plan', { id: 1, todos: ['收集进展', '写成周报'] }),
         call('task_todo', { id: 1, index: 1, state: 'done', note: '问到了' }),
+        call('task_deliver', { id: 1, name: '周报.md', content: '# 周报' }),
         call('task_todo', { id: 1, index: 2, state: 'done' }),
         call('task_finish', { id: 1, result: 'A 上线\nB 在测\nC 排期', checks: CHECKS }),
         text('交好了'),
@@ -177,6 +183,7 @@ describe('子任务的跑法', () => {
     const event = back[0]!;
     assert.equal(event.type, 'event');
     assert.match(event.type === 'event' ? (event.text ?? '') : '', /子任务 #1「整理周报」做完了。\n结果：\nA 上线/);
+    assert.match(event.type === 'event' ? (event.text ?? '') : '', /\n交付物（在工作台里）：周报\.md（8 B）$/);
     const { messages } = await main.view();
     assert.match(JSON.stringify(messages), /系统消息：子任务 #1/);
     assert.equal(await runner.runNext(), null, '没有排队的了');

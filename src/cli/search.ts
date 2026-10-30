@@ -1,19 +1,20 @@
 /**
- * `yoyo search`：在 yoyo 自己的数据里找一个词，对话、子任务、记住的事、日程、联系人一起找。
+ * `yoyo search`：在 yoyo 自己的数据里找一个词，对话、子任务、交付物、记住的事、日程、联系人一起找。
  * 这里只管比对和排版，数据由命令读好交进来。每一行开头是哪一类，后面带着能接着查的编号。
  */
 import { textOf, type Entry, type MemoryFact } from '@modelctx-ai/ctx';
 
 import { STATE_LABELS } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
-import type { AgentTask, Contact, ScheduleItem } from '../kernel/types.ts';
+import type { AgentTask, Artifact, Contact, ScheduleItem } from '../kernel/types.ts';
 
-export const SEARCH_KINDS = ['chat', 'tasks', 'facts', 'alarms', 'contacts'] as const;
+export const SEARCH_KINDS = ['chat', 'tasks', 'files', 'facts', 'alarms', 'contacts'] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 
 const LABELS: Readonly<Record<SearchKind, string>> = {
   chat: '对话',
   tasks: '子任务',
+  files: '交付物',
   facts: '事实',
   alarms: '日程',
   contacts: '联系人',
@@ -21,6 +22,7 @@ const LABELS: Readonly<Record<SearchKind, string>> = {
 
 const NEXT: Readonly<Partial<Record<SearchKind, string>>> = {
   tasks: 'yoyo task show <编号>',
+  files: 'yoyo artifact show <编号>',
   facts: 'yoyo memory history <id>',
 };
 
@@ -32,6 +34,7 @@ export interface SearchData {
   /** 主会话的条目，先后顺序随意。 */
   readonly entries?: readonly Entry[];
   readonly tasks?: readonly AgentTask[];
+  readonly artifacts?: readonly Artifact[];
   readonly facts?: readonly MemoryFact[];
   readonly schedule?: readonly ScheduleItem[];
   readonly contacts?: readonly Contact[];
@@ -101,6 +104,12 @@ function taskRows(tasks: readonly AgentTask[], terms: readonly string[]): string
   });
 }
 
+function fileRows(artifacts: readonly Artifact[], terms: readonly string[]): string[] {
+  return artifacts
+    .filter((artifact) => matches(artifact.name, terms))
+    .map((artifact) => `${artifact.id}\t#${artifact.task}\t${artifact.name}`);
+}
+
 function factRows(facts: readonly MemoryFact[], terms: readonly string[]): string[] {
   return facts
     .filter((fact) => matches(`${fact.topic ?? ''}\n${fact.text}`, terms))
@@ -128,6 +137,7 @@ export function searchRows(data: SearchData, terms: readonly string[], limit: nu
   const found: Record<SearchKind, string[]> = {
     chat: data.entries ? chatRows(data.entries, terms) : [],
     tasks: data.tasks ? taskRows(data.tasks, terms) : [],
+    files: data.artifacts ? fileRows(data.artifacts, terms) : [],
     facts: data.facts ? factRows(data.facts, terms) : [],
     alarms: data.schedule ? scheduleRows(data.schedule, terms) : [],
     contacts: data.contacts ? contactRows(data.contacts, terms) : [],
