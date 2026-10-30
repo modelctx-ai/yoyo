@@ -86,6 +86,10 @@ describe('web 管理页', () => {
         },
       },
       schedule: () => ({ nextWhisper: T0 + 60_000, lastTalk: 0 }),
+      talk: async (text) => {
+        if (text === '坏了') throw new Error('没配 llm，回不了话');
+        return `收到：${text}`;
+      },
       now: () => new Date(T0),
       logger,
     });
@@ -154,9 +158,22 @@ describe('web 管理页', () => {
     );
     const { data } = await call('GET', '/api/context');
     assert.deepEqual(
-      (data as { kind: string; text: string }[]).map((item) => `${item.kind}:${item.text}`),
-      ['user:今天要带伞吗', 'assistant:要带'],
+      (data as { kind: string; text: string; via?: string }[]).map((item) => `${item.kind}:${item.text}:${item.via}`),
+      ['user:今天要带伞吗:dsh-pet', 'assistant:要带:dsh-pet'],
     );
+  });
+
+  test('工作台聊一句：回复原样回来；空的、太长的、没回上来的都说清楚', async () => {
+    assert.deepEqual(await call('POST', '/api/chat', { text: '  在吗 ' }), {
+      status: 200,
+      data: { reply: '收到：在吗' },
+    });
+    assert.deepEqual(await call('POST', '/api/chat', { text: ' ' }), { status: 400, data: { error: '要说点什么' } });
+    assert.equal((await call('POST', '/api/chat', { text: '长'.repeat(4001) })).status, 400);
+    assert.deepEqual(await call('POST', '/api/chat', { text: '坏了' }), {
+      status: 502,
+      data: { error: 'yoyo 没回上来：没配 llm，回不了话' },
+    });
   });
 
   test('记忆：改画像、忘掉事实、退役程序，都记一笔', async () => {

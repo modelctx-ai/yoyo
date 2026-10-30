@@ -1,6 +1,8 @@
 import {
+  assistantEntry,
   createOrchestrator,
   redact,
+  userEntry,
   type Context,
   type Harness,
   type LanguageModel,
@@ -93,6 +95,9 @@ export function consolidateDue(at: string, now: Date, lastTalk: number, doneOn: 
   return now.getTime() - lastTalk >= CONSOLIDATE_IDLE_MS;
 }
 
+/** 工作台里聊的那几条的来源，日志里和桌宠对话（`dsh-pet`）、语音分得开。 */
+export const WORKBENCH_SOURCE = 'workbench';
+
 export interface ScheduleState {
   /** 下一句日常碎碎念的时间（毫秒）。 */
   nextWhisper: number;
@@ -148,6 +153,11 @@ export interface YoyoOrchestrator extends Orchestrator {
    * 这一问一答由桌宠记进它的对话记忆，下一拍并进来。算作说过话，碎碎念照样让路。
    */
   chat(text: string, signal?: AbortSignal): Promise<string>;
+  /**
+   * 工作台里打的一句：和右键对话同一个 agent，问答记进日志（来源 `workbench`），桌宠那边不念、不冒泡。
+   * 算作说过话，碎碎念照样让路。
+   */
+  talk(text: string, signal?: AbortSignal): Promise<string>;
   /** 桌宠自己的「碎碎念」（右键里没藏起来时）：交给碎碎念的 agent 写一句，返回正文。不写日志。 */
   petWhisper(signal?: AbortSignal): Promise<string>;
   /**
@@ -364,6 +374,18 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     }
   }
 
+  async function talk(text: string, signal?: AbortSignal): Promise<string> {
+    const at = clock();
+    const answer = await chat(text, signal);
+    // 回上来了才记：没回成的那句不留在日志里，工作台上提示一声就好
+    await context.append(
+      userEntry(text, { at, source: WORKBENCH_SOURCE }),
+      assistantEntry(answer, { at: Math.max(clock(), at + 1), source: WORKBENCH_SOURCE }),
+    );
+    repos.activity.record({ type: 'chat-workbench', text });
+    return answer;
+  }
+
   async function petWhisper(signal?: AbortSignal): Promise<string> {
     if (!model) throw new Error('没配 llm，写不了碎碎念');
     return (await writeWhisper(new Date(clock()), model, signal)).text;
@@ -465,6 +487,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     whisper,
     listen,
     chat,
+    talk,
     petWhisper,
     tick,
     start,

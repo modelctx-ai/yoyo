@@ -5,6 +5,7 @@
 import { compareEntries, textOf, type Context, type Entry, type MemoryStore } from '@modelctx-ai/ctx';
 
 import type { Config } from '../app/config.ts';
+import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
 import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
@@ -22,6 +23,8 @@ export interface WebDeps {
   readonly host: Pick<PetHost, 'name' | 'workStatus'>;
   /** 编排器的排期：下一句碎碎念、最近一次说话。常驻进程里才有。 */
   readonly schedule?: () => { readonly nextWhisper: number; readonly lastTalk: number };
+  /** 工作台里和 yoyo 聊一句，返回回复。常驻进程里才有。 */
+  readonly talk?: (text: string) => Promise<string>;
   readonly now?: () => Date;
 }
 
@@ -43,6 +46,8 @@ const ok = (body: unknown): ApiResult => ({ status: 200, body });
 
 /** 画像最长多少字：比整理时写的宽松，挡住误贴的大段文字。 */
 const CORE_MAX = 4000;
+/** 工作台里一句话最长多少字。 */
+const TALK_MAX = 4000;
 
 function field(body: unknown, name: string): unknown {
   return typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[name] : undefined;
@@ -64,11 +69,20 @@ function removed<T>(value: T | null, what: string): T {
   return value;
 }
 
+export interface ContextItem {
+  readonly at: number;
+  readonly kind: string;
+  readonly text: string;
+  /** 从哪来的：`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音和自己说的。 */
+  readonly via?: string;
+}
+
 /** 上下文的一条，给页面看：消息按角色，碎碎念、摘要单列。别的条目不列。 */
-export function contextItem(entry: Entry): { at: number; kind: string; text: string } | null {
+export function contextItem(entry: Entry): ContextItem | null {
   if (entry.type === 'message') {
     const body = textOf(entry.message);
-    return body ? { at: entry.at, kind: entry.message.role, text: body } : null;
+    if (!body) return null;
+    return { at: entry.at, kind: entry.message.role, text: body, ...(entry.source ? { via: entry.source } : {}) };
   }
   if (entry.type === 'event' && entry.kind === 'whisper' && entry.text) {
     return { at: entry.at, kind: 'whisper', text: entry.text };
@@ -195,6 +209,18 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     }
   }
 
+  async function talk(body: unknown): Promise<unknown> {
+    if (!deps.talk) throw new RequestError('常驻进程里才能聊', 503);
+    const said = text(body, 'text')?.trim();
+    if (!said) throw new RequestError('要说点什么');
+    if (said.length > TALK_MAX) throw new RequestError(`太长了，最多 ${TALK_MAX} 字`);
+    try {
+      return { reply: await deps.talk(said) };
+    } catch (error) {
+      throw new RequestError(`yoyo 没回上来：${errorText(error)}`, 502);
+    }
+  }
+
   function newContact(body: unknown): unknown {
     try {
       return addContact(repos, { name: text(body, 'name'), yoyo: text(body, 'yoyo'), note: text(body, 'note') }, now());
@@ -247,6 +273,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         repos.activity.record({ type: 'config-switch', text: Object.keys(switches).join(' ') });
         return ok({ saved: true });
       }
+      if (route === 'POST /api/chat') return ok(await talk(body));
       if (route === 'POST /api/actions/whisper' || route === 'POST /api/actions/listen') {
         // 和右键菜单一样交给常驻进程的收件箱，下一拍做
         enqueue(deps.paths.inboxFile, id === 'listen' ? 'listen' : 'whisper');
