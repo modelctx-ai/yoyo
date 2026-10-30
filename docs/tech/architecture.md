@@ -95,11 +95,11 @@ flowchart TB
 | `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路、气泡时长和记录类型。不做 IO |
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换，`YOYO_APP` 指出所在的 yoyo.app）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
-| `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
+| `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问）、`tasks`（子任务的规则：开、拆 todo、标状态、交结果，和给人、给模型看的文字） |
 | `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
-| `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
+| `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台一件件做，结果写回主线程，见[子任务](tasks.md)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
 | `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
@@ -135,12 +135,12 @@ flowchart LR
   harness -. "读视图" .-> store
 ```
 
-`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，从 yoyo.app 里跑时打开 app 的窗口，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
+`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，从 yoyo.app 里跑时打开 app 的窗口，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`，再让子任务的 `TaskRunner` 开始一件件做（`tasks.enabled` 打开时）。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
 
 1. 粘贴板有变化就记一条（`clipboard.enabled`）。
 2. 导演并进桌宠的对话记忆。
 3. 取走收件箱里的请求：命令、菜单和按键交来的「听一句」「碎碎念」。
-4. 到点的闹钟和任务，由导演提醒。
+4. 到点的闹钟和任务，由导演提醒；做完和没做成的子任务、还没报过的，导演各说一声（`tasks.notify`）。
 5. `memes.enabled` 打开、离下一句日常碎碎念还有 20 秒以上，就让导演去找表情包：空套餐隔 1 小时、有图的隔 6 小时才重新搜，失败了隔 10 分钟再找。
 6. 到点了就说一句；30 秒内有过对话就先顺延，没说成隔一分钟再试。
 7. 配了 `context.compactAt` 时，每 10 分钟最多让导演看一次要不要压缩；压一次最多等 60 秒，超时这次就不压。

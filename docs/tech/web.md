@@ -68,7 +68,10 @@ sources:
 | 接口 | 做什么 |
 | --- | --- |
 | `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、最近一次说话、日程和联系人条数 |
-| `GET /api/context?limit=` | 最近的上下文，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）。缺省 40 条，最多 200 |
+| `GET /api/context?limit=` | 最近的上下文，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）；子任务写回来的那条是 `kind: 'task'`，带编号 `task` 和状态 `state`。缺省 40 条，最多 200 |
+| `GET /api/tasks` | 最近 50 个子任务：编号、标题、状态、谁派的、时间、todo 进度 |
+| `GET /api/tasks/:id` | 一个子任务的全部，加上 `progress` 和最近 300 步过程（`steps`：收到、说、调用、结果）。没有回 404 |
+| `POST /api/tasks/:id/cancel` | 取消；已经结束的回 409 |
 | `POST /api/chat` | 工作台聊一句：`{ text }`，去掉首尾空白，最多 4000 字；回 `{ reply }`。问答记进日志、记 `chat-workbench`。常驻进程外回 503，没回上来回 502 和原因 |
 | `GET /api/activity?limit=` | 做过的事，缺省 50 条，最多 500 |
 | `GET /api/memory` | 画像、仍然成立的事实（按开始成立的时间）、没退役的规矩 |
