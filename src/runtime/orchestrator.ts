@@ -16,7 +16,7 @@ import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
-import { FILE_TOOL_NAMES } from '../brain/files.ts';
+import { OWNER_TOOL_NAMES } from '../brain/files.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
@@ -181,12 +181,12 @@ export interface YoyoOrchestrator extends Orchestrator {
 }
 
 /**
- * 转告那一轮给哪些工具：这一轮是 yoyo 自己发起的，没有主人看着，工具照给，读写文件的不给。
- * 不知道注册表里有哪些（`names` 没给）就全给，那时也没有读写文件的。
+ * 转告那一轮给哪些工具：这一轮是 yoyo 自己发起的，没有主人看着，工具照给，读写文件和跑命令的不给。
+ * 不知道注册表里有哪些（`names` 没给）就全给，那时也没有这些。
  */
 export function relayTools(enabled: boolean, names: readonly string[] | undefined): boolean | readonly string[] {
   if (!enabled) return false;
-  return names ? names.filter((name) => !FILE_TOOL_NAMES.includes(name)) : true;
+  return names ? names.filter((name) => !OWNER_TOOL_NAMES.includes(name)) : true;
 }
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {

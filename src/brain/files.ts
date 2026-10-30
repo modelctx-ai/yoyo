@@ -3,6 +3,7 @@
  * 工作区能读能写，`files.readable` 只能读，配置、yoyo 自己的数据和密钥读不到。路径先展开 `~`、相对路径从工作区算起，
  * 再顺着符号链接解析成真实路径才比规则，链接指到外面也出不去。不问主人：范围本身就是把关。
  * 写和改都记进轨迹。只在主人发起的那一轮给（回复、右键对话、工作台、子任务），转告那一轮不给。
+ * 跑命令的 `bash` 在 `bash.ts`，用同一份范围。
  */
 import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -16,8 +17,8 @@ import type { Paths } from '../app/paths.ts';
 import { checkAccess, inside, type FileMode, type FileRules } from '../features/files/access.ts';
 import type { Repos } from '../ports/index.ts';
 
-/** 三个工具的名字。转告那一轮按这个清单去掉。 */
-export const FILE_TOOL_NAMES: readonly string[] = ['read', 'write', 'edit'];
+/** 只在主人发起的那一轮给的工具：读写文件的三个和跑命令的 `bash`。转告那一轮按这个清单去掉。 */
+export const OWNER_TOOL_NAMES: readonly string[] = ['read', 'write', 'edit', 'bash'];
 
 /** 一次最多读多少行、一行最多多少字、一次最多交回多少字。 */
 export const READ_LINES = 2000;
@@ -37,6 +38,8 @@ const SECRET_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.netrc', '.c
 
 export interface FileAccess {
   readonly workspace: string;
+  /** 解析好的规则（真实路径）；`bash` 的沙箱设置照它拼。 */
+  readonly rules: FileRules;
   /** 主人给的路径解析成真实的绝对路径，按规则查过；不让就抛 `FileError`。 */
   resolve(path: string, mode: FileMode): string;
   /** 给模型和轨迹看的写法：工作区里的写相对路径，别的写 `~/…` 或绝对路径。 */
@@ -92,6 +95,7 @@ export function createFileAccess(options: FileAccessOptions): FileAccess {
   const realHome = real(home);
   return {
     workspace,
+    rules,
     resolve(path, mode) {
       if (!path.trim()) throw new FileError('要给路径');
       const target = real(expand(path, workspace));

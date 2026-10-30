@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
@@ -21,6 +22,10 @@ function tempPaths(): Paths {
 }
 
 const LLM = { baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'llm-key', model: 'mock-model' };
+
+function withTools(files: object, sandbox: object) {
+  return parseConfig({ stage: 'console', llm: { ...LLM, tools: true }, files, sandbox });
+}
 
 function memoryTables(app: { readonly db: DatabaseSync }): string[] {
   return (
@@ -148,6 +153,40 @@ describe('container', () => {
     );
     assert.ok(existsSync(paths.workspaceDir));
     await app.close();
+  });
+
+  test('bash：沙箱程序找得到才有，找不到记一行；llm.tools 没开或者 files.bash 是 deny 就没有', async () => {
+    const missing = memoryLogger();
+    const without = await createApp(withTools({}, { command: '/nowhere/srt' }), tempPaths(), { logger: missing });
+    assert.equal(without.tools?.has('bash'), false);
+    assert.equal(without.tools?.has('read'), true, '别的工具照常');
+    assert.deepEqual(
+      missing.lines.filter((line) => line.startsWith('没有 bash 工具')),
+      ['没有 bash 工具：沙箱程序 /nowhere/srt 找不到（命令一律经沙箱跑，不退回不加沙箱的跑法）'],
+    );
+    await without.close();
+
+    const fake = fileURLToPath(new URL('../brain/fixtures/fake-srt.mjs', import.meta.url));
+    const logger = memoryLogger();
+    const paths = tempPaths();
+    const withSandbox = await createApp(withTools({}, { command: fake }), paths, { logger });
+    assert.equal(withSandbox.tools?.has('bash'), true);
+    assert.deepEqual(
+      logger.lines.filter((line) => line.startsWith('没有 bash 工具')),
+      [],
+    );
+    assert.ok(readdirSync(join(paths.dataDir, 'sandbox')).length > 0, '设置文件写在数据目录里');
+    await withSandbox.close();
+
+    const denied = memoryLogger();
+    const off = await createApp(withTools({ bash: 'deny' }, { command: fake }), tempPaths(), { logger: denied });
+    assert.equal(off.tools?.has('bash'), false);
+    assert.equal(
+      denied.lines.some((line) => line.includes('bash')),
+      false,
+      '不给就不找也不记',
+    );
+    await off.close();
   });
 
   test('recall 工具：只在记忆打开、llm.tools 打开时注册，只交给回复，调用走记忆这个执行环境', async () => {
