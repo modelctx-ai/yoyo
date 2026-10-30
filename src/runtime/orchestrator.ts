@@ -16,6 +16,7 @@ import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
+import { FILE_TOOL_NAMES } from '../brain/files.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { fixedPacer } from '../brain/pace.ts';
@@ -156,6 +157,8 @@ export interface YoyoOrchestratorDeps {
   readonly pacer?: WhisperPacer;
   /** `memory.enabled` 打开时才有：拍子末尾门控，夜里整理。 */
   readonly memory?: YoyoMemory | null;
+  /** 回复那份注册表里现在有哪些工具；转告那一轮按它去掉读写文件的。不给就全给。 */
+  readonly toolNames?: () => readonly string[];
   /** 毫秒时钟，缺省 `Date.now`。 */
   readonly clock?: () => number;
   /** 一开始的排期，缺省马上说第一句。 */
@@ -198,6 +201,15 @@ export interface YoyoOrchestrator extends Orchestrator {
   /** 每秒一拍，直到 `signal` 中止或 `close`。中止时正在跑的模型也一起取消。 */
   start(signal?: AbortSignal): void;
   readonly state: ScheduleState;
+}
+
+/**
+ * 转告那一轮给哪些工具：这一轮是 yoyo 自己发起的，没有主人看着，工具照给，读写文件的不给。
+ * 不知道注册表里有哪些（`names` 没给）就全给，那时也没有读写文件的。
+ */
+export function relayTools(enabled: boolean, names: readonly string[] | undefined): boolean | readonly string[] {
+  if (!enabled) return false;
+  return names ? names.filter((name) => !FILE_TOOL_NAMES.includes(name)) : true;
 }
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {
@@ -460,7 +472,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         tone: toneForHour(now.getHours()),
         model,
         secrets,
-        tools: config.llm.tools,
+        tools: relayTools(config.llm.tools, deps.toolNames?.()),
         signal: stopping.signal,
         ...(factSources ? { sources: factSources.reply } : {}),
       });

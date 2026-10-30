@@ -67,6 +67,14 @@
     "notify": true,
     "concurrency": 2
   },
+  "files": {
+    "workspace": "",
+    "readable": [],
+    "denyRead": [],
+    "read": "allow",
+    "write": "allow",
+    "edit": "allow"
+  },
   "context": {
     "keep": 40
   },

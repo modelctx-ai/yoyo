@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -23,6 +23,9 @@ import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
 import { createAgentTask } from '../features/tasks/tasks.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { createRepos } from '../storage/repos.ts';
+import { parseConfig } from '../app/config.ts';
+import { resolvePaths } from '../app/paths.ts';
+import { createFileAccess } from './files.ts';
 import { addTaskWorkerTools, createYoyoTools, splitCommand } from './tools.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
@@ -251,6 +254,39 @@ describe('brain/tools', () => {
     const checks = [{ criterion: '三个项目都有', met: true, evidence: '有' }];
     assert.equal(await run(worker, 'task_finish', { id: 1, result: '周报', checks }), '交好了，子任务 #1 做完');
     assert.equal(await run(main, 'task_cancel', { id: 1 }), '子任务 #1 已经「做完」');
+  });
+
+  test('task_deliver 用 path 交工作区里的文件：按读文件的规则查，名字缺省用原来的', async () => {
+    const repos = memoryRepos();
+    const home = mkdtempSync(join(tmpdir(), 'yoyo-deliver-'));
+    const paths = resolvePaths({ YOYO_HOME: join(home, '.yoyo'), YOYO_CONFIG: join(home, '.yoyo', 'config.json') });
+    const access = createFileAccess({ config: parseConfig({}).files, paths, home });
+    const files = createArtifactFiles(paths.artifactsDir);
+    const worker = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(worker, { repos, now: () => NOW, files, access });
+    createAgentTask(repos, { title: '画图', goal: '画进度图', origin: 'main' }, NOW);
+    repos.agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    writeFileSync(join(access.workspace, '进度.png'), Buffer.from([137, 80, 78, 71, 0, 1]));
+    assert.equal(
+      await run(worker, 'task_deliver', { id: 1, path: '进度.png' }),
+      '交好了：进度.png（6 B），子任务 #1 一共交了 1 个文件',
+    );
+    assert.deepEqual([...files.read(1, '进度.png')!], [137, 80, 78, 71, 0, 1]);
+    assert.equal(
+      await run(worker, 'task_deliver', { id: 1, path: '进度.png', name: '图.png' }),
+      '交好了：图.png（6 B），子任务 #1 一共交了 2 个文件',
+    );
+    assert.match(String(await run(worker, 'task_deliver', { id: 1, path: '~/.yoyo/config.json' })), /不给读写/);
+    assert.equal(await run(worker, 'task_deliver', { id: 1, path: 'nope.md' }), '没有这个文件');
+    assert.equal(await run(worker, 'task_deliver', { id: 1, path: 'a', content: 'b' }), 'content 和 path 只给一个');
+    assert.equal(await run(worker, 'task_deliver', { id: 1 }), '要给 content，或者用 path 交工作区里的文件');
+
+    const plain = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(plain, { repos, now: () => NOW, files });
+    assert.equal(
+      await run(plain, 'task_deliver', { id: 1, path: '进度.png' }),
+      '这里不能用 path 交，把内容写进 content',
+    );
   });
 
   test('task_deliver：给了放文件的地方才有；交进在做的那个子任务，规则不让的原样交回', async () => {

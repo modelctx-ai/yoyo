@@ -1,9 +1,12 @@
+import { readFileSync, statSync } from 'node:fs';
+import { basename } from 'node:path';
+
 import { createToolRegistry, tool, type LocalToolRegistry } from '@modelctx-ai/ctx';
 import { z } from 'zod';
 
 import { errorText } from '../app/log.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
-import { ARTIFACTS_PER_TASK, deliverArtifact, deliveredNote } from '../features/tasks/artifacts.ts';
+import { ARTIFACT_MAX, ARTIFACTS_PER_TASK, deliverArtifact, deliveredNote } from '../features/tasks/artifacts.ts';
 import { DEFAULT_AGENT, agentMenu, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
 import {
   CRITERIA_MAX,
@@ -19,6 +22,7 @@ import {
 import { ensurePlace, fetchUpcoming, weatherReport } from '../features/weather/weather.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import type { ArtifactFiles, Repos, WebSearch } from '../ports/index.ts';
+import { FileError, type FileAccess } from './files.ts';
 
 /** 跑一条 yoyo 命令行（只开 agent 那部分），交回它打出的文字。 */
 export type CliRun = (argv: readonly string[]) => Promise<string>;
@@ -62,7 +66,10 @@ function guarded<T>(work: () => T): T | string {
   try {
     return work();
   } catch (error) {
-    if (error instanceof TaskError) return error.message;
+    if (error instanceof TaskError || error instanceof FileError) return error.message;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return '没有这个文件';
+    if (code === 'EISDIR') return '这是目录，要交文件';
     throw error;
   }
 }
@@ -263,6 +270,8 @@ export function addTaskWorkerTools(
   deps: Pick<YoyoToolDeps, 'repos' | 'now'> & {
     /** 交付物的文件放哪；不给就没有 `task_deliver`。 */
     readonly files?: ArtifactFiles;
+    /** 给了就能用 `path` 交工作区里已有的文件，按读文件的规则查。 */
+    readonly access?: FileAccess;
   },
 ): void {
   const { repos } = deps;
@@ -335,24 +344,43 @@ export function addTaskWorkerTools(
     }),
   );
 
-  const { files } = deps;
+  const { files, access } = deps;
   if (!files) return;
   registry.addTool(
     'task_deliver',
     tool({
       description:
         '交一个文件给主人：整理好的 Markdown、CSV 表格、JSON、图片。存进这个子任务自己的交付物里，工作台能看能下载。' +
+        '写出内容交用 content；已经在工作区里的文件（例如用 write 写好的）用 path 交，不用再抄一遍。' +
         `文件名只写名字（例如「周报.md」「对比.csv」），同名的会换成新的；单个最多 5 MB，一个子任务最多 ${ARTIFACTS_PER_TASK} 个。` +
         '结果里照样写结论，并说交了哪些文件。',
       inputSchema: z.object({
         id,
-        name: z.string().describe('文件名，带扩展名，例如「周报.md」'),
-        content: z.string().describe('文件内容；图片之类的二进制给 base64'),
+        name: z.string().optional().describe('文件名，带扩展名，例如「周报.md」；用 path 交时不写就用原来的名字'),
+        content: z.string().optional().describe('文件内容；图片之类的二进制给 base64'),
         encoding: z.enum(['utf8', 'base64']).optional().describe('content 的写法：文字 utf8（缺省），二进制 base64'),
+        path: z.string().optional().describe('交工作区里已有的文件：它的路径'),
       }),
       execute: async (input) =>
         guarded(() => {
-          const artifact = deliverArtifact(repos, files, input, now());
+          const { path } = input;
+          if (path !== undefined && input.content !== undefined) return 'content 和 path 只给一个';
+          let content: string | Uint8Array | undefined = input.content;
+          let name: string | undefined = input.name;
+          if (path !== undefined) {
+            if (!access) return '这里不能用 path 交，把内容写进 content';
+            const real = access.resolve(path, 'read');
+            if (statSync(real).size > ARTIFACT_MAX) return `太大了，单个最多 5 MB：${path}`;
+            content = readFileSync(real);
+            name ??= basename(real);
+          }
+          if (content === undefined) return '要给 content，或者用 path 交工作区里的文件';
+          const artifact = deliverArtifact(
+            repos,
+            files,
+            { id: input.id, name, content, ...(input.encoding ? { encoding: input.encoding } : {}) },
+            now(),
+          );
           return deliveredNote({ id: input.id }, artifact, repos.artifacts.list({ task: input.id }).length);
         }),
     }),

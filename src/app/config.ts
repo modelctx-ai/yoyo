@@ -146,6 +146,24 @@ const tasks = z.looseObject({
   concurrency: z.coerce.number().int().min(1).max(8).catch(2).default(2),
 });
 
+/** 读、写、改文件三个工具的开关：`allow` 给，`deny` 不给。写错按 `allow`。 */
+function permission() {
+  return z.enum(['allow', 'deny']).catch('allow').default('allow');
+}
+
+/** 读写文件的工具，见 `brain/files.ts`。只在 `llm.tools` 打开时有。 */
+const files = z.looseObject({
+  /** 能写的地方，也能读。不写是数据目录下的 `workspace`。`~` 开头算主人的主目录。 */
+  workspace: z.string().catch('').default(''),
+  /** 另外能读（不能写）的目录或文件。 */
+  readable: stringList().default([]),
+  /** 另外读不到的位置，盖过 `readable`。 */
+  denyRead: stringList().default([]),
+  read: permission(),
+  write: permission(),
+  edit: permission(),
+});
+
 const context = z.looseObject({
   /** 交给模型的历史上限（估算 token）。不写就整段带上，和以前一样。 */
   maxTokens: optionalCount(),
@@ -295,6 +313,7 @@ export const configSchema = z.looseObject({
   sfx: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),
   tasks: z.preprocess(objectOrNothing, tasks.prefault({})),
+  files: z.preprocess(objectOrNothing, files.prefault({})),
   memory: z.preprocess(objectOrNothing, memory.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
   mcpServers: z.preprocess(objectOrNothing, z.record(z.string(), z.unknown()).default({})),
@@ -314,6 +333,7 @@ export type McpServersConfig = Config['mcpServers'];
 export type SandboxConfig = Config['sandbox'];
 export type WebConfig = Config['web'];
 export type TasksConfig = Config['tasks'];
+export type FilesConfig = Config['files'];
 export type MemoryConfig = Config['memory'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
 export type PaceConfig = Config['pace'];
