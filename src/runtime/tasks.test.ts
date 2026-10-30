@@ -64,6 +64,8 @@ interface Rig {
   readonly main: Context;
   readonly runner: ReturnType<typeof createTaskRunner>;
   readonly logger: ReturnType<typeof memoryLogger>;
+  /** 每次叫一声时，结果是不是已经在主会话里。 */
+  readonly finished: Promise<boolean>[];
 }
 
 function rig(model: MockLanguageModelV4 | null): Rig {
@@ -74,8 +76,25 @@ function rig(model: MockLanguageModelV4 | null): Rig {
   addTaskWorkerTools(worker, { repos, now: () => new Date(T0) });
   const harness = createYoyoHarness(createTaskContext(main, { tools: worker }));
   const runs = createOrchestrator({ harness, store: main.store, owner: 'yoyo-tasks' });
-  const runner = createTaskRunner({ repos, logger, runs, model, main, now: () => T0, pollMs: 5 });
-  return { repos, main, runner, logger };
+  const finished: Promise<boolean>[] = [];
+  const runner = createTaskRunner({
+    repos,
+    logger,
+    runs,
+    model,
+    main,
+    now: () => T0,
+    pollMs: 5,
+    // 叫一声的那一刻，结果已经在主会话里了
+    onFinished: (task) => {
+      finished.push(
+        main
+          .entries()
+          .then((entries) => entries.some((entry) => entry.type === 'event' && entry.meta?.['id'] === task.id)),
+      );
+    },
+  });
+  return { repos, main, runner, logger, finished };
 }
 
 function brief(repos: Repos) {
@@ -101,10 +120,11 @@ describe('子任务的跑法', () => {
       ],
       prompts,
     );
-    const { repos, main, runner } = rig(model);
+    const { repos, main, runner, finished } = rig(model);
     brief(repos);
     const done = await runner.runNext();
     assert.equal(done?.state, 'done');
+    assert.deepEqual(await Promise.all(finished), [true], '写回主会话以后才叫醒主线程');
     assert.equal(done?.result, 'A 上线\nB 在测\nC 排期');
     assert.deepEqual(
       done?.todos.map((todo) => todo.state),

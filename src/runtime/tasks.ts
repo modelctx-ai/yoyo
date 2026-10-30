@@ -29,6 +29,8 @@ export interface TaskRunnerDeps {
   readonly model: LanguageModel | null;
   /** 主线程的上下文：结果写回这里。 */
   readonly main: Pick<Context, 'append'>;
+  /** 结果写回主会话以后叫一声：编排器据此叫醒主线程转告主人。 */
+  readonly onFinished?: (task: AgentTask) => void;
   /** 子 agent 收哪些事实来源；不给就全部。 */
   readonly sources?: readonly string[];
   /** 报错里要抹掉的密钥。 */
@@ -112,6 +114,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     const final = repos.agentTasks.get(task.id) ?? task;
     // 结果写回主线程：主线程下一轮看得到，工作台的主聊天里也有
     await main.append(eventEntry(TASK_EVENT, { text: resultNote(final), meta: { id: final.id, state: final.state } }));
+    deps.onFinished?.(final);
     logger.info(`子任务 #${final.id} ${final.state === 'done' ? '做完了' : `停在「${final.state}」`}`);
     return final;
   }

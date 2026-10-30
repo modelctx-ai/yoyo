@@ -302,6 +302,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       runs: createOrchestrator({ harness: taskHarness, store: context.store, owner: 'yoyo-tasks', logger }),
       model,
       main: context,
+      // 结果写回主会话以后，叫醒主线程转告主人
+      onFinished: (task) => orchestrator.relayTask(task.id),
       ...(factSources ? { sources: factSources.reply } : {}),
       secrets: [config.llm.apiKey].filter(Boolean),
     });

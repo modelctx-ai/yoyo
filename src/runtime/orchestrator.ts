@@ -15,14 +15,15 @@ import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
-import { generateChat, generateReply, generateWhisper } from '../brain/compose.ts';
+import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
 import { shouldSearch } from '../features/search/question.ts';
-import { announceLine } from '../features/tasks/tasks.ts';
+import { announceLine, relayPrompt } from '../features/tasks/tasks.ts';
+import type { AgentTask } from '../kernel/types.ts';
 import { nextWhisperAt } from '../kernel/pace.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
@@ -159,6 +160,11 @@ export interface YoyoOrchestrator extends Orchestrator {
    * 算作说过话，碎碎念照样让路。
    */
   talk(text: string, signal?: AbortSignal): Promise<string>;
+  /**
+   * 子任务结束了（结果已经写回主会话）：排进来，下一拍叫醒主线程转告主人。照 Claude Code 后台任务的
+   * `<task-notification>`：通知进主线程，主线程用自己的话告诉主人。
+   */
+  relayTask(id: number): void;
   /** 桌宠自己的「碎碎念」（右键里没藏起来时）：交给碎碎念的 agent 写一句，返回正文。不写日志。 */
   petWhisper(signal?: AbortSignal): Promise<string>;
   /**
@@ -196,6 +202,18 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   const memoryWork = new AbortController();
   /** 写过用户话或回复、还没门控过。门控跳过时留着，下一拍再跑。 */
   let wrote = false;
+  /**
+   * 结束了、等着转告的子任务。子任务的跑法在结果写回主会话以后才交过来，所以转告时主线程已经看得到结果。
+   * 上次没转告完就停了的，开始时补上。
+   */
+  const relayQueue = new Set<number>(
+    config.tasks.enabled
+      ? repos.agentTasks
+          .list({ states: ['done', 'failed', 'cancelled'], limit: 20 })
+          .filter((task) => task.announcedAt === null)
+          .map((task) => task.id)
+      : [],
+  );
   let gating: Promise<void> | null = null;
   let consolidating: Promise<void> | null = null;
   /** 可能有待处理的笔记：启动时不知道，门控写下待处理的笔记以后又有了。 */
@@ -387,17 +405,41 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     return answer;
   }
 
-  /** 做完、没做成的子任务桌宠各说一声（`tasks.notify` 关着就不说），取消的不说；说过的记下来。 */
-  async function announceTasks(now: Date): Promise<void> {
-    // 列出来是新的在前，按做完的先后说
-    const finished = repos.agentTasks.list({ states: ['done', 'failed', 'cancelled'], limit: 20 }).toReversed();
-    for (const task of finished) {
-      if (task.announcedAt !== null) continue;
-      if (config.tasks.notify && task.state !== 'cancelled') {
-        await director.speak(announceLine(task, now), now);
+  /**
+   * 子任务结束后排进来的通知，按结束的先后处理：做完和没做成的叫醒主线程跑一轮，把通知交给它，
+   * 它用一两句话转告、桌宠说出来（`tasks.notify` 关着就不叫醒，结果照样在主会话里）；取消的不叫醒。
+   * 转告没成（模型出错）就说一句固定的。处理过的记下来，不再说。
+   */
+  async function relayTasks(now: Date): Promise<void> {
+    const ids = [...relayQueue].toSorted((a, b) => a - b);
+    relayQueue.clear();
+    for (const id of ids) {
+      const task = repos.agentTasks.get(id);
+      if (!task || task.announcedAt !== null) continue;
+      if (config.tasks.notify && (task.state === 'done' || task.state === 'failed')) {
+        await director.speak(await relayLine(task, now), now);
         state.lastTalk = clock();
+        wrote = true;
       }
-      repos.agentTasks.update(task.id, { announcedAt: clock() }, clock());
+      repos.agentTasks.update(id, { announcedAt: clock() }, clock());
+    }
+  }
+
+  async function relayLine(task: AgentTask, now: Date): Promise<Line> {
+    if (!model) return announceLine(task, now);
+    try {
+      return await generateRelay(context, orchestrator, {
+        notice: relayPrompt(task),
+        tone: toneForHour(now.getHours()),
+        model,
+        secrets,
+        tools: config.llm.tools,
+        signal: stopping.signal,
+        ...(factSources ? { sources: factSources.reply } : {}),
+      });
+    } catch (error) {
+      logger.warn(`子任务 #${task.id} 的结果没转告成，先报一声：${errorText(error)}`);
+      return announceLine(task, now);
     }
   }
 
@@ -422,7 +464,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         await director.remind(item, now);
         state.lastTalk = clock();
       }
-      if (config.tasks.enabled) await announceTasks(now);
+      if (config.tasks.enabled && relayQueue.size > 0) await relayTasks(now);
       if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
@@ -504,6 +546,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     listen,
     chat,
     talk,
+    relayTask(id) {
+      relayQueue.add(id);
+    },
     petWhisper,
     tick,
     start,

@@ -162,6 +162,32 @@ export async function generateChat(context: Context, runs: Runs, options: ChatOp
   return text;
 }
 
+export interface RelayOptions extends ReplyOptions {
+  /** 子任务的通知和该怎么转告，见 `features/tasks` 的 `relayPrompt`。 */
+  readonly notice: string;
+}
+
+/**
+ * 子任务结束、主线程被叫醒的这一轮：和回复同一个 agent，通知放进最后一条临时用户消息，
+ * 说一两句转告主人。不写日志：说出口以后由导演记，和回复一样。
+ */
+export function relayRequest(context: Context, options: RelayOptions): RunRequest {
+  return {
+    session: context.session,
+    agent: replyRequestAgent(options),
+    prompt: options.notice,
+    record: false,
+    ...(options.signal ? { signal: options.signal } : {}),
+  };
+}
+
+export async function generateRelay(context: Context, runs: Runs, options: RelayOptions): Promise<Line> {
+  const text = await run(runs, relayRequest(context, options), options.secrets);
+  const line = parseWhisper(text, options.tone, 'reply');
+  if (!line) throw new Error('模型没有返回能念的转告');
+  return line;
+}
+
 /** 回复主人刚说的话（调用前先 recordUser），经编排器跑一轮。 */
 export async function generateReply(context: Context, runs: Runs, options: ReplyOptions): Promise<Line> {
   const text = await run(runs, replyRequest(context, options), options.secrets);

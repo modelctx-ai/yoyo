@@ -126,6 +126,11 @@ export function updateTodo(
   if (!Number.isInteger(index) || !todo)
     throw new TaskError(`没有第 ${index} 项 todo，现在一共 ${task.todos.length} 项`);
   if (state === 'skipped' && !note?.trim()) throw new TaskError('跳过要写一句为什么');
+  // 和 Claude Code 的 TodoWrite 一样：同一时间只有一项在做，做完一项再开始下一项
+  const busy = task.todos.findIndex((item, i) => i !== at && item.state === 'in_progress');
+  if (state === 'in_progress' && busy >= 0) {
+    throw new TaskError(`第 ${busy + 1} 项还在做，先标做完或跳过，再开始第 ${index} 项`);
+  }
   const trimmed = note?.trim().slice(0, LINE_MAX);
   const next: Todo = { text: todo.text, state, ...(trimmed ? { note: trimmed } : {}) };
   const todos = task.todos.map((item, i) => (i === at ? next : item));
@@ -252,7 +257,46 @@ export function resultNote(task: AgentTask): string {
   return `子任务 #${task.id}「${task.title}」${STATE_LABELS[task.state]}。`;
 }
 
-/** 做完或没做成时桌宠说的那句：只报一声，结果在主线程和工作台里。 */
+const STATUS: Readonly<Record<AgentTaskState, string>> = {
+  queued: 'queued',
+  running: 'running',
+  done: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+};
+
+/**
+ * 子任务结束时交给主线程的通知，照 Claude Code 后台任务的 `<task-notification>`：编号、状态、标题，
+ * 做完带结果和逐条验收，没做成带原因。主线程据此用自己的话告诉主人。
+ */
+export function taskNotification(task: AgentTask): string {
+  const parts = [
+    '<task-notification>',
+    `<task-id>${task.id}</task-id>`,
+    `<status>${STATUS[task.state]}</status>`,
+    `<title>${task.title}</title>`,
+  ];
+  if (task.result) parts.push(`<result>\n${task.result}\n</result>`);
+  if (task.checks.length > 0) {
+    parts.push(
+      `<checks>\n${task.checks.map((c) => `${c.met ? '✓' : '✗'} ${c.criterion}：${c.evidence}`).join('\n')}\n</checks>`,
+    );
+  }
+  if (task.error) parts.push(`<error>${task.error}</error>`);
+  parts.push('</task-notification>');
+  return parts.join('\n');
+}
+
+/** 主线程被子任务的通知叫醒时收到的话：通知本身，加上该怎么转告。 */
+export function relayPrompt(task: AgentTask): string {
+  const how =
+    task.state === 'done'
+      ? '你派出去的子任务做完了。用一两句话把结论告诉主人，挑最要紧的说；细节在工作台里，不用全念。'
+      : '你派出去的子任务没做成。用一两句话告诉主人卡在哪、要主人做什么。';
+  return `${taskNotification(task)}\n\n${how}`;
+}
+
+/** 转告没成（模型出错）时桌宠说的那句：只报一声，结果在主线程和工作台里。 */
 export function announceLine(task: AgentTask, now: Date): Line {
   const tone = toneForHour(now.getHours());
   return {
