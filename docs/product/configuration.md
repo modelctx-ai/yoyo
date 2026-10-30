@@ -56,7 +56,7 @@ status: stable
 | `pet.id`、`pet.surface`                    | `main`、`desktop`                                | 哪一只、哪一端；不同的 `pet.id` 各有一份对话记忆                                                    |
 | `pet.menu.hide`                            | `["open-site", "show-balance", "whisper"]`       | 藏起来的桌宠自带菜单项，写 `[]` 全留着；见[右键菜单](#右键菜单)                                     |
 | `pet.menu.top`                             | `true`                                           | yoyo 的菜单项放第一层；`false` 收进「更多」                                                         |
-| `intervalSec`                              | `300`                                            | 日常碎碎念的间隔，最少 60                                                                           |
+| `intervalSec`                              | `300`                                            | 日常碎碎念的间隔，最少 60；没配 `pace.decision`、或决策模型这次没判成时用它，见[碎碎念的间隔](#碎碎念的间隔) |
 | `speech.apiKey`、`speech.referenceId`      | 空                                               | Fish Audio 的密钥和声音；驱动桌宠时必填，控制台模式没填就只出字                                     |
 | `speech.baseUrl`、`speech.model`           | `https://api.fish.audio/v1/tts`、`s2.1-pro-free` | Fish Audio 的接口和模型                                                                             |
 | `speech.autoplay`                          | `true`                                           | `false` 只出字，不放语音                                                                            |
@@ -85,6 +85,10 @@ status: stable
 | `memory.core.budgetTokens`                 | `600`                                            | 画像多长（估算 token）                                                                              |
 | `memory.consolidateAt`                     | `03:00`                                          | 每天过了这个本地时间、主人 30 分钟没说话，就整理一次                                                |
 | `memory.decision`、`memory.extraction`     | 不写                                             | System One 的决策、提取模型；不写就用内置的判断和 `llm` 的模型，见[记忆](#记忆)                     |
+| `pace.decision`                            | 不写                                             | System One 的决策模型：每说完一句，按上下文从几档里挑下一句隔多久；不写就一直按 `intervalSec`，不借 `memory.decision` |
+| `pace.options`                             | `[300, 900, 1800, 3600]`                         | 几档间隔，秒；丢掉写错的和少于 60 的，去重排序，剩下不到两档用缺省                                  |
+| `pace.minConfidence`                       | `0.4`                                            | 决策模型挑中那档的把握低于它，这句按 `intervalSec`（0 到 1）                                        |
+| `pace.recent`                              | `6`                                              | 发给决策模型的最近对话原文条数（0 到 20）；`0` 只发结构化的信号，不发原文                           |
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
 | `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
 | `web.enabled`、`web.port`                  | `true`、`0`                                      | 管理页开不开、用哪个端口；`0` 是每次随机                                                            |
@@ -308,6 +312,29 @@ sandbox:
 * 密钥和 `llm.apiKey` 一样只留在本机，报错和记录里都抹掉。
 
 主人怎么看、怎么删，见[日常使用](usage.md#记忆)。
+
+# 碎碎念的间隔
+
+缺省每两句日常碎碎念隔 `intervalSec`。配了 `pace.decision`，yoyo 每说完一句，就把当时的情形交给决策模型，让它从几档间隔里挑下一句什么时候说：你在专心写代码、刚聊完、深夜、连着几句都没理它，隔得久一点；你有空、肯搭话，隔得短一点。
+
+```json
+{
+  "pace": {
+    "decision": { "provider": "typesafe", "model": "jev-latest", "apiKey": "<密钥>" },
+    "options": [300, 900, 1800, 3600],
+    "minConfidence": 0.4,
+    "recent": 6
+  }
+}
+```
+
+* 缺省四档：5 分钟、15 分钟、30 分钟、1 小时。`options` 改成自己的秒数就行，至少两档；写不出两档就用缺省的。
+* `decision` 和 `memory.decision` 写法一样（`provider`、`model` 都要写，`cloudflare` 还要 `accountId`），但各配各的：不写 `pace.decision`，开了记忆也不会悄悄改碎碎念的节奏。
+* 只替换「说完以后隔多久」这一个数。碎碎念照样让路（30 秒内有对话就顺延）、到点没说成一分钟后再试、闹钟和收件箱里的请求都和以前一样。
+* 没配、配得不对（启动时记一行）、这次没判成（请求出错、5 秒内没回、把握低于 `minConfidence`），这一句都按 `intervalSec`，记一行，不影响下一句。
+* 发给决策模型的有：时间、语气、刚说的那句、主人有没有回应、连着几句没人理、离上次聊天多久、桌宠的工作状态，和最近 `recent` 条对话原文（每条最多 200 字）。不想把对话原文交给服务商，把 `recent` 写成 `0`。
+* 工作台侧栏「下一句碎碎念」后面会带一句原因，例如「主人在忙，隔 30 分钟」「按固定间隔」；每次挑的结果也记在轨迹里。
+* 密钥和 `llm.apiKey` 一样只留在本机，报错和记录里都抹掉。
 
 # 环境变量
 
