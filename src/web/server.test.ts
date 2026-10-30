@@ -12,6 +12,7 @@ import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
+import { askTask } from '../features/tasks/tasks.ts';
 import { drain } from '../runtime/inbox.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { memoryLogger, memoryRepos } from '../runtime/testing.ts';
@@ -277,6 +278,49 @@ describe('web 管理页', () => {
         .filter((type) => type.startsWith('config-'))
         .toSorted(),
       ['config-edit', 'config-switch'],
+    );
+  });
+
+  test('子任务等回答：详情带问题，POST /api/tasks/:id/answer 回答以后排队接着做；不在等的、空回答、没有的都报清楚', async () => {
+    const task = repos.agentTasks.create(
+      { title: '做封面', goal: '做封面', criteria: [], agent: 'general', origin: 'main' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running', startedAt: T0 }, T0);
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' }), {
+      status: 409,
+      data: { error: `子任务 #${task.id} 现在是「在做」，没有在等回答` },
+    });
+    askTask(repos, task.id, '封面用蓝色还是绿色？', new Date(T0));
+    const waiting = (await call('GET', `/api/tasks/${task.id}`)).data as {
+      state: string;
+      question: string;
+      askedAt: number;
+      answer: string | null;
+    };
+    assert.deepEqual(
+      [waiting.state, waiting.question, waiting.askedAt, waiting.answer],
+      ['waiting', '封面用蓝色还是绿色？', T0, null],
+    );
+    assert.equal(((await call('GET', '/api/tasks')).data as { state: string }[])[0]?.state, 'waiting');
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, {}), {
+      status: 400,
+      data: { error: '要给 answer，回答要是一段文字' },
+    });
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, { answer: '  ' }), {
+      status: 409,
+      data: { error: '回答不能空着' },
+    });
+    assert.equal((await call('POST', '/api/tasks/99/answer', { answer: '蓝' })).status, 409);
+    const answered = (await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' })).data as {
+      state: string;
+    };
+    assert.equal(answered.state, 'queued');
+    assert.equal(repos.agentTasks.get(task.id)?.answer, '蓝色');
+    assert.equal(
+      (await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' })).status,
+      409,
+      '答过了不能再答',
     );
   });
 

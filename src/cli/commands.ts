@@ -42,6 +42,7 @@ import { artifactRow, artifactView, removeArtifact } from '../features/tasks/art
 import {
   STATE_LABELS,
   TaskError,
+  answerTask,
   cancelAgentTask,
   createAgentTask,
   taskDetail,
@@ -609,7 +610,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         },
         {
           name: 'show',
-          summary: '一个子任务的全部：目标、验收标准、todo、结果',
+          summary: '一个子任务的全部：目标、验收标准、todo、问题和回答、结果',
           agent: true,
           usage: '<编号>',
           run(_flags, args) {
@@ -668,8 +669,18 @@ export function buildDomains(env: CommandEnv): Domain[] {
           },
         },
         {
+          name: 'answer',
+          summary: '回答在等回答的子任务（子 agent 做到一半问的问题），它排队接着做',
+          usage: '<编号> <回答…>',
+          run(_flags, args) {
+            const id = taskId(args);
+            const task = guard(() => answerTask(env.repos(), id, args.slice(1).join(' '), env.now()));
+            env.out(`回答交给子任务 #${task.id} 了，常驻进程在跑就会接着做`);
+          },
+        },
+        {
           name: 'cancel',
-          summary: '取消还在排队或在做的子任务',
+          summary: '取消还开着（排队、在做、等回答）的子任务',
           usage: '<编号>',
           run(_flags, args) {
             const task = guard(() => cancelAgentTask(env.repos(), taskId(args), env.now()));

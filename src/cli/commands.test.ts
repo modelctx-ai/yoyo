@@ -12,6 +12,7 @@ import type { UpdateSystem } from '../app/update.ts';
 import { createYoyoContext, taskSession } from '../brain/context.ts';
 import { openMemoryStore } from '../brain/memory.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
+import { askTask } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
 import { directorAlive, drain, writePid } from '../runtime/inbox.ts';
 import {
@@ -422,6 +423,23 @@ describe('commands', () => {
     await assert.rejects(run('task', 'cancel', '1'), /已经「取消了」/);
     await assert.rejects(run('task', 'show', 'x'), /要给子任务编号/);
     await assert.rejects(run('task', 'add', '--title', '没目标'), /目标不能空着/);
+  });
+
+  test('task answer：回答在等回答的子任务，show 看得到问题和回答；不在等的、没写回答的报一句话', async () => {
+    const { run, env } = cli();
+    await run('task', 'add', '--title', '做封面', '--goal', '做封面');
+    await assert.rejects(run('task', 'answer', '1', '蓝色'), /现在是「排队」，没有在等回答/);
+    env.repos().agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    askTask(env.repos(), 1, '封面用蓝色还是绿色？', NOW);
+    assert.deepEqual(await run('task', 'list', '--state', 'waiting'), ['#1\t等回答\t-\t做封面']);
+    assert.match((await run('task', 'show', '1'))[0]!, /问题（等主人回答）：\n封面用蓝色还是绿色？/);
+    await assert.rejects(run('task', 'answer', '1'), /回答不能空着/);
+    await assert.rejects(run('task', 'answer', 'x', '蓝'), /要给子任务编号/);
+    assert.deepEqual(await run('task', 'answer', '1', '蓝色', '吧'), ['回答交给子任务 #1 了，常驻进程在跑就会接着做']);
+    assert.equal(env.repos().agentTasks.get(1)?.answer, '蓝色 吧');
+    assert.equal(env.repos().agentTasks.get(1)?.state, 'queued');
+    assert.match((await run('task', 'show', '1'))[0]!, /问过：\n封面用蓝色还是绿色？\n\n主人的回答：\n蓝色 吧/);
+    await assert.rejects(run('task', 'answer', '1', '蓝'), /没有在等回答/);
   });
 
   test('task list --state 只列这几种状态；写错的说清楚有哪些', async () => {

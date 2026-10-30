@@ -11,7 +11,7 @@ import { createTaskContext, mainProjection, sessionFor, taskSession } from '../b
 import { createYoyoHarness } from '../brain/harness.ts';
 import { addTaskWorkerTools, createYoyoTools } from '../brain/tools.ts';
 import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
-import { cancelAgentTask, createAgentTask } from '../features/tasks/tasks.ts';
+import { answerTask, askTask, cancelAgentTask, createAgentTask } from '../features/tasks/tasks.ts';
 import type { Repos } from '../ports/index.ts';
 import { MAX_ROUNDS, createTaskRunner } from './tasks.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
@@ -71,37 +71,45 @@ interface Rig {
   readonly logger: ReturnType<typeof memoryLogger>;
   /** 每次叫一声时，结果是不是已经在主会话里。 */
   readonly finished: Promise<boolean>[];
+  /** 提了问题叫一声时，问题是不是已经在主会话里。 */
+  readonly asked: Promise<boolean>[];
+  /** 可以往后拨的时钟。 */
+  readonly clock: { at: number };
 }
 
-function rig(model: MockLanguageModelV4 | null, concurrency?: number): Rig {
-  const repos = memoryRepos({ now: () => new Date(T0) });
+function rig(model: MockLanguageModelV4 | null, concurrency?: number, answerTimeoutMs?: number): Rig {
+  const clock = { at: T0 };
+  const repos = memoryRepos({ now: () => new Date(clock.at) });
   const logger = memoryLogger();
   const main = createContext({ store: createMemoryStore(), session: sessionFor('main'), projection: mainProjection });
   const worker = createYoyoTools({ repos, search: null });
   const files = createArtifactFiles(join(mkdtempSync(join(tmpdir(), 'yoyo-tasks-')), 'artifacts'));
-  addTaskWorkerTools(worker, { repos, now: () => new Date(T0), files });
+  addTaskWorkerTools(worker, { repos, now: () => new Date(clock.at), files });
   const harness = createYoyoHarness(createTaskContext(main, { tools: worker }));
   const runs = createOrchestrator({ harness, store: main.store, owner: 'yoyo-tasks' });
   const finished: Promise<boolean>[] = [];
+  const asked: Promise<boolean>[] = [];
+  const noted = (id: number): Promise<boolean> =>
+    main.entries().then((entries) => entries.some((entry) => entry.type === 'event' && entry.meta?.['id'] === id));
   const runner = createTaskRunner({
     repos,
     logger,
     runs,
     model,
     main,
-    now: () => T0,
+    now: () => clock.at,
     pollMs: 5,
     ...(concurrency ? { concurrency } : {}),
-    // 叫一声的那一刻，结果已经在主会话里了
+    ...(answerTimeoutMs ? { answerTimeoutMs } : {}),
+    // 叫一声的那一刻，结果（问题）已经在主会话里了
     onFinished: (task) => {
-      finished.push(
-        main
-          .entries()
-          .then((entries) => entries.some((entry) => entry.type === 'event' && entry.meta?.['id'] === task.id)),
-      );
+      finished.push(noted(task.id));
+    },
+    onAsked: (task) => {
+      asked.push(noted(task.id));
     },
   });
-  return { repos, main, runner, logger, finished };
+  return { repos, main, runner, logger, finished, asked, clock };
 }
 
 function brief(repos: Repos) {
@@ -141,6 +149,33 @@ function gated(broken: readonly number[] = []) {
   });
   const release = (id: number): void => gates.get(id)?.();
   return { model, started, release, waiting: (id: number) => gates.has(id) };
+}
+
+/** 每个子任务按自己的剧本回，一次调用一步；认子任务靠会话里的任务说明。 */
+function perTask(scripts: Readonly<Record<number, readonly DoGenerateResult[]>>, prompts: unknown[] = []) {
+  const used = new Map<number, number>();
+  return new MockLanguageModelV4({
+    doGenerate: async (options) => {
+      prompts.push(options.prompt);
+      const id = Number(/子任务 #(\d+)/.exec(JSON.stringify(options.prompt))?.[1]);
+      const n = used.get(id) ?? 0;
+      used.set(id, n + 1);
+      return scripts[id]?.[n] ?? text('还在做');
+    },
+  });
+}
+
+/** 1 号问了就等着，2 号一口气做完；回答以后 1 号再接着做完。 */
+function twoTasks() {
+  return perTask({
+    1: [
+      call('task_ask', { id: 1, question: '要不要加图？' }),
+      text('等着'),
+      call('task_finish', { id: 1, result: '1 好了', checks: CHECKS }),
+      text('好'),
+    ],
+    2: [call('task_finish', { id: 2, result: '2 好了', checks: CHECKS }), text('好')],
+  });
 }
 
 describe('子任务的跑法', () => {
@@ -237,6 +272,7 @@ describe('子任务的跑法', () => {
     assert.deepEqual(offered[0]?.toSorted(), [
       'add_alarm',
       'list_alarms',
+      'task_ask',
       'task_fail',
       'task_finish',
       'task_plan',
@@ -417,5 +453,174 @@ describe('子任务的跑法', () => {
       logger.lines.some((line) => line.includes('没配 llm')),
       logger.lines.join('\n'),
     );
+  });
+
+  describe('做到一半问主人', () => {
+    test('提问：这一轮停下，不算没做成；问题写回主线程、叫一声；回答以后排队接着做，下一轮的输入带着回答', async () => {
+      const prompts: unknown[] = [];
+      const model = perTask(
+        {
+          1: [
+            call('task_plan', { id: 1, todos: ['做封面', '做正文'] }),
+            call('task_todo', { id: 1, index: 1, state: 'in_progress' }),
+            call('task_ask', { id: 1, question: '封面用蓝色还是绿色？' }),
+            text('等主人回答'),
+            call('task_todo', { id: 1, index: 1, state: 'done' }),
+            call('task_todo', { id: 1, index: 2, state: 'done' }),
+            call('task_finish', { id: 1, result: '做好了', checks: CHECKS }),
+            text('交好了'),
+          ],
+        },
+        prompts,
+      );
+      const { repos, main, runner, finished, asked } = rig(model);
+      brief(repos);
+      const waiting = await runner.runNext();
+      assert.equal(waiting?.state, 'waiting');
+      assert.equal(waiting?.question, '封面用蓝色还是绿色？');
+      assert.equal(waiting?.askedAt, T0);
+      assert.equal(waiting?.error, null, '问人不算没做成');
+      assert.deepEqual(await Promise.all(asked), [true], '问题写回主会话以后才叫醒主线程');
+      assert.deepEqual(await Promise.all(finished), [], '没结束，不叫结束');
+      assert.equal(await runner.runNext(), null, '等回答的不会被当成排队的接着做');
+      const back = await main.entries();
+      assert.equal(back.length, 1);
+      assert.match(
+        back[0]!.type === 'event' ? (back[0]!.text ?? '') : '',
+        /子任务 #1「整理周报」想问主人：封面用蓝色还是绿色？/,
+      );
+      assert.equal(back[0]!.type === 'event' ? back[0]!.meta?.['state'] : '', 'waiting');
+
+      answerTask(repos, 1, '用蓝色', new Date(T0));
+      const done = await runner.runNext();
+      assert.equal(done?.state, 'done');
+      assert.equal(done?.answer, '用蓝色');
+      const resumed = JSON.stringify(prompts[4]);
+      assert.match(resumed, /你问主人：封面用蓝色还是绿色？/);
+      assert.match(resumed, /主人回答了：用蓝色/);
+      assert.match(resumed, /\[~\] 1\. 做封面/, '带上 todo 的现状');
+      assert.deepEqual(
+        done?.todos.map((todo) => todo.state),
+        ['done', 'done'],
+        'todo 接着做，没丢',
+      );
+      assert.equal(done?.startedAt, T0, '接着做，不是重新开始');
+    });
+
+    test('提问不消耗轮次：问完又答、再问，照样做得完', async () => {
+      const ask = (question: string) => [call('task_ask', { id: 1, question }), text('等着')];
+      const model = perTask({
+        1: [
+          ...ask('第 1 问'),
+          ...ask('第 2 问'),
+          ...ask('第 3 问'),
+          ...ask('第 4 问'),
+          ...ask('第 5 问'),
+          ...ask('第 6 问'),
+          ...ask('第 7 问'),
+          call('task_finish', { id: 1, result: '好了', checks: CHECKS }),
+          text('好了'),
+        ],
+      });
+      const { repos, runner } = rig(model);
+      brief(repos);
+      for (let n = 1; n <= 7; n += 1) {
+        assert.equal((await runner.runNext())?.question, `第 ${n} 问`);
+        assert.equal(repos.agentTasks.get(1)?.state, 'waiting');
+        answerTask(repos, 1, `答 ${n}`, new Date(T0));
+      }
+      assert.equal((await runner.runNext())?.state, 'done', `问了 7 次，超过 ${MAX_ROUNDS} 轮也不算没做成`);
+    });
+
+    test('一次只有一个没答的问题：同一步里又问、又改 todo，都被规则挡回去', async () => {
+      const model = perTask({
+        1: [call('task_ask', { id: 1, question: '问一' }), call('task_ask', { id: 1, question: '问二' }), text('停')],
+      });
+      const { repos, main, runner } = rig(model);
+      brief(repos);
+      const waiting = await runner.runNext();
+      assert.equal(waiting?.question, '问一', '第二个问题没覆盖第一个');
+      assert.match(JSON.stringify(await main.store.list(taskSession(1))), /一次只问一个/);
+    });
+
+    test('等回答的不占并行名额：只允许同时做 1 件，1 号在等，2 号照样开工；回答以后 1 号排队接着做', async () => {
+      const { repos, runner, asked } = rig(twoTasks(), 1);
+      brief(repos);
+      brief(repos);
+      const controller = new AbortController();
+      runner.start(controller.signal);
+      await until(
+        () => repos.agentTasks.get(1)?.state === 'waiting' && repos.agentTasks.get(2)?.state === 'done',
+        '1 号停在等回答，名额让给了 2 号',
+      );
+      assert.deepEqual(runner.active(), []);
+      assert.equal((await Promise.all(asked)).length, 1);
+
+      answerTask(repos, 1, '加', new Date(T0));
+      await until(() => repos.agentTasks.get(1)?.state === 'done', '回答以后接着做');
+      assert.equal(repos.agentTasks.get(1)?.result, '1 好了');
+      controller.abort();
+      await runner.close();
+    });
+
+    test('重启以后等回答的还在等：不放回排队、不去做；回答以后才做', async () => {
+      const prompts: unknown[] = [];
+      const model = perTask(
+        { 1: [call('task_finish', { id: 1, result: '好了', checks: CHECKS }), text('好')] },
+        prompts,
+      );
+      const { repos, runner, asked } = rig(model);
+      brief(repos);
+      repos.agentTasks.update(1, { state: 'running', startedAt: T0 }, T0);
+      askTask(repos, 1, '要不要加图？', new Date(T0));
+      brief(repos);
+      repos.agentTasks.update(2, { state: 'running', startedAt: T0 }, T0);
+      const controller = new AbortController();
+      runner.start(controller.signal);
+      await until(() => prompts.length > 0, '没做完的 2 号放回排队、接着做');
+      assert.equal(repos.agentTasks.get(1)?.state, 'waiting', '等回答的不动');
+      assert.equal(repos.agentTasks.get(1)?.question, '要不要加图？');
+      assert.deepEqual(asked, [], '重启不重复叫：转告补不补由编排器看 questionAnnouncedAt');
+      controller.abort();
+      await runner.close();
+      assert.equal(repos.agentTasks.get(1)?.state, 'waiting');
+    });
+
+    test('等太久不回答：按没做成结束，原因写回主线程、叫一声；0 不超时', async () => {
+      const HOUR = 3_600_000;
+      const model = perTask({ 1: [call('task_ask', { id: 1, question: '加图吗？' }), text('等着')] });
+      const { repos, main, runner, finished, clock } = rig(model, undefined, 2 * HOUR);
+      brief(repos);
+      const controller = new AbortController();
+      runner.start(controller.signal);
+      await until(() => repos.agentTasks.get(1)?.state === 'waiting', '先问上');
+      clock.at += HOUR;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(repos.agentTasks.get(1)?.state, 'waiting', '没到 2 小时还在等');
+      clock.at += HOUR;
+      await until(() => repos.agentTasks.get(1)?.state === 'failed', '到点了结束');
+      const task = repos.agentTasks.get(1);
+      assert.equal(task?.error, '等主人回答超时，等了 2 小时没回：问的是「加图吗？」');
+      assert.equal(task?.finishedAt, clock.at);
+      assert.deepEqual(await Promise.all(finished), [true]);
+      assert.match(JSON.stringify(await main.entries()), /没做成：等主人回答超时/);
+      controller.abort();
+      await runner.close();
+
+      const forever = rig(
+        perTask({ 1: [call('task_ask', { id: 1, question: '加图吗？' }), text('等着')] }),
+        undefined,
+        0,
+      );
+      brief(forever.repos);
+      const again = new AbortController();
+      forever.runner.start(again.signal);
+      await until(() => forever.repos.agentTasks.get(1)?.state === 'waiting', '问上');
+      forever.clock.at += 1000 * HOUR;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(forever.repos.agentTasks.get(1)?.state, 'waiting', '不超时');
+      again.abort();
+      await forever.runner.close();
+    });
   });
 });

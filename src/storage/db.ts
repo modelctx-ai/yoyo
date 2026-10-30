@@ -65,7 +65,12 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   started_at INTEGER,
   finished_at INTEGER,
   updated_at INTEGER NOT NULL,
-  announced_at INTEGER
+  announced_at INTEGER,
+  question TEXT,
+  asked_at INTEGER,
+  answer TEXT,
+  answered_at INTEGER,
+  question_announced_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS artifacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +111,17 @@ export function ensureSchema(db: DatabaseSync): void {
     .all()
     .map((row) => String(row.name));
   if (!columns.includes('agent')) db.exec("ALTER TABLE agent_tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'general'");
+  // 子 agent 中途问主人：问题、回答和各自的时间
+  const asking: readonly (readonly [string, string])[] = [
+    ['question', 'TEXT'],
+    ['asked_at', 'INTEGER'],
+    ['answer', 'TEXT'],
+    ['answered_at', 'INTEGER'],
+    ['question_announced_at', 'INTEGER'],
+  ];
+  for (const [name, type] of asking) {
+    if (!columns.includes(name)) db.exec(`ALTER TABLE agent_tasks ADD COLUMN ${name} ${type}`);
+  }
 }
 
 /** 用 SAVEPOINT，所以已经在别人的事务里也能用。出错整段回滚。 */

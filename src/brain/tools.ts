@@ -12,6 +12,8 @@ import {
   CRITERIA_MAX,
   TaskError,
   TODOS_MAX,
+  answerTask,
+  askTask,
   cancelAgentTask,
   createAgentTask,
   failTask,
@@ -214,7 +216,7 @@ function addCliTool(registry: LocalToolRegistry, cli: CliRun): void {
 }
 
 /**
- * 主线程管子任务：派出去、取消。看进度和结果用 `yoyo` 工具（`yoyo task list`、`yoyo task show <编号>`）。
+ * 主线程管子任务：派出去、取消、把主人的回答交给等回答的子任务。看进度和结果用 `yoyo` 工具（`yoyo task list`、`yoyo task show <编号>`）。
  * 子任务由常驻进程在后台做，做完结果会回到主线程。
  */
 function addTaskTools(
@@ -254,15 +256,34 @@ function addTaskTools(
   registry.addTool(
     'task_cancel',
     tool({
-      description: '取消一个还在排队或在做的子任务。主人说不用做了时用。',
+      description: '取消一个还开着（排队、在做、等回答）的子任务。主人说不用做了时用。',
       inputSchema: z.object({ id: z.number().int().describe('子任务编号') }),
       execute: async ({ id }) => guarded(() => `取消了子任务 #${cancelAgentTask(repos, id, now()).id}`),
+    }),
+  );
+
+  registry.addTool(
+    'task_answer',
+    tool({
+      description:
+        '主人回答了某个子任务的提问：把回答交给它，它排队接着做。只对「等回答」的子任务有效；' +
+        '要等主人真的说了才用，别替主人答。哪些子任务在等、问了什么，看每一轮事实里的「在等主人回答的问题」；' +
+        '主人的话对不上是哪一个、或者一句话答了几个，先问清楚再交，不要把回答交错编号。',
+      inputSchema: z.object({
+        id: z.number().int().describe('在等回答的子任务编号'),
+        answer: z.string().describe('主人的回答：原意不变，带上必要的背景，子 agent 只看得到这段'),
+      }),
+      execute: async ({ id, answer }) =>
+        guarded(() => {
+          const task = answerTask(repos, id, answer, now());
+          return `回答交给子任务 #${task.id}「${task.title}」了，它排队接着做`;
+        }),
     }),
   );
 }
 
 /**
- * 子 agent 自己用的：拆 todo、改 todo、交文件、交结果、交不了。都要带上子任务编号，只对在做的那个有效。
+ * 子 agent 自己用的：拆 todo、改 todo、交文件、问主人、交结果、交不了。都要带上子任务编号，只对在做的那个有效。
  * 加在子 agent 的注册表里，主线程看不到。
  */
 export function addTaskWorkerTools(
@@ -308,6 +329,21 @@ export function addTaskWorkerTools(
           const task = updateTodo(repos, input.id, input.index, input.state, input.note, now());
           const left = task.todos.filter((todo) => todo.state === 'pending' || todo.state === 'in_progress').length;
           return left > 0 ? `改好了，还剩 ${left} 项` : '改好了，todo 都做完了；对一遍验收标准再交结果';
+        }),
+    }),
+  );
+
+  registry.addTool(
+    'task_ask',
+    tool({
+      description:
+        '做到一半真要主人拿主意（偏好、取舍、缺的信息）时问一句：子任务进入「等回答」，这一轮停下，主人回答后接着做，回答写在下一条消息里。' +
+        '一次只问一个问题，写清楚背景和选项；问之前先把不用问也能做的做完，能自己查到的别问。',
+      inputSchema: z.object({ id, question: z.string().describe('要问主人的话：背景、选项，一个问题') }),
+      execute: async (input) =>
+        guarded(() => {
+          const task = askTask(repos, input.id, input.question, now());
+          return `问题记下了，子任务 #${task.id} 等主人回答。这一轮到此为止：别再调别的工具，直接结束；回答来了会接着做`;
         }),
     }),
   );

@@ -355,6 +355,22 @@ describe('openDatabase', () => {
     old.close();
     const repos = createRepos(openDatabase(file));
     assert.equal(repos.agentTasks.get(1)?.agent, 'general');
+    // 问主人的几列也补上了：以前的子任务都没问过
+    const old1 = repos.agentTasks.get(1)!;
+    assert.deepEqual(
+      [old1.question, old1.askedAt, old1.answer, old1.answeredAt, old1.questionAnnouncedAt],
+      [null, null, null, null, null],
+    );
+    const asked = repos.agentTasks.update(
+      1,
+      { state: 'waiting', question: '加图吗？', askedAt: 5, answer: null, questionAnnouncedAt: 6 },
+      7,
+    )!;
+    assert.deepEqual(
+      [asked.state, asked.question, asked.askedAt, asked.questionAnnouncedAt],
+      ['waiting', '加图吗？', 5, 6],
+    );
+    assert.equal(repos.agentTasks.update(1, { answer: '加', answeredAt: 8 }, 9)?.answer, '加');
     assert.equal(
       repos.agentTasks.create({ title: '查', goal: '查', criteria: [], agent: 'research', origin: 'cli' }, 2).agent,
       'research',

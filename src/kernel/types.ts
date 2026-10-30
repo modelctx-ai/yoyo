@@ -148,8 +148,8 @@ export interface InboxMessage {
   readonly at?: number;
 }
 
-/** 子任务的状态：排队、在做、做完、没做成、取消。 */
-export type AgentTaskState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+/** 子任务的状态：排队、在做、等回答、做完、没做成、取消。 */
+export type AgentTaskState = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled';
 /** 子任务里一项 todo 的状态。 */
 export type TodoState = 'pending' | 'in_progress' | 'done' | 'skipped';
 
@@ -189,6 +189,14 @@ export interface AgentTask {
   readonly updatedAt: number;
   /** 做完以后告诉过主人没有。 */
   readonly announcedAt: number | null;
+  /** 子 agent 最近问的那个问题；`waiting` 时是在等回答的那个，之后留着。 */
+  readonly question: string | null;
+  readonly askedAt: number | null;
+  /** 主人对那个问题的回答；问了新问题就清掉。 */
+  readonly answer: string | null;
+  readonly answeredAt: number | null;
+  /** 那个问题转告过主人没有；问了新问题就清掉。 */
+  readonly questionAnnouncedAt: number | null;
 }
 
 export interface AgentTaskInput {
@@ -213,5 +221,20 @@ export interface Artifact {
 
 /** 能改的字段。 */
 export type AgentTaskPatch = Partial<
-  Pick<AgentTask, 'state' | 'todos' | 'result' | 'checks' | 'error' | 'startedAt' | 'finishedAt' | 'announcedAt'>
+  Pick<
+    AgentTask,
+    | 'state'
+    | 'todos'
+    | 'result'
+    | 'checks'
+    | 'error'
+    | 'startedAt'
+    | 'finishedAt'
+    | 'announcedAt'
+    | 'question'
+    | 'askedAt'
+    | 'answer'
+    | 'answeredAt'
+    | 'questionAnnouncedAt'
+  >
 >;

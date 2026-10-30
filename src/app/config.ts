@@ -138,10 +138,12 @@ const web = z.looseObject({
 /** 子任务：主线程派给后台子 agent 的事，见 `runtime/tasks.ts`。 */
 const tasks = z.looseObject({
   enabled: flag(true),
-  /** 做完或没做成时桌宠说一声。 */
+  /** 做完、没做成或要问主人时桌宠说一声。 */
   notify: flag(true),
   /** 同时做几件，1 到 8；多的排队。 */
   concurrency: z.coerce.number().int().min(1).max(8).catch(2).default(2),
+  /** 子 agent 问了主人，等多久没回答就按没做成结束，单位小时；0 不超时。 */
+  answerTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
 /** 读、写、改文件、跑命令四个工具的开关：`allow` 给，`deny` 不给。写错按 `allow`。 */

@@ -40,7 +40,7 @@ status: stable
 | `sandbox.enabled`   | `false`                      | MCP 服务器放进沙箱，见[后面一节](#把-mcp-服务器关进沙箱) |
 | `web.enabled`       | `true`                       | 管理页，见[日常使用](usage.md#工作台)                    |
 | `tasks.enabled`     | `true`                       | 子任务：yoyo 把要花时间的事派到后台做，见[日常使用](usage.md#子任务) |
-| `tasks.notify`      | `true`                       | 子任务做完或没做成时，yoyo 用自己的话告诉你，桌宠说出来  |
+| `tasks.notify`      | `true`                       | 子任务做完、没做成或要问你时，yoyo 用自己的话告诉你，桌宠说出来 |
 | `tasks.concurrency` | `2`                          | 子任务同时做几件，1 到 8，多的排队；写错按 2             |
 | `files.read`、`files.write`、`files.edit` | `allow` | yoyo 能读、写、改文件（只在工作区里写），`deny` 不给；见[读写文件](../tech/files.md) |
 | `files.bash` | `allow` | yoyo 能在沙箱里跑命令，`deny` 不给；沙箱程序（srt）没装就没有，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
@@ -88,7 +88,7 @@ status: stable
 | `mcpServers`                               | `{}`                                             | MCP 服务器，见下一节；只在 `llm.tools` 打开时连接                                                   |
 | `sandbox`                                  | 关闭                                             | 把本机的 MCP 服务器放进沙箱程序（缺省 srt）里启动，见[后面一节](#把-mcp-服务器关进沙箱)             |
 | `web.enabled`、`web.port`                  | `true`、`0`                                      | 管理页开不开、用哪个端口；`0` 是每次随机                                                            |
-| `tasks.enabled`、`tasks.notify`、`tasks.concurrency` | `true`、`true`、`2`                    | 子任务开不开（yoyo 要 `llm.tools` 打开才能派，命令行和工作台照样能看）、做完 yoyo 主动转告不转告、同时做几件（1 到 8） |
+| `tasks.enabled`、`tasks.notify`、`tasks.concurrency`、`tasks.answerTimeout` | `true`、`true`、`2`、`24` | 子任务开不开（yoyo 要 `llm.tools` 打开才能派，命令行和工作台照样能看）、做完或要问你时 yoyo 主动转告不转告、同时做几件（1 到 8）、子任务问了你以后等多少小时没回答就按没做成结束（`0` 是一直等，写错按 24）；等回答的不占做事的名额 |
 | `files.workspace` | 空 | yoyo 读写文件的工作区，能读能写；空着是 `~/.yoyo/workspace`，`~` 开头算主目录 |
 | `files.readable`、`files.denyRead` | `[]`、`[]` | 另外能读（不能写）的目录或文件；另外读不到的，盖过 `readable`。配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到 |
 | `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自给不给，`deny` 不给，写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给 |
