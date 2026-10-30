@@ -19,4 +19,12 @@ describe('paths', () => {
     assert.equal(paths.configFile, join(paths.root, 'config.json'));
     assert.equal(resolvePaths({ YOYO_CONFIG: '/tmp/c.json' }).configFile, '/tmp/c.json');
   });
+
+  test('从 yoyo.app 里跑时认得出 app 在哪，进程号记在数据目录', () => {
+    const home = join('/tmp', 'yoyo-home');
+    assert.equal(resolvePaths({ YOYO_HOME: home }).appBundle, null);
+    const paths = resolvePaths({ YOYO_HOME: home, YOYO_APP: '/Applications/yoyo.app' });
+    assert.equal(paths.appBundle, '/Applications/yoyo.app');
+    assert.equal(paths.appPidFile, join(home, 'app.pid'));
+  });
 });

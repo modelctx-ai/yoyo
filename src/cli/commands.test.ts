@@ -8,6 +8,7 @@ import { assistantEntry, eventEntry, userEntry } from '@modelctx-ai/ctx';
 
 import type { AppOverrides } from '../app/container.ts';
 import { resolvePaths, type Paths } from '../app/paths.ts';
+import type { UpdateSystem } from '../app/update.ts';
 import { createYoyoContext } from '../brain/context.ts';
 import { openMemoryStore } from '../brain/memory.ts';
 import { localDateKey } from '../kernel/time.ts';
@@ -35,9 +36,21 @@ interface Cli {
   readonly run: (...argv: string[]) => Promise<string[]>;
 }
 
-function cli(options: { readonly config?: unknown; readonly overrides?: AppOverrides } = {}): Cli {
+function cli(
+  options: {
+    readonly config?: unknown;
+    readonly overrides?: AppOverrides;
+    readonly updater?: UpdateSystem;
+    readonly installed?: string | null;
+    readonly app?: string;
+  } = {},
+): Cli {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
-  const paths = resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') });
+  const paths = resolvePaths({
+    YOYO_HOME: home,
+    YOYO_CONFIG: join(home, 'config.json'),
+    ...(options.app ? { YOYO_APP: options.app } : {}),
+  });
   if (options.config !== undefined) writeFileSync(paths.configFile, JSON.stringify(options.config));
   const lines: string[] = [];
   const logger = memoryLogger();
@@ -46,6 +59,8 @@ function cli(options: { readonly config?: unknown; readonly overrides?: AppOverr
     logger,
     now: () => NOW,
     ...(options.overrides ? { overrides: options.overrides } : {}),
+    ...(options.updater ? { updater: options.updater } : {}),
+    ...(options.installed !== undefined ? { installed: options.installed } : {}),
   });
   const domains = buildDomains(env);
   return {
@@ -334,6 +349,48 @@ describe('commands', () => {
     assert.deepEqual(opened, ['http://127.0.0.1:4568/#token=t']);
     const off = cli({ config: { web: { enabled: false } } });
     assert.deepEqual(await off.run('web', 'open'), ['config.json 的 web.enabled 关着，没有管理页']);
+  });
+
+  test('web url 只打地址，没开着时报错；从 yoyo.app 里跑时 web open 打开 app', async () => {
+    const opened: string[] = [];
+    const { run, env, paths } = cli({
+      overrides: { opener: { open: (url) => void opened.push(url) } },
+      app: '/Applications/yoyo.app',
+    });
+    await assert.rejects(run('web', 'url'), /常驻进程没在跑/);
+    env.repos().kv.set('web-url', 'http://127.0.0.1:4568/#token=t');
+    writePid(paths.pidFile);
+    assert.deepEqual(await run('web', 'url'), ['http://127.0.0.1:4568/#token=t']);
+    assert.deepEqual(await run('web', 'open'), ['http://127.0.0.1:4568/#token=t']);
+    assert.deepEqual(opened, ['/Applications/yoyo.app']);
+  });
+
+  test('update check：从 Release 取最新版本，--json 给 app 读', async () => {
+    const updater: UpdateSystem = {
+      fetch: async () =>
+        Response.json({
+          tag_name: 'v0.2.0',
+          html_url: 'https://github.com/modelctx-ai/yoyo/releases/tag/v0.2.0',
+          assets: [{ name: 'yoyo-0.2.0-macos-arm64.dmg', browser_download_url: 'https://x/y.dmg', size: 1 }],
+        }),
+      run: () => {},
+      spawnDetached: () => {},
+      alive: () => false,
+      kill: () => {},
+      arch: 'arm64',
+    };
+    assert.deepEqual(await cli({ updater }).run('update', 'check'), ['最新的是 0.2.0；从源码跑的用 git pull 更新']);
+    const { run } = cli({ updater, installed: '0.1.0' });
+    assert.deepEqual(await run('update', 'check'), ['0.2.0 可以更新了，现在是 0.1.0', 'yoyo update install 换上新版']);
+    assert.deepEqual(JSON.parse((await run('update', 'check', '--json'))[0]!), {
+      current: '0.1.0',
+      latest: '0.2.0',
+      available: true,
+      page: 'https://github.com/modelctx-ai/yoyo/releases/tag/v0.2.0',
+      message: '0.2.0 可以更新了，现在是 0.1.0',
+    });
+    await assert.rejects(run('update', 'install'), /只有 yoyo\.app 能自己更新/);
+    assert.deepEqual(await cli({ updater, installed: '0.2.0' }).run('update', 'install'), ['已经是最新的 0.2.0']);
   });
 
   test('listen、whisper：导演在跑就交给它', async () => {

@@ -107,10 +107,10 @@ export async function connectChannel(app: ChannelApp, signal: AbortSignal, retry
   }
 }
 
-/** 开着管理页就用浏览器打开（地址带着令牌）。 */
+/** 开着管理页就用浏览器打开（地址带着令牌）；从 yoyo.app 里跑时打开 app，管理页在它的窗口里。 */
 async function openManager(app: DaemonApp): Promise<void> {
   const web = await app.openWeb();
-  if (web) app.opener.open(web.url);
+  if (web) app.opener.open(app.paths.appBundle ?? web.url);
 }
 
 /** 起管理页，记一行地址（不带令牌）。没起成只记一行，右键「管理」时再试。 */

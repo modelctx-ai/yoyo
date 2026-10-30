@@ -19,6 +19,10 @@ export interface Paths {
   /** 按键助手。缺省第一次启动时从 `hotkeySource` 编译到 `bin/yoyo-hotkey`；`YOYO_HOTKEY` 指向编好的（安装包里带的）。 */
   readonly hotkeyBin: string;
   readonly hotkeySource: string;
+  /** 从 yoyo.app 里跑时是这个 app 的位置（启动脚本给 `YOYO_APP`），别的时候是 null。 */
+  readonly appBundle: string | null;
+  /** yoyo.app 的外壳在跑时写下自己的进程号，更新时要等它退出。 */
+  readonly appPidFile: string;
 }
 
 export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
@@ -37,5 +41,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     binDir: join(dataDir, 'bin'),
     hotkeyBin: env['YOYO_HOTKEY'] || join(dataDir, 'bin', 'yoyo-hotkey'),
     hotkeySource: join(root, 'src', 'adapters', 'platform', 'hotkey.swift'),
+    appBundle: env['YOYO_APP'] || null,
+    appPidFile: join(dataDir, 'app.pid'),
   };
 }
