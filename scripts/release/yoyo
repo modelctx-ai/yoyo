@@ -1,6 +1,7 @@
 #!/bin/bash
-# yoyo 安装包的启动脚本。用包里带的 Node、桌宠（dsh-pet 独立模式和 Electron）、ffmpeg、whisper-cli 和按键助手，
-# 机器上不用另外装什么。配置和数据都在 ~/.yoyo（YOYO_HOME 可以换），换新版本时整个目录替换掉就行。
+# yoyo 安装包的启动脚本，放在 yoyo.app/Contents/Resources/yoyo。用包里带的 Node、桌宠（dsh-pet 独立模式和 Electron）、
+# ffmpeg、whisper-cli 和按键助手，机器上不用另外装什么。app 的外壳用它起常驻进程；在终端里用时链到 PATH 上。
+# 配置和数据都在 ~/.yoyo（YOYO_HOME 可以换），换新版本时整个 app 替换掉就行。
 set -euo pipefail
 
 # 包所在目录；从 PATH 上的符号链接调用也认得出
@@ -22,8 +23,12 @@ export DSH_PET_ELECTRON_PATH="${DSH_PET_ELECTRON_PATH:-$lib/electron/Electron.ap
 export YOYO_PET_ENTRY="${YOYO_PET_ENTRY:-$lib/dsh-pet/lib/standalone.js}"
 # 录音的 ffmpeg、听写的 whisper-cli，以及 MCP 服务器和搜索脚本用的 node、npx，都先找包里的
 export PATH="$lib/node/bin:$lib/bin:$PATH"
+# 在 yoyo.app 里：管理页在 app 的窗口里打开，yoyo update 知道换哪个 app
+case "$root" in
+  *.app/Contents/Resources) export YOYO_APP="${root%/Contents/Resources}" ;;
+esac
 
-# 浏览器下载、再解压出来的文件带隔离属性，包里自己编的程序没经过 Apple 公证，第一次运行会被系统拦下。
+# 从浏览器下载的 dmg 里拖出来的文件带隔离属性，包里自己编的程序没经过 Apple 公证，第一次运行会被系统拦下。
 # 只清这个目录里的。
 if command -v xattr >/dev/null && xattr -p com.apple.quarantine "$node" >/dev/null 2>&1; then
   xattr -dr com.apple.quarantine "$root" 2>/dev/null || true
@@ -33,11 +38,12 @@ usage() {
   cat <<EOF
 yoyo $(cat "$lib/VERSION" 2>/dev/null || echo '')
 
-./yoyo start          桌宠没开就先开桌宠，再常驻；Control+C 一起停
-./yoyo once           只说一句
-./yoyo bake           把固定台词预先合成好
-./yoyo pet [选项]     只开桌宠（dsh-pet 独立模式），--check 看环境
-./yoyo <领域> [动作]  命令行，见下面
+yoyo start          桌宠没开就先开桌宠，再常驻；Control+C 一起停（平时打开 yoyo.app 就是这个）
+yoyo once           只说一句
+yoyo bake           把固定台词预先合成好
+yoyo pet [选项]     只开桌宠（dsh-pet 独立模式），--check 看环境
+yoyo update check   看有没有新版本；yoyo update install 换上
+yoyo <领域> [动作]  命令行，见下面
 
 配置：$YOYO_CONFIG
 EOF
@@ -51,7 +57,7 @@ ensure_config() {
   cp "$root/config.example.json" "$YOYO_CONFIG"
   chmod 600 "$YOYO_CONFIG"
   echo "示例配置放到了 $YOYO_CONFIG"
-  echo "填上 Fish Audio 的 speech.apiKey 和 speech.referenceId，再运行一次。"
+  echo "填上 Fish Audio 的 speech.apiKey 和 speech.referenceId，再启动一次。"
   exit 1
 }
 

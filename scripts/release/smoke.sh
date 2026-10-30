@@ -1,9 +1,10 @@
 #!/bin/bash
-# 安装包的冒烟测试，在 macOS 上跑：$1 是解压后的包目录。
-# 查原生程序只链系统库、录音和听写的管线走得通、yoyo 能说一句、桌宠能开起来。
+# 安装包的冒烟测试，在 macOS 上跑：$1 是组装好的 yoyo.app。
+# 查 app 外壳、原生程序只链系统库、录音和听写的管线走得通、yoyo 能说一句、桌宠能开起来、换版本的脚本换得了。
 set -euo pipefail
 
-pkg="$(cd "$1" && pwd)"
+app="$(cd "$1" && pwd)"
+pkg="$app/Contents/Resources"
 lib="$pkg/lib"
 work="$(mktemp -d)"
 pet_pid=""
@@ -20,8 +21,13 @@ fail() {
   exit 1
 }
 
+echo "-- app 外壳"
+plutil -lint "$app/Contents/Info.plist" >/dev/null || fail "Info.plist 不对"
+file "$app/Contents/MacOS/yoyo" | grep -q "Mach-O" || fail "app 外壳不是 macOS 程序"
+[ -s "$pkg/yoyo.icns" ] || fail "没有图标"
+
 echo "-- 原生程序只链系统库"
-for bin in "$lib/bin/"* "$lib/node/bin/node"; do
+for bin in "$app/Contents/MacOS/yoyo" "$lib/bin/"* "$lib/node/bin/node"; do
   [ -L "$bin" ] && continue
   # 第一行是文件名本身
   if otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/Library/)'; then
@@ -67,6 +73,16 @@ printf '{"stage":"console","weather":{"enabled":false}}\n' >"$YOYO_HOME/config.j
 "$pkg/yoyo" once || fail "yoyo once 没跑成"
 "$pkg/yoyo" log tail | grep -q . || fail "yoyo log tail 没有记录"
 [ -s "$YOYO_HOME/models/ggml-tiny.bin" ] || fail "听写模型没放进数据目录"
+"$pkg/yoyo" update | grep -q check || fail "没有 yoyo update"
+
+echo "-- 换版本的脚本"
+for side in old new; do
+  mkdir -p "$work/swap/$side.app/Contents/Resources/lib"
+  echo "$side" >"$work/swap/$side.app/Contents/Resources/lib/VERSION"
+done
+bash "$lib/swap.sh" "$work/swap/old.app" "$work/swap/new.app" 0 >/dev/null || fail "swap.sh 没换成"
+[ "$(cat "$work/swap/old.app/Contents/Resources/lib/VERSION")" = new ] || fail "swap.sh 没换上新的"
+[ ! -e "$work/swap/new.app" ] && [ ! -e "$work/swap/.old.app.old" ] || fail "swap.sh 留了东西"
 
 echo "-- 桌宠"
 export DSH_HOME="$work/dsh"
