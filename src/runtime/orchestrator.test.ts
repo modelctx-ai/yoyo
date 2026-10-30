@@ -453,7 +453,7 @@ describe('orchestrator 跑模型', () => {
     ]);
     const { orchestrator, calls, repos } = orchestratorRig({ model, state: { nextWhisper: T0 + 3_600_000 } });
     const finished = (title: string, state: 'done' | 'failed' | 'cancelled', patch: Partial<AgentTask> = {}) => {
-      const task = repos.agentTasks.create({ title, goal: '目标', criteria: [], origin: 'main' }, T0);
+      const task = repos.agentTasks.create({ title, goal: '目标', criteria: [], agent: 'general', origin: 'main' }, T0);
       repos.agentTasks.update(task.id, { state, finishedAt: T0, ...patch }, T0);
       orchestrator.relayTask(task.id);
       return task.id;
@@ -481,7 +481,10 @@ describe('orchestrator 跑模型', () => {
 
   test('子任务结束：没配模型就报一声固定的；tasks.notify 关着只记下不说；上次没转告的开始时补上', async () => {
     const seed = (repos: Repos) => {
-      const task = repos.agentTasks.create({ title: '周报', goal: '目标', criteria: [], origin: 'main' }, T0);
+      const task = repos.agentTasks.create(
+        { title: '周报', goal: '目标', criteria: [], agent: 'general', origin: 'main' },
+        T0,
+      );
       repos.agentTasks.update(task.id, { state: 'done', finishedAt: T0 }, T0);
     };
     const plain = orchestratorRig({ seed, state: { nextWhisper: T0 + 3_600_000 } });

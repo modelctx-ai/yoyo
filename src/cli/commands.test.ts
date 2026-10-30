@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
@@ -398,7 +398,7 @@ describe('commands', () => {
     assert.deepEqual(await run('task', 'list'), ['还没有子任务']);
     assert.deepEqual(
       await run('task', 'add', '--title', '整理周报', '--goal', '本周进展', '--criteria', '三个项目都有；每项三行内'),
-      ['开了子任务 #1，常驻进程在跑就会去做'],
+      ['开了子任务 #1，交给 general，常驻进程在跑就会去做'],
     );
     assert.deepEqual(await run('task', 'list'), ['#1\t排队\t-\t整理周报']);
     const [detail] = await run('task', 'show', '1');
@@ -421,6 +421,29 @@ describe('commands', () => {
     await assert.rejects(run('task', 'cancel', '1'), /已经「取消了」/);
     await assert.rejects(run('task', 'show', 'x'), /要给子任务编号/);
     await assert.rejects(run('task', 'add', '--title', '没目标'), /目标不能空着/);
+  });
+
+  test('task agents 列出类型；task add --agent 挑一种，~/.yoyo/agents 里加的也认', async () => {
+    const { run, paths } = cli();
+    const builtin = await run('task', 'agents');
+    assert.deepEqual(
+      builtin.map((line) => line.split('\t')[0]),
+      ['general', 'research', 'writer'],
+    );
+    assert.match(builtin[0]!, /\t全部工具\t内置$/);
+    mkdirSync(paths.agentsDir, { recursive: true });
+    writeFileSync(
+      join(paths.agentsDir, 'reviewer.md'),
+      '---\ndescription: 看 PR\ntools: web_search\nmodel: m2\n---\n看',
+    );
+    assert.ok((await run('task', 'agents')).some((line) => line.startsWith('reviewer\t看 PR\tweb_search\tm2\t')));
+    assert.deepEqual(await run('task', 'add', '--title', '看', '--goal', '看 PR', '--agent', 'reviewer'), [
+      '开了子任务 #1，交给 reviewer，常驻进程在跑就会去做',
+    ]);
+    await assert.rejects(
+      run('task', 'add', '--title', '看', '--goal', '看', '--agent', 'coder'),
+      /没有「coder」这种子 agent/,
+    );
   });
 
   test('listen、whisper：导演在跑就交给它', async () => {

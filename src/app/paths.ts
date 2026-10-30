@@ -23,6 +23,8 @@ export interface Paths {
   readonly appBundle: string | null;
   /** yoyo.app 的外壳在跑时写下自己的进程号，更新时要等它退出。 */
   readonly appPidFile: string;
+  /** 主人自己加的子 agent 类型，一个 `.md` 一种。 */
+  readonly agentsDir: string;
 }
 
 export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
@@ -43,5 +45,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     hotkeySource: join(root, 'src', 'adapters', 'platform', 'hotkey.swift'),
     appBundle: env['YOYO_APP'] || null,
     appPidFile: join(dataDir, 'app.pid'),
+    agentsDir: join(dataDir, 'agents'),
   };
 }

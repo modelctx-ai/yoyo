@@ -70,6 +70,20 @@ describe('子任务', () => {
     );
   });
 
+  test('开的时候挑子 agent 类型：不写是 general，给了类型清单就查一下在不在', () => {
+    const repos = memoryRepos({ now: () => NOW });
+    assert.equal(createAgentTask(repos, { title: '查', goal: '查', origin: 'cli' }, NOW).agent, 'general');
+    const names = ['general', 'research', 'writer'];
+    assert.equal(
+      createAgentTask(repos, { title: '查', goal: '查', agent: 'research', origin: 'main' }, NOW, names).agent,
+      'research',
+    );
+    assert.throws(
+      () => createAgentTask(repos, { title: '查', goal: '查', agent: 'coder', origin: 'main' }, NOW, names),
+      /没有「coder」这种子 agent，有：general、research、writer/,
+    );
+  });
+
   test('拆 todo：重新拆时一字不差的项保留状态；只对在做的任务有效', () => {
     const { repos, task } = rig();
     planTodos(repos, task.id, ['收集进展', '写成周报'], NOW);
@@ -145,7 +159,7 @@ describe('子任务', () => {
     assert.equal(
       taskDetail(current),
       [
-        '#1 整理周报（在做）',
+        '#1 整理周报（在做，general）',
         '',
         '目标：把本周三个项目的进展整理成周报',
         '',

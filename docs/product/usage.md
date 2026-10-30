@@ -37,6 +37,8 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 
 子任务做的时候会先拆成一条条 todo，一次做一条，做完马上勾；派的时候 yoyo 会写下验收标准，交结果前逐条对过。想看进度，在工作台的聊天列表里点开它：目标、验收标准、todo、结果，还有它一步步做了什么。在做的能取消。
 
+派的时候 yoyo 会按事情挑一种子 agent：`general` 什么都能做，`research` 上网查、结论带出处，`writer` 把给的材料整理成周报和清单。想加自己的，在 `~/.yoyo/agents/` 里放一个 `.md`，写法和 Claude Code 的子 agent 一样，见[子任务](../tech/tasks.md#子-agent-类型)。
+
 一次做一件，其余的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
 
 # 按键
@@ -114,7 +116,8 @@ pnpm yoyo memory consolidate          # 现在整理一次
 pnpm yoyo task list            # 最近的子任务：编号、状态、todo 进度
 pnpm yoyo task show 3          # 目标、验收标准、todo、结果
 pnpm yoyo task log 3           # 它一步步做了什么
-pnpm yoyo task add --title 整理周报 --goal "本周三个项目的进展" --criteria "三个项目都有；每项三行内"
+pnpm yoyo task agents          # 有哪些子 agent 类型
+pnpm yoyo task add --title 整理周报 --goal "本周三个项目的进展" --criteria "三个项目都有；每项三行内" --agent writer
 pnpm yoyo task cancel 3
 ```
 

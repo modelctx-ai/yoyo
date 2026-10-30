@@ -4,6 +4,7 @@
  * 子 agent 的工具、命令行和工作台都走这里，规则只有一份。
  */
 import { TONE_CUES, toneForHour } from '../../kernel/tone.ts';
+import { DEFAULT_AGENT } from './agents.ts';
 import type { AgentTask, AgentTaskState, CriterionCheck, Line, Todo, TodoState } from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
 
@@ -58,16 +59,23 @@ export interface NewTask {
   readonly title?: unknown;
   readonly goal?: unknown;
   readonly criteria?: unknown;
+  /** 哪种子 agent；不给是 `general`。 */
+  readonly agent?: unknown;
   readonly origin: string;
 }
 
-/** 开一个子任务，排队等常驻进程来做。验收标准可以没有，但最好有。 */
-export function createAgentTask(repos: TaskRepos, input: NewTask, now: Date): AgentTask {
+/**
+ * 开一个子任务，排队等常驻进程来做。验收标准可以没有，但最好有。
+ * 给了 `agents`（有哪些类型）就查一下类型在不在；命令行不知道主人加了哪些，不查，常驻进程做的时候再查。
+ */
+export function createAgentTask(repos: TaskRepos, input: NewTask, now: Date, agents?: readonly string[]): AgentTask {
   const title = clean(input.title, '标题', TITLE_MAX);
   const goal = clean(input.goal, '目标', GOAL_MAX);
   const criteria = lines(input.criteria, '验收标准', CRITERIA_MAX);
-  const task = repos.agentTasks.create({ title, goal, criteria, origin: input.origin }, now.getTime());
-  repos.activity.record({ type: 'task-add', id: task.id, title, origin: input.origin });
+  const agent = typeof input.agent === 'string' && input.agent.trim() ? input.agent.trim() : DEFAULT_AGENT;
+  if (agents && !agents.includes(agent)) throw new TaskError(`没有「${agent}」这种子 agent，有：${agents.join('、')}`);
+  const task = repos.agentTasks.create({ title, goal, criteria, agent, origin: input.origin }, now.getTime());
+  repos.activity.record({ type: 'task-add', id: task.id, title, agent, origin: input.origin });
   return task;
 }
 
@@ -214,7 +222,7 @@ function todoLines(todos: readonly Todo[]): string[] {
 
 /** 一个子任务的全部：命令行的 `task show` 和主线程的 `task_show` 工具都用它。 */
 export function taskDetail(task: AgentTask): string {
-  const parts = [`#${task.id} ${task.title}（${STATE_LABELS[task.state]}）`, '', `目标：${task.goal}`];
+  const parts = [`#${task.id} ${task.title}（${STATE_LABELS[task.state]}，${task.agent}）`, '', `目标：${task.goal}`];
   if (task.criteria.length > 0) parts.push('', '验收标准：', ...task.criteria.map((c, i) => `${i + 1}. ${c}`));
   if (task.todos.length > 0) {
     const { done, total } = progress(task);

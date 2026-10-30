@@ -58,8 +58,8 @@ const STEPS_MAX = 300;
 
 /** 列表里的一项：不带目标和结果全文。 */
 function taskSummary(task: AgentTask): unknown {
-  const { id, title, state, origin, createdAt, finishedAt } = task;
-  return { id, title, state, origin, createdAt, finishedAt, progress: progress(task) };
+  const { id, title, agent, state, origin, createdAt, finishedAt } = task;
+  return { id, title, agent, state, origin, createdAt, finishedAt, progress: progress(task) };
 }
 
 function field(body: unknown, name: string): unknown {

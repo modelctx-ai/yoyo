@@ -692,7 +692,7 @@ function renderTask(task) {
   var open = task.state === "queued" || task.state === "running";
   var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
   $("#title").textContent = task.title;
-  $("#subtitle").textContent = "子任务 #" + task.id + " · " + (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "");
+  $("#subtitle").textContent = "子任务 #" + task.id + " · " + task.agent + " · " + (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "");
   var cancel = open ? h("button", { class: "plain", type: "button", text: "取消", onclick: confirmThen("取消子任务 #" + task.id + "？", function () {
     api("POST", "/api/tasks/" + task.id + "/cancel", {}).then(function () { toast("取消了"); views.task.load(); loadTasks(); }, fail);
   }) }) : null;

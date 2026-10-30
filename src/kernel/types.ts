@@ -174,6 +174,8 @@ export interface AgentTask {
   readonly goal: string;
   /** 验收标准，一条一句。 */
   readonly criteria: readonly string[];
+  /** 哪种子 agent 来做，见 `features/tasks/agents.ts`。 */
+  readonly agent: string;
   readonly state: AgentTaskState;
   readonly todos: readonly Todo[];
   readonly result: string | null;
@@ -193,6 +195,7 @@ export interface AgentTaskInput {
   readonly title: string;
   readonly goal: string;
   readonly criteria: readonly string[];
+  readonly agent: string;
   readonly origin: string;
 }
 

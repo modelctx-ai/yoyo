@@ -276,7 +276,7 @@ describe('web 管理页', () => {
 
   test('子任务：列表、详情带一步步的过程、取消；主聊天里做完的那条带编号', async () => {
     const task = repos.agentTasks.create(
-      { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'], origin: 'main' },
+      { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'], agent: 'research', origin: 'main' },
       T0,
     );
     repos.agentTasks.update(
@@ -295,6 +295,7 @@ describe('web 管理页', () => {
     assert.deepEqual(list[0], {
       id: task.id,
       title: '整理周报',
+      agent: 'research',
       state: 'running',
       origin: 'main',
       createdAt: T0,

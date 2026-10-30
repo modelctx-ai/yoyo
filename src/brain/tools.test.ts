@@ -16,6 +16,7 @@ import type { Repos, WebSearch } from '../ports/index.ts';
 import { generateReply } from './compose.ts';
 import { recordUser, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
+import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
 import { createRepos } from '../storage/repos.ts';
 import { addTaskWorkerTools, createYoyoTools } from './tools.ts';
 
@@ -192,11 +193,11 @@ describe('brain/tools', () => {
 
     assert.equal(
       await run(main, 'task_create', { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'] }),
-      '开了子任务 #1「整理周报」，排队等着做',
+      '开了子任务 #1「整理周报」，交给 general，排队等着做',
     );
     assert.equal(await run(main, 'task_create', { title: ' ', goal: 'x', criteria: [] }), '标题不能空着');
     assert.equal(await run(main, 'task_list'), '#1\t排队\t-\t整理周报');
-    assert.match(String(await run(main, 'task_show', { id: 1 })), /^#1 整理周报（排队）/);
+    assert.match(String(await run(main, 'task_show', { id: 1 })), /^#1 整理周报（排队，general）/);
     assert.equal(await run(main, 'task_show', { id: 9 }), '没有子任务 #9');
     assert.equal(repos.agentTasks.get(1)?.origin, 'main');
 
@@ -216,6 +217,24 @@ describe('brain/tools', () => {
     const checks = [{ criterion: '三个项目都有', met: true, evidence: '有' }];
     assert.equal(await run(worker, 'task_finish', { id: 1, result: '周报', checks }), '交好了，子任务 #1 做完');
     assert.equal(await run(main, 'task_cancel', { id: 1 }), '子任务 #1 已经「做完」');
+  });
+
+  test('task_create：说明里列出子 agent 类型，能挑一种，挑了没有的回一句话', async () => {
+    const repos = memoryRepos();
+    const agents = mergeAgents([
+      parseAgentFile('---\nname: reviewer\ndescription: 看 PR\n---\n看', 'reviewer', 'r.md'),
+    ]);
+    const main = createYoyoTools({ repos, search: null, tasks: true, agents, now: () => NOW });
+    const definition = main.get('task_create');
+    assert.match(definition?.description ?? '', /general：什么都能做.*\nresearch：.*\nreviewer：看 PR\nwriter：/s);
+    assert.equal(
+      await run(main, 'task_create', { title: '看 PR', goal: '看 #25 的描述', criteria: [], agent: 'reviewer' }),
+      '开了子任务 #1「看 PR」，交给 reviewer，排队等着做',
+    );
+    assert.equal(
+      await run(main, 'task_create', { title: '写代码', goal: '写', criteria: [], agent: 'coder' }),
+      '没有「coder」这种子 agent，有：general、research、reviewer、writer',
+    );
   });
 
   test('add_alarm 存进日程并记 schedule-add；写错了回校验文案；list_alarms 列出来', async () => {

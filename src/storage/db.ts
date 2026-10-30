@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   title TEXT NOT NULL,
   goal TEXT NOT NULL,
   criteria TEXT NOT NULL,
+  agent TEXT NOT NULL DEFAULT 'general',
   state TEXT NOT NULL,
   todos TEXT NOT NULL DEFAULT '[]',
   result TEXT,
@@ -90,6 +91,12 @@ const open = new Map<string, DatabaseSync>();
 /** 建表。都是 IF NOT EXISTS，重复调用没关系。 */
 export function ensureSchema(db: DatabaseSync): void {
   db.exec(SCHEMA);
+  // 子任务的表先发过一版没有 agent 列的：补上，以前的子任务都算 general
+  const columns = db
+    .prepare('PRAGMA table_info(agent_tasks)')
+    .all()
+    .map((row) => String(row.name));
+  if (!columns.includes('agent')) db.exec("ALTER TABLE agent_tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'general'");
 }
 
 /** 用 SAVEPOINT，所以已经在别人的事务里也能用。出错整段回滚。 */

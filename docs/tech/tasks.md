@@ -16,6 +16,9 @@ sources:
     resource: src/brain/tools.ts
     title: 本地工具
   - id: agents
+    resource: src/features/tasks/agents.ts
+    title: 子 agent 类型
+  - id: agent-config
     resource: src/brain/agents.ts
     title: agent 配置
   - id: prompts
@@ -65,7 +68,7 @@ sources:
 
 | 谁       | 工具                                                       | 说明                                                                                                     |
 | -------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 主线程   | `task_create`                                              | 派出去：标题、目标、验收标准。马上返回编号，不等做完                                                     |
+| 主线程   | `task_create`                                              | 派出去：标题、目标、验收标准、子 agent 类型（不写是 `general`）。马上返回编号，不等做完                  |
 | 主线程   | `task_list`、`task_show`                                   | 和命令行的 `yoyo task list`、`yoyo task show` 一样的文字                                                 |
 | 主线程   | `task_cancel`                                              | 主人说不用做了时用                                                                                       |
 | 子 agent | `task_plan`                                                | 拆 todo（或重新拆）：给整份清单，和原来一字不差的项保留状态                                              |
@@ -76,6 +79,36 @@ sources:
 * 主线程的四个只在 `llm.tools` 和 `tasks.enabled` 都打开时有。此外每一轮的事实里列着还在排队和在做的子任务（来源 `tasks`），主人问「周报弄好没」不用先查。
 * 子 agent 那份：本地工具（搜索、天气、日程），主线程那边经 MCP 和记忆执行的工具原样带过去，加上上面四个；没有派子任务的，子 agent 不会再派子任务。
 * 子 agent 的工具都要带上任务编号，只对正在做的那个有效。工具调用不知道自己在哪个会话里，所以由参数带；编号对不上、任务已经结束，都回一句话说明。
+
+# 子 agent 类型
+
+照 Claude Code 的 `subagent_type`：每种类型有名字、什么时候用、自己的指令和工具清单，主线程派子任务时挑一种。`task_create` 的说明里列着每种类型的名字和「什么时候用」，主线程按它挑；挑了没有的，回一句「没有「x」这种子 agent，有：……」。[^agents] [^tools]
+
+| 内置       | 什么时候用                                         | 工具                                                     |
+| ---------- | -------------------------------------------------- | -------------------------------------------------------- |
+| `general`  | 什么都能做，拿不准就用它                           | 全部                                                     |
+| `research` | 上网查、对比、下结论，结论带出处；只读             | `web_search`、`weather_forecast`、`list_alarms`、`recall` |
+| `writer`   | 把给的材料整理成周报、清单、摘要；不上网           | `recall`                                                 |
+
+主人自己加：`~/.yoyo/agents/<名字>.md`，一个文件一种，格式和 Claude Code 的 `.claude/agents/*.md` 一样：
+
+```markdown
+---
+name: reviewer
+description: 帮主人看 PR 描述写得清不清楚
+tools: web_search, github__*
+model: claude-haiku-5-5
+---
+你是看 PR 描述的子 agent。挑出说不清的地方，给改法。
+```
+
+* `name` 只能用小写字母、数字和 `-`，不写就用文件名；和内置的同名就盖掉内置的。
+* `description` 必填，主线程按它挑。正文是这种类型的指令，接在做事的协议（拆 todo、一项一项标、验收、交结果）后面。
+* `tools` 逗号分隔，`*` 结尾按前缀匹配（MCP 工具是 `<服务器>__<工具>`）；不写就是全部。清单里写了但没有的跳过。四个任务工具总是在。
+* `model` 换一个模型，服务商、地址和密钥照 `llm`；建不起来就记一行，先用 `llm.model`。
+* 写错的文件跳过、记一行，别的照用。常驻进程启动时读；改了文件要等下一次换配置或者重开 yoyo。
+
+子任务记下派的是哪种（`agent_tasks.agent`，旧库启动时补上这一列，以前的都算 `general`）。做的时候按它配子 agent：指令、工具清单、模型；那种类型不在了（文件删了）就记成没做成。[^runner] [^repos]
 
 # 规则
 
@@ -93,7 +126,7 @@ sources:
 
 1. 开始时先让子任务专用的编排器 `recover()`，再把状态还是「在做」的放回排队：上次常驻进程没做完就退出了。
 2. 取最早排队的，标成在做。第一轮把任务说明（编号、目标、验收标准）作为输入交给子 agent；接着做的那次，换成下面的「催一句」。
-3. 子 agent 在会话 `task:<编号>` 上跑一轮（`record: true`），一轮最多 20 步，一次模型调用最多等 90 秒。做法写在它的指令里：先 `task_plan`，边做边 `task_todo`，对完验收标准 `task_finish`，做不了 `task_fail`。[^agents] [^prompts]
+3. 子 agent 在会话 `task:<编号>` 上跑一轮（`record: true`），一轮最多 20 步，一次模型调用最多等 90 秒。做法写在它的指令里：先 `task_plan`，边做边 `task_todo`，对完验收标准 `task_finish`，做不了 `task_fail`；后面接着这种类型自己的指令。[^agent-config] [^prompts]
 4. 一轮停下了但任务还在做：带上 todo 的现状催它接着做（「还没交结果，现在的 todo……」），最多 6 轮；6 轮还没交就记成没做成。模型出错也记成没做成，原因是那句错误（密钥抹掉）。
 5. 每 2 秒看一眼有没有在别处被取消（命令行、工作台、主线程的 `task_cancel`）：取消了就停下这一轮。
 6. 常驻进程要退出：停下这一轮，任务放回排队，下次启动接着做（从「催一句」开始，todo 都还在）。
@@ -134,14 +167,15 @@ sources:
 | Claude Code                                                        | yoyo                                                                                                  |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Agent（Task）工具：`description` 加 `prompt`，子 agent 另起上下文 | `task_create`：标题、目标，另加验收标准；子 agent 在自己的会话 `task:<编号>` 上跑                     |
-| 子 agent 的工具按定义挑，不能再派子 agent                          | 子 agent 一份自己的注册表，没有派子任务的工具                                                         |
+| `subagent_type`：`.claude/agents/*.md` 定义名字、什么时候用、指令、工具、模型 | `task_create` 的 `agent`：内置三种，`~/.yoyo/agents/*.md` 同样的格式                              |
+| 子 agent 的工具按定义挑，不能再派子 agent                          | 按类型的清单从子 agent 那份注册表里挑，没有派子任务的工具                                             |
 | `run_in_background`：后台跑，主线程接着聊                          | 子任务总在后台跑，`task_create` 马上返回                                                              |
 | 看输出、停下                                                       | `task_show`（命令行 `yoyo task show`、`log`）、`task_cancel`                                          |
 | TodoWrite：整份清单、待做 / 在做 / 做完，同一时间一项在做          | `task_plan` 给整份清单，`task_todo` 改一项；多一个跳过（要原因），同一时间一项在做由规则挡住          |
 | 子 agent 最后一条消息就是结果                                      | `task_finish` 交的结果，交之前逐条对验收标准                                                          |
 | 后台任务结束，`<task-notification>` 进主会话、叫醒主线程           | 同样：结果写进主会话，`<task-notification>` 交给主线程跑一轮，转告由桌宠说出来                        |
 
-还没照着做的：子 agent 的类型（各自的指令和工具清单，派的时候挑），并行跑几个。
+还没照着做的：并行跑几个（#28）。
 
 # 命令行和工作台
 
@@ -150,7 +184,8 @@ sources:
 | `yoyo task list`                              | 最近 20 个：编号、状态、todo 进度、标题                    |
 | `yoyo task show <编号>`                       | 目标、验收标准、todo、验收、结果或原因                     |
 | `yoyo task log <编号>`                        | 子 agent 一步步做了什么：收到的话、说的话、调的工具和结果  |
-| `yoyo task add --title … --goal … --criteria "a；b"` | 自己派一个，验收标准用分号隔开                      |
+| `yoyo task add --title … --goal … --criteria "a；b" --agent …` | 自己派一个，验收标准用分号隔开，类型不写是 `general` |
+| `yoyo task agents`                            | 有哪些类型：名字、什么时候用、工具、模型、从哪来           |
 | `yoyo task cancel <编号>`                     | 取消                                                       |
 
 工作台的聊天列表里列着子任务（状态、进度），点开是详情：状态、进度条、目标、验收标准（交了以后带上满足没有和凭什么）、todo、结果、过程。在做的每 4 秒刷新。接口见[管理页](web.md#接口)。
@@ -165,7 +200,8 @@ sources:
 [^runner]: 子任务的跑法
 [^rules]: 子任务的规则
 [^tools]: 本地工具
-[^agents]: agent 配置
+[^agents]: 子 agent 类型
+[^agent-config]: agent 配置
 [^prompts]: 指令
 [^context]: 上下文
 [^container]: 组装根
