@@ -5,20 +5,24 @@
  * CSP 不许写 style 属性：样式都在下面的样式表里，脚本要改样式就改 class 或 `node.style`。
  */
 
+import { AVATAR } from './avatar.ts';
+
 const STYLE = String.raw`
 :root {
-  --rail: #f4f2ee; --list: #f8f6f3; --bg: #fcfbf9; --panel: #ffffff; --bubble: #f1eee9;
-  --text: #1f1d1a; --muted: #8a857e; --line: #ebe7e1; --hover: #efece7;
-  --accent: #f26b1d; --accent-soft: #fde9dc; --accent-text: #ffffff;
-  --ok: #2f9e44; --warn: #e8590c; --danger: #c92a2a;
+  --bg: #f7f8fc; --side: #eef1fa; --panel: #ffffff; --hover: #e4e8f5;
+  --text: #1d2333; --muted: #5f6779; --soft-text: #4a5266; --line: #e0e4ef; --line-strong: #b8bfd0;
+  --accent: #4f6bed; --accent-strong: #3a55d6; --accent-soft: #e5eafd; --accent-text: #ffffff; --yoyo: #edf1fe;
+  --ok: #2f9e44; --ok-strong: #2b8a3e; --ok-soft: #e3f4e6; --warm: #b35c00; --warm-soft: #fff1e0;
+  --warn: #e8590c; --danger: #c2255c; --danger-soft: #fde7ef; --violet: #6741d9; --violet-soft: #efe9fe;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --rail: #181716; --list: #1d1c1b; --bg: #222120; --panel: #2a2826; --bubble: #33302d;
-    --text: #ece9e4; --muted: #9a958e; --line: #36332f; --hover: #2f2d2a;
-    --accent: #ff8a3d; --accent-soft: #3d2a1d; --accent-text: #1a1206;
-    --ok: #69db7c; --warn: #ffa94d; --danger: #ff8787;
+    --bg: #131722; --side: #181d2b; --panel: #1e2433; --hover: #252c3e;
+    --text: #e6e9f2; --muted: #9aa2b5; --soft-text: #b4bbcc; --line: #2a3142; --line-strong: #4a5368;
+    --accent: #7c93ff; --accent-strong: #a3b3ff; --accent-soft: #263056; --accent-text: #0e1220; --yoyo: #20283d;
+    --ok: #69db7c; --ok-strong: #8ce99a; --ok-soft: #1f3a2a; --warm: #ffc078; --warm-soft: #3d2c17;
+    --warn: #ffa94d; --danger: #f783ac; --danger-soft: #42202f; --violet: #b197fc; --violet-soft: #2e2550;
     color-scheme: dark;
   }
 }
@@ -26,107 +30,105 @@ const STYLE = String.raw`
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; overflow: hidden; }
 button { font: inherit; color: inherit; }
-svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+[hidden] { display: none !important; }
 
 .app { display: flex; height: 100%; }
-.rail { flex: none; width: 76px; background: var(--rail); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0; border-right: 1px solid var(--line); }
-.rail button { width: 60px; border: 0; background: none; border-radius: 12px; padding: 8px 0 6px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; color: var(--muted); font-size: 12px; }
-.rail button:hover { background: var(--hover); color: var(--text); }
-.rail button[aria-current="page"] { color: var(--accent); }
-.rail button[aria-current="page"] svg { stroke-width: 2.1; }
-.rail .spacer { flex: 1; }
-.ring { display: inline-block; width: 30px; height: 30px; border-radius: 50%; border: 5px solid var(--accent); background: var(--panel); flex: none; }
-.ring.sm { width: 22px; height: 22px; border-width: 4px; }
-.rail .brand { margin-bottom: 10px; }
-
-.list { flex: none; width: 260px; background: var(--list); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 14px 12px; gap: 2px; overflow-y: auto; }
-.list[hidden] { display: none; }
-.list-head { font-weight: 600; padding: 2px 8px 10px; }
-.group { color: var(--muted); font-size: 13px; padding: 12px 8px 4px; }
-.session { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 9px 10px; cursor: pointer; text-align: left; }
-.session.active { background: var(--hover); }
-.hint { color: var(--muted); font-size: 13px; padding: 4px 10px; }
-.hint[hidden] { display: none; }
-.session .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session .meta { flex: none; color: var(--muted); font-size: 12px; }
-.dot.run { background: var(--accent); } .dot.fail { background: var(--danger); }
-.task-card { cursor: pointer; }
-.task-card:hover { border-color: var(--accent); }
-.task-card .sub { white-space: pre-wrap; max-height: 3.2em; overflow: hidden; }
-.task-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-.task-head .side { flex: 1; }
-.badge { font-size: 12px; border-radius: 999px; padding: 2px 10px; background: var(--bubble); color: var(--muted); }
-.badge.running { background: var(--accent-soft); color: var(--accent); }
-.badge.done { color: var(--ok); } .badge.failed { color: var(--danger); }
-.bar-track { height: 6px; border-radius: 3px; background: var(--bubble); overflow: hidden; margin: 6px 0 14px; }
-.bar-track > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
-.panel .text { white-space: pre-wrap; word-break: break-word; padding: 4px 0 12px; }
-.todo { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); align-items: flex-start; }
-.todo:first-of-type { border-top: 0; }
-.todo .mark { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--muted); margin-top: 3px; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; }
-.todo.done .mark { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-.todo.in_progress .mark { border-color: var(--accent); }
-.todo.in_progress .mark::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
-.todo.done .main, .todo.skipped .main { color: var(--muted); }
-.todo.skipped .main { text-decoration: line-through; }
-.todo .note { color: var(--muted); font-size: 13px; }
-.step { display: flex; gap: 10px; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
-.step .k { flex: none; width: 170px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step .t { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
-.step.call .t, .step.result .t { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
-details.steps > summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
-.status { margin-top: auto; padding: 12px 8px 4px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.side { flex: none; width: 256px; background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 16px 12px 12px; gap: 2px; overflow-y: auto; }
+.me { display: flex; align-items: center; gap: 12px; padding: 4px 6px 16px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; object-fit: cover; background: var(--yoyo); }
+.avatar.lg { width: 48px; height: 48px; box-shadow: 0 0 0 3px var(--accent-soft); }
+.me .name { font-weight: 700; font-size: 17px; letter-spacing: .5px; }
+.me .mood { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 9px 10px; cursor: pointer; text-align: left; color: var(--soft-text); }
+.nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item[aria-current="page"] { background: var(--panel); color: var(--accent-strong); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 30, 60, .06); }
+.section-title { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 1px; padding: 18px 10px 6px; }
+.section-title .count { margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.task-item { display: flex; flex-direction: column; gap: 6px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 8px 10px; cursor: pointer; text-align: left; }
+.task-item .line { display: flex; align-items: center; gap: 9px; }
+.task-item .mini { display: block; height: 4px; margin-left: 16px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.task-item .mini > span { display: block; height: 100%; width: 0; background: var(--accent); }
+.task-item:hover { background: var(--hover); }
+.task-item.active { background: var(--panel); box-shadow: 0 1px 2px rgba(20, 30, 60, .06); }
+.task-item.active .name { font-weight: 600; }
+.task-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.task-item .meta { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hint { color: var(--muted); font-size: 13px; padding: 2px 10px; }
+.side-foot { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.status { display: flex; flex-direction: column; gap: 3px; font-size: 12px; padding: 10px; border-radius: 10px; background: var(--panel); }
 .status .item { display: flex; align-items: center; gap: 8px; color: var(--muted); min-width: 0; }
 .status .item span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot.ok { background: var(--ok); } .dot.off { background: var(--warn); }
-.quick { display: flex; gap: 6px; padding: 8px 8px 0; }
+.dot.ok { background: var(--ok); } .dot.off { background: var(--warn); } .dot.run { background: var(--accent); } .dot.fail { background: var(--danger); }
+.quick { display: flex; gap: 6px; }
 
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.bar { flex: none; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 20px; border-bottom: 1px solid var(--line); }
-.bar h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; text-align: center; }
-.bar .tool { border: 0; background: none; display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; padding: 6px 8px; border-radius: 8px; font-size: 14px; }
-.bar .tool:hover { background: var(--hover); color: var(--text); }
-.bar input[type="search"] { width: 160px; }
-.bar .left { flex: none; width: 200px; }
+.bar { flex: none; display: flex; align-items: center; gap: 16px; padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.bar .titles { flex: 1; min-width: 0; }
+.bar h1 { margin: 0; font-size: 18px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); }
+.search input { border: 0; outline: 0; background: none; padding: 0; width: 150px; }
+.bar-actions { display: flex; align-items: center; gap: 10px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .view { display: none; flex: 1; min-height: 0; }
 .view.active { display: flex; flex-direction: column; }
 .scroll { overflow-y: auto; }
-.page { width: 100%; max-width: 880px; margin: 0 auto; padding: 20px; }
+.page { width: 100%; max-width: 1040px; margin: 0 auto; padding: 24px 32px; }
+.columns { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.col-main { flex: 3 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.col-side { flex: 2 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.card.pending { background: var(--side); border-style: dashed; color: var(--muted); }
+.card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.card-head .side-note { margin-left: auto; }
+.label { margin: 0; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 1px; }
+.card h2.title { margin: 0; font-size: 16px; }
 
-.thread { flex: 1; overflow-y: auto; padding: 24px 0 12px; }
-.thread-inner { max-width: 860px; margin: 0 auto; padding: 0 28px; display: flex; flex-direction: column; gap: 18px; }
-.when { align-self: center; color: var(--muted); font-size: 12px; padding: 4px 0; }
-.msg { display: flex; gap: 12px; align-items: flex-start; }
-.msg .body { min-width: 0; flex: 1; white-space: pre-wrap; word-break: break-word; }
-.msg .via { display: table; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; margin-bottom: 4px; }
-.msg.me { justify-content: flex-end; }
-.msg.me .body { flex: none; max-width: 75%; background: var(--bubble); padding: 9px 14px; border-radius: 16px 16px 4px 16px; }
-.msg.me .via { margin-left: auto; }
-.msg.aside .body { color: var(--muted); }
-.msg.aside .body::before { content: "• "; }
-.msg.pending .body { color: var(--muted); }
+.thread { flex: 1; overflow-y: auto; padding: 20px 0 8px; }
+.thread-inner { max-width: 820px; margin: 0 auto; padding: 0 28px; display: flex; flex-direction: column; gap: 14px; }
+.when { align-self: center; color: var(--muted); font-size: 12px; padding: 6px 0 0; letter-spacing: .5px; }
+.msg { display: flex; gap: 10px; align-items: flex-end; max-width: 86%; }
+.msg .bubble { min-width: 0; white-space: pre-wrap; word-break: break-word; padding: 10px 14px; border-radius: 18px 18px 18px 6px; background: var(--yoyo); }
+.msg .meta { color: var(--muted); font-size: 11px; margin-top: 3px; padding: 0 6px; }
+.msg.me { align-self: flex-end; flex-direction: row-reverse; }
+.msg.me .bubble { background: var(--accent); color: var(--accent-text); border-radius: 18px 18px 6px 18px; }
+.msg.me .meta { text-align: right; }
+.msg.pending .bubble { color: var(--muted); }
 .typing::after { content: "…"; animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .2; } }
+.whisper { align-self: center; max-width: 80%; color: var(--muted); font-size: 13px; text-align: center; white-space: pre-wrap; }
+.whisper::before { content: "碎碎念 · "; color: var(--accent); }
 .summary { align-self: center; max-width: 80%; color: var(--muted); font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; }
 .summary summary { cursor: pointer; }
-.alarm-card { margin-left: 42px; display: flex; gap: 14px; align-items: center; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 14px 16px; }
-.alarm-card .icon { width: 44px; height: 44px; border-radius: 10px; background: var(--bubble); display: flex; align-items: center; justify-content: center; }
-.alarm-card .icon svg { width: 22px; height: 22px; }
-.alarm-card .title { font-weight: 600; }
-.alarm-card .sub { color: var(--muted); font-size: 13px; }
+.event { margin-left: 40px; align-self: flex-start; max-width: calc(86% - 40px); display: flex; gap: 12px; align-items: center; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 10px 16px 10px 10px; font-size: 14px; color: var(--text); }
+.event .chip { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex: none; background: var(--accent-soft); color: var(--accent-strong); }
+.event.done .chip { background: var(--ok-soft); color: var(--ok-strong); }
+.event.failed .chip { background: var(--danger-soft); color: var(--danger); }
+.event.alarm .chip { background: var(--warm-soft); color: var(--warm); }
+.event .text { display: flex; flex-direction: column; min-width: 0; }
+.event .what { font-weight: 600; }
+.event .detail { color: var(--muted); font-size: 13px; white-space: pre-wrap; max-height: 4.8em; overflow: hidden; }
+.event .tail { margin-left: 8px; color: var(--accent-strong); font-size: 13px; white-space: nowrap; }
+button.event { font: inherit; text-align: left; }
+.event.link { cursor: pointer; }
+.event.link:hover { border-color: var(--accent); }
 .thread .empty { text-align: center; padding: 64px 0; }
 
-.composer { flex: none; max-width: 860px; width: calc(100% - 56px); margin: 0 auto 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); padding: 10px 12px 8px 16px; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
-.composer textarea { display: block; width: 100%; border: 0; outline: 0; background: none; resize: none; min-height: 26px; max-height: 200px; padding: 4px 0; font: inherit; color: var(--text); }
-.composer .row2 { display: flex; align-items: center; gap: 10px; }
-.composer .row2 .side:first-child { flex: 1; }
-.send { width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.composer { flex: none; border-top: 1px solid var(--line); background: var(--bg); padding: 12px 28px 16px; }
+.composer .field { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 14px; }
+.composer .field:focus-within { border-color: var(--accent); }
+.composer textarea { flex: 1; display: block; border: 0; outline: 0; background: none; resize: none; min-height: 26px; max-height: 200px; padding: 4px 0; font: inherit; color: var(--text); }
+.composer .hints { max-width: 820px; margin: 6px auto 0; display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
+.composer .hints span:first-child { flex: 1; }
+.send { width: 44px; height: 44px; border-radius: 12px; border: 0; background: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
 .send:disabled { background: var(--hover); color: var(--muted); cursor: default; }
-.send svg { width: 18px; height: 18px; stroke-width: 2.2; }
+.send svg { stroke-width: 2.2; }
 
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 16px; margin-bottom: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px 18px; margin-bottom: 16px; }
 .panel > h2 { font-size: 15px; margin: 14px 0 4px; }
 .row { display: flex; gap: 10px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); }
 .row:first-of-type { border-top: 0; }
@@ -134,14 +136,15 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .row .main { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
 .day { color: var(--muted); font-size: 13px; padding: 14px 0 2px; }
 .day + .row { border-top: 0; }
-.side { color: var(--muted); font-size: 12px; }
-.row .side { flex: none; }
+.side-note { color: var(--muted); font-size: 12px; }
+.row .side-note { flex: none; }
 .empty { color: var(--muted); padding: 12px 0; }
 .actions { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; align-items: center; }
+.actions.end { justify-content: flex-end; margin-bottom: 0; }
 button.primary, button.plain, button.danger { border-radius: 9px; padding: 6px 14px; cursor: pointer; border: 1px solid var(--line); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.plain { background: var(--panel); }
-button.plain.small { padding: 3px 10px; font-size: 13px; flex: 1; }
+button.plain.small { padding: 4px 10px; font-size: 13px; flex: 1; }
 button.danger { background: none; color: var(--danger); border-color: transparent; padding: 2px 6px; }
 button:disabled { opacity: .5; cursor: default; }
 form.inline { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0; }
@@ -152,16 +155,72 @@ label.row { cursor: pointer; }
 label.row input { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
 form.inline input[name="title"], form.inline input[name="name"], form.inline input[name="yoyo"] { flex: 1 1 160px; }
 
-#toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 9px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px); z-index: 2; }
+.todo { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: flex-start; }
+.todo:first-of-type { border-top: 0; }
+.todo .mark { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-strong); box-sizing: border-box; margin-top: 2px; display: flex; align-items: center; justify-content: center; }
+.todo .mark svg { width: 12px; height: 12px; stroke-width: 3; }
+.todo.done .mark { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.todo.in_progress .mark { border-color: var(--accent); }
+.todo.in_progress .mark::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.todo.in_progress .main { font-weight: 600; }
+.todo.done .main, .todo.skipped .main { color: var(--muted); }
+.todo.skipped .main { text-decoration: line-through; }
+.todo .note { color: var(--muted); font-size: 13px; font-weight: 400; text-decoration: none; }
+.criterion { display: flex; gap: 10px; padding: 6px 0; }
+.criterion .mark { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--line-strong); box-sizing: border-box; margin-top: 3px; display: flex; align-items: center; justify-content: center; }
+.criterion .mark svg { width: 11px; height: 11px; stroke-width: 3; }
+.criterion.met .mark { background: var(--ok-strong); border-color: var(--ok-strong); color: #ffffff; }
+.criterion.unmet .mark { border-color: var(--danger); color: var(--danger); }
+.criterion .note { color: var(--muted); font-size: 13px; }
+.bar-track { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-bottom: 10px; }
+.bar-track > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.card .text { white-space: pre-wrap; word-break: break-word; }
+.badge { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 12px; background: var(--hover); color: var(--muted); }
+.badge.running { background: var(--accent-soft); color: var(--accent-strong); }
+.badge.done { background: var(--ok-soft); color: var(--ok-strong); }
+.badge.failed { background: var(--danger-soft); color: var(--danger); }
+.tl { display: flex; gap: 12px; }
+.tl .rail { display: flex; flex-direction: column; align-items: center; flex: none; }
+.tl .node { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); margin-top: 7px; flex: none; }
+.tl.say .node, .tl.call .node { background: var(--accent); }
+.tl.result .node { background: var(--ok); }
+.tl .stem { flex: 1; width: 2px; background: var(--hover); }
+.tl:last-child .stem { display: none; }
+.tl .body { padding-bottom: 14px; min-width: 0; }
+.tl .k { color: var(--muted); font-size: 12px; }
+.tl .t { font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+.tl.call .t, .tl.result .t { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--soft-text); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 10px; }
+.chips button { min-height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--soft-text); font-size: 13px; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
+.fact { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.fact .main { flex: 1; min-width: 0; }
+.fact .side-note { flex: none; }
+.tag { flex: none; padding: 1px 8px; border-radius: 6px; font-size: 12px; background: var(--hover); color: var(--soft-text); }
+.tag.work { background: var(--accent-soft); color: var(--accent-strong); }
+.tag.routine { background: var(--ok-soft); color: var(--ok-strong); }
+.tag.taste { background: var(--warm-soft); color: var(--warm); }
+.tag.people { background: var(--violet-soft); color: var(--violet); }
+.tag.fix { background: var(--danger-soft); color: var(--danger); }
+.tag.on { background: var(--ok-soft); color: var(--ok-strong); }
+.core-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.core-head .avatar { width: 36px; height: 36px; }
+.card textarea { width: 100%; min-height: 220px; resize: vertical; background: var(--bg); border-radius: 12px; padding: 12px 14px; line-height: 1.7; font-size: 14px; }
+#toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 9px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px); z-index: 2; }
 #toast.show { opacity: 1; }
 #locked { display: none; padding: 64px 16px; text-align: center; color: var(--muted); }
 
-@media (max-width: 860px) { .list { display: none; } .bar .left { width: auto; } }
+@media (max-width: 860px) {
+  .side { width: 64px; padding: 12px 8px; align-items: center; }
+  .me { padding: 4px 0 12px; } .me .who, .nav-item span, .section-title, .tasks, .hint, .status, .quick { display: none !important; }
+  .avatar.lg { width: 40px; height: 40px; }
+  .nav-item { justify-content: center; padding: 10px; }
+}
 @media (max-width: 560px) {
-  .rail { width: 56px; } .rail button { width: 46px; font-size: 0; }
-  .bar { padding: 0 12px; } .bar input[type="search"] { width: 100px; } .bar .tool span { display: none; }
-  .thread-inner { padding: 0 14px; } .composer { width: calc(100% - 24px); }
-  .alarm-card { margin-left: 0; } .msg.me .body { max-width: 88%; } .composer .keys { display: none; }
+  .bar { padding: 10px 14px; } .bar input[type="search"] { width: 110px; }
+  .thread-inner { padding: 0 14px; } .composer { padding: 10px 12px 12px; }
+  .msg { max-width: 94%; } .event { margin-left: 0; max-width: 100%; }
+  .composer .keys { display: none; }
   .row { flex-wrap: wrap; } .row .who { width: auto; }
 }
 `;
@@ -177,6 +236,9 @@ const ICONS: Readonly<Record<string, string>> = {
     '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  cross: '<path d="M6 6l12 12M18 6 6 18"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   task: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
 };
 
@@ -202,6 +264,7 @@ function $(selector) { return document.querySelector(selector); }
 function h(tag, props, children) {
   var node = document.createElement(tag);
   Object.keys(props || {}).forEach(function (key) {
+    if (props[key] === null || props[key] === undefined) return;
     if (key === "text") node.textContent = props[key];
     else if (key.slice(0, 2) === "on") node.addEventListener(key.slice(2), props[key]);
     else node.setAttribute(key, props[key]);
@@ -271,7 +334,7 @@ function row(who, main, side, extra) {
   return h("div", { class: "row" }, [
     who === null ? null : h("div", { class: "who", text: who }),
     h("div", { class: "main", text: main }),
-    side ? h("div", { class: "side", text: side }) : null,
+    side ? h("div", { class: "side-note", text: side }) : null,
     extra || null,
   ]);
 }
@@ -291,11 +354,16 @@ var DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 
 // ---- 对话 ----
 
-var thread = { signature: "", pending: false, query: "" };
+var thread = { signature: "", pending: false, query: "", tasks: "" };
 var VIA = { "dsh-pet": "桌宠对话" };
 var TASK_STATES = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "取消了" };
 var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
 var openTask = 0;
+/** 最近的子任务，按编号：对话里的卡片据此显示进度 */
+var taskIndex = {};
+var factFilter = "";
+var memoryFacts = [];
+var TOPICS = { owner: "主人", work: "工作", people: "身边的人", routine: "作息", taste: "喜好", fix: "纠正" };
 
 function stateDot(state) {
   return state === "running" ? "run" : state === "done" ? "ok" : state === "failed" ? "fail" : "";
@@ -303,53 +371,58 @@ function stateDot(state) {
 
 function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
 
-function avatar() { return h("span", { class: "ring sm" }); }
+function avatar() {
+  var img = h("img", { class: "avatar", alt: "" });
+  img.src = $("#avatar").src;
+  return img;
+}
 
 function message(item) {
   var via = VIA[item.via] || (item.kind === "user" && !item.via ? "语音" : "");
-  var tag = via ? h("div", { class: "via", text: via }) : null;
-  if (item.kind === "user") {
-    return h("div", { class: "msg me", "data-text": item.text }, [h("div", { class: "body" }, [tag].concat(rich(item.text)))]);
-  }
+  if (item.kind === "whisper") return h("div", { class: "whisper", "data-text": item.text, text: item.text });
   if (item.kind === "summary") {
     return h("details", { class: "summary", "data-text": item.text }, [h("summary", { text: "更早的对话压成了摘要" }), document.createTextNode(item.text)]);
   }
-  var aside = item.kind === "whisper";
-  return h("div", { class: "msg" + (aside ? " aside" : ""), "data-text": item.text }, [
-    avatar(),
-    h("div", { class: "body" }, [tag].concat(rich(item.text))),
+  var mine = item.kind === "user";
+  return h("div", { class: "msg" + (mine ? " me" : ""), "data-text": item.text }, [
+    mine ? null : avatar(),
+    h("div", {}, [h("div", { class: "bubble" }, rich(item.text)), via ? h("div", { class: "meta", text: "来自" + via }) : null]),
   ]);
+}
+
+/** 对话里插进来的一件事：记下了闹钟、派了子任务、子任务做完了。能点的是按钮，点开看详情 */
+function eventRow(kind, iconName, what, detail, tail, text, onclick) {
+  var parts = [
+    h("span", { class: "chip" }, [iconNode(iconName)]),
+    h("span", { class: "text" }, [h("span", { class: "what", text: what }), detail ? h("span", { class: "detail", text: detail }) : null]),
+    tail ? h("span", { class: "tail", text: tail }) : null,
+  ];
+  if (!onclick) return h("div", { class: "event " + kind, "data-text": text }, parts);
+  return h("button", { class: "event link " + kind, type: "button", "data-text": text, onclick: onclick }, parts);
 }
 
 function alarmCard(event) {
   var repeat = REPEATS[event.repeat] || "一次";
-  return h("div", { class: "alarm-card", "data-text": event.title || "" }, [
-    h("div", { class: "icon" }, [iconNode("alarm")]),
-    h("div", {}, [
-      h("div", { class: "title", text: (event.kind === "task" ? "任务：" : "闹钟：") + (event.title || "") }),
-      h("div", { class: "sub", text: repeat + " " + (event.time || "") }),
-    ]),
-  ]);
+  var what = "记下了" + (event.kind === "task" ? "任务" : "闹钟") + "：" + (event.title || "");
+  return eventRow("alarm", "alarm", what, repeat + " " + (event.time || "") + " · 桌宠到点提醒", null, event.title || "", null);
 }
 
-/** 子任务的卡片：派出去的那一刻、做完写回来的那一刻；点开看详情 */
-function taskCard(id, title, sub, text) {
-  return h("div", { class: "alarm-card task-card", "data-text": text, role: "button", tabindex: "0", onclick: function () { if (id) openTaskView(id); } }, [
-    h("div", { class: "icon" }, [iconNode("task")]),
-    h("div", {}, [h("div", { class: "title", text: title }), h("div", { class: "sub", text: sub })]),
-  ]);
+/** 子任务派出去的那一刻：还在做就带上进度 */
+function taskAddedCard(event) {
+  var task = taskIndex[event.id];
+  var who = event.origin === "main" ? "派了子任务" : "开了子任务";
+  var tail = task && task.state === "running" && task.progress.total ? task.progress.done + "/" + task.progress.total + " 在做" : task ? TASK_STATES[task.state] : "";
+  return eventRow("task", "task", who + " #" + event.id + "「" + (event.title || "") + "」", "在后台做，做完结果会回到这里", tail, event.title || "", function () { openTaskView(event.id); });
 }
 
+/** 子任务做完、没做成、取消，写回主线程的那一条 */
 function taskResultCard(item) {
   var lines = item.text.split("\n");
   // 卡片里只放纯文字：去掉加粗的星号
-  var sub = lines.slice(1).join("\n").replace(/^结果：\n?/, "").replace(/\*\*/g, "");
-  return taskCard(item.task, lines[0], sub, item.text);
-}
-
-function taskAddedCard(event) {
-  var who = event.origin === "main" ? "yoyo 派了子任务" : "派了子任务";
-  return taskCard(event.id, who + " #" + event.id + "「" + (event.title || "") + "」", "在后台做，做完结果会回到这里", event.title || "");
+  var detail = lines.slice(1).join("\n").replace(/^结果：\n?/, "").replace(/\*\*/g, "");
+  var kind = item.state === "done" ? "done" : item.state === "failed" ? "failed" : "task";
+  var iconName = item.state === "done" ? "check" : item.state === "failed" ? "cross" : "task";
+  return eventRow(kind, iconName, lines[0], detail, null, item.text, function () { if (item.task) openTaskView(item.task); });
 }
 
 /** 对话和新加的日程按时间排在一起，隔了一刻钟以上就插一行时间 */
@@ -359,7 +432,7 @@ function renderThread(items, events, force) {
     if (event.type === "schedule-add" || event.type === "task-add") merged.push({ at: Date.parse(event.at), event: event });
   });
   merged.sort(function (a, b) { return a.at - b.at; });
-  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0);
+  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0) + ":" + thread.tasks;
   if (!force && signature === thread.signature) return;
   thread.signature = signature;
   var box = $("#thread");
@@ -406,7 +479,7 @@ function sendMessage(event) {
   var empty = inner.querySelector(".empty");
   if (empty) empty.remove();
   var mine = message({ kind: "user", text: text, via: "workbench" });
-  var waiting = h("div", { class: "msg pending" }, [avatar(), h("div", { class: "body typing", text: "在想" })]);
+  var waiting = h("div", { class: "msg pending" }, [avatar(), h("div", { class: "bubble typing", text: "在想" })]);
   inner.appendChild(mine);
   inner.appendChild(waiting);
   $("#thread").scrollTop = $("#thread").scrollHeight;
@@ -447,7 +520,9 @@ function loadStatus() {
     if (s.pet && s.pet.work && s.pet.work.task) item(undefined, "在忙：" + s.pet.work.task);
     if (s.nextWhisper) item(undefined, "下一句碎碎念 " + when(s.nextWhisper));
     fill($("#status"), items, "");
-    $("#model-name").textContent = s.llm.model ? s.llm.model + (s.llm.tools ? " · 能用工具" : "") : "没配模型，回不了话";
+    var mood = !s.pet ? "控制台里" : !s.pet.reachable ? "桌宠没连上" : s.pet.work && s.pet.work.task ? "陪你" + s.pet.work.task : "在桌面上";
+    $("#mood").replaceChildren(h("span", { class: "dot " + (s.pet && s.pet.reachable ? "ok" : "off") }), h("span", { text: mood }));
+    $("#model-name").textContent = s.llm.model ? s.llm.model + (s.llm.tools ? " · 能用工具，会派子任务" : "") : "没配模型，回不了话";
   });
 }
 
@@ -479,31 +554,36 @@ var configVersion = "";
 var configDirty = false;
 
 var views = {
-  chat: { title: "yoyo", load: function () { return Promise.all([loadThread(false), loadStatus(), loadTasks()]); } },
-  task: { title: "子任务", load: function () {
+  chat: { title: "和 yoyo", sub: "桌宠上聊的、语音说的、这里打的，都在这一条里", load: function () {
+    // 先拿子任务：对话里派出去的那张卡片要显示进度
+    return Promise.all([loadTasks().catch(function () {}).then(function () { return loadThread(false); }), loadStatus()]);
+  } },
+  task: { title: "子任务", sub: "yoyo 派到后台的事", load: function () {
     if (!openTask) return Promise.resolve();
     return Promise.all([api("GET", "/api/tasks/" + openTask).then(renderTask), loadTasks()]);
   } },
-  memory: { title: "心迹", load: function () {
+  memory: { title: "记忆", sub: "yoyo 记得的你：画像、记得的事、规矩。记错的可以删", load: function () {
     return api("GET", "/api/memory").then(function (m) {
       $("#core-text").value = m.core ? m.core.text : "";
-      $("#core-at").textContent = m.core ? "更新于 " + when(m.core.at) : "";
+      $("#core-at").textContent = m.core ? "更新于 " + when(m.core.at) + " · 能直接改" : "还没有画像，可以自己写";
       $("#memory-off").hidden = m.enabled;
-      fill($("#facts"), m.facts.map(function (fact) {
-        var forget = h("button", { class: "danger", text: "忘掉", onclick: confirmThen("真的忘掉这条？删了就找不回来。", function () {
-          api("DELETE", "/api/memory/facts/" + encodeURIComponent(fact.id)).then(function () { toast("忘掉了"); views.memory.load(); }, fail);
-        }) });
-        return row(fact.topic || "", fact.text, when(fact.validFrom), forget);
-      }), "还没记住什么");
+      memoryFacts = m.facts;
+      $("#fact-count").textContent = m.facts.length ? m.facts.length + " 件" : "";
+      renderFacts();
       fill($("#rules"), m.rules.map(function (rule) {
-        var retire = h("button", { class: "danger", text: "退役", onclick: confirmThen("让这条不再生效？", function () {
+        var retire = h("button", { class: "danger", type: "button", text: "退役", onclick: confirmThen("让这条不再生效？", function () {
           api("DELETE", "/api/memory/rules/" + encodeURIComponent(rule.id)).then(function () { toast("退役了"); views.memory.load(); }, fail);
         }) });
-        return row(rule.topic || "", rule.when + " → " + rule.do, "确认 " + rule.confirmations + " 次", retire);
+        var badge = rule.effective ? "生效 · 确认 " + rule.confirmations + " 次" : "待确认 · " + rule.confirmations + " 次";
+        return h("div", { class: "fact" }, [
+          h("span", { class: "main", text: rule.when + " → " + rule.do }),
+          h("span", { class: "tag" + (rule.effective ? " on" : ""), text: badge }),
+          retire,
+        ]);
       }), "还没有");
     });
   } },
-  alarms: { title: "日程和闹钟", load: function () {
+  alarms: { title: "日程", sub: "到点由桌宠提醒", load: function () {
     return api("GET", "/api/alarms").then(function (items) {
       fill($("#alarm-list"), items.map(function (item) {
         var on = item.repeat === "weekly" ? DAYS[item.weekday] : (REPEATS[item.repeat] || item.date);
@@ -514,7 +594,7 @@ var views = {
       }), "还没有日程");
     });
   } },
-  activity: { title: "行为轨迹", load: function () {
+  activity: { title: "轨迹", sub: "yoyo 做过的事", load: function () {
     return api("GET", "/api/activity?limit=300").then(function (items) {
       // 记录按时间先后来，最新的放上面，按天分开
       var nodes = [];
@@ -529,7 +609,7 @@ var views = {
       fill($("#activity-list"), nodes, "还没有记录");
     });
   } },
-  contacts: { title: "联系人", load: function () {
+  contacts: { title: "联系人", sub: "别的 yoyo", load: function () {
     return api("GET", "/api/contacts").then(function (items) {
       fill($("#contact-list"), items.map(function (item) {
         var remove = h("button", { class: "danger", text: "删除", onclick: confirmThen("删掉「" + item.name + "」？", function () {
@@ -539,7 +619,7 @@ var views = {
       }), "还没有联系人");
     });
   } },
-  settings: { title: "设置", load: function () {
+  settings: { title: "设置", sub: "存好一两秒内生效", load: function () {
     return api("GET", "/api/config").then(function (c) {
       fill($("#switches"), SWITCHES.map(function (pair) {
         var box = h("input", { type: "checkbox", "aria-label": pair[1] });
@@ -570,13 +650,25 @@ function loadTasks() {
     fill($("#task-list"), tasks.map(function (task) {
       var active = current === "task" && openTask === task.id;
       var count = task.progress.total ? task.progress.done + "/" + task.progress.total : TASK_STATES[task.state];
-      return h("button", { class: "session" + (active ? " active" : ""), type: "button", title: TASK_STATES[task.state], onclick: function () { openTaskView(task.id); } }, [
-        h("span", { class: "dot " + stateDot(task.state) }),
-        h("span", { class: "name", text: task.title }),
-        h("span", { class: "meta", text: count }),
+      var bar = null;
+      if (task.state === "running" && task.progress.total) {
+        var fillBar = h("span");
+        fillBar.style.width = Math.round((task.progress.done / task.progress.total) * 100) + "%";
+        bar = h("span", { class: "mini" }, [fillBar]);
+      }
+      var label = task.state === "running" && task.progress.total ? count : TASK_STATES[task.state];
+      return h("button", { class: "task-item" + (active ? " active" : ""), type: "button", title: TASK_STATES[task.state], onclick: function () { openTaskView(task.id); } }, [
+        h("span", { class: "line" }, [h("span", { class: "dot " + stateDot(task.state) }), h("span", { class: "name", text: task.title }), h("span", { class: "meta", text: label })]),
+        bar,
       ]);
     }), "");
+    taskIndex = {};
+    tasks.forEach(function (task) { taskIndex[task.id] = task; });
+    thread.tasks = tasks.map(function (task) { return task.id + task.state + task.progress.done; }).join(",");
     $("#task-empty").hidden = tasks.length > 0;
+    var running = tasks.filter(function (task) { return task.state === "running"; }).length;
+    var queued = tasks.filter(function (task) { return task.state === "queued"; }).length;
+    $("#task-count").textContent = running ? running + " 件在做" : queued ? queued + " 件排队" : "";
   });
 }
 
@@ -584,51 +676,96 @@ function section(title, children) {
   return h("div", { class: "panel" }, [h("h2", { text: title })].concat(children));
 }
 
+function card(children, extra) {
+  return h("section", { class: "card" + (extra ? " " + extra : "") }, children);
+}
+
+function labelRow(text, note) {
+  return h("div", { class: "card-head" }, [h("h2", { class: "label", text: text }), note ? h("span", { class: "side-note", text: note }) : null]);
+}
+
+function markIcon(name) {
+  return iconNode(name);
+}
+
 function renderTask(task) {
-  $("#title").textContent = "#" + task.id + " " + task.title;
   var open = task.state === "queued" || task.state === "running";
-  var nodes = [];
+  var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
+  $("#title").textContent = task.title;
+  $("#subtitle").textContent = "子任务 #" + task.id + " · " + (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "");
   var cancel = open ? h("button", { class: "plain", type: "button", text: "取消", onclick: confirmThen("取消子任务 #" + task.id + "？", function () {
     api("POST", "/api/tasks/" + task.id + "/cancel", {}).then(function () { toast("取消了"); views.task.load(); loadTasks(); }, fail);
   }) }) : null;
-  var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
-  nodes.push(h("div", { class: "task-head" }, [
-    h("span", { class: "badge " + task.state, text: TASK_STATES[task.state] }),
-    h("span", { class: "side", text: (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "") }),
-    cancel,
-  ]));
+  $("#bar-actions").replaceChildren(h("span", { class: "badge " + task.state, text: TASK_STATES[task.state] }));
+  if (cancel) $("#bar-actions").appendChild(cancel);
+
+  var main = [card([labelRow("目标"), h("div", { class: "text", text: task.goal })])];
+  var progressNote = task.progress.total ? task.progress.done + " / " + task.progress.total : "";
+  var todoNodes = [labelRow("todo", progressNote)];
   if (task.progress.total) {
     var fillBar = h("span");
     fillBar.style.width = Math.round((task.progress.done / task.progress.total) * 100) + "%";
-    nodes.push(h("div", { class: "bar-track", title: task.progress.done + "/" + task.progress.total }, [fillBar]));
+    todoNodes.push(h("div", { class: "bar-track" }, [fillBar]));
   }
-  nodes.push(section("目标", [h("div", { class: "text", text: task.goal })]));
+  if (task.todos.length) {
+    task.todos.forEach(function (todo, i) {
+      todoNodes.push(h("div", { class: "todo " + todo.state }, [
+        h("span", { class: "mark" }, [todo.state === "done" ? markIcon("check") : null]),
+        h("div", { class: "main" }, [document.createTextNode((i + 1) + ". " + todo.text), todo.note ? h("div", { class: "note", text: todo.note }) : null]),
+      ]));
+    });
+  } else {
+    todoNodes.push(h("div", { class: "empty", text: task.state === "queued" ? "还在排队，开始做时会先拆 todo" : "还没拆" }));
+  }
+  main.push(card(todoNodes));
   if (task.criteria.length) {
-    nodes.push(section("验收标准", task.criteria.map(function (criterion) {
+    var checked = task.checks.length > 0;
+    main.push(card([labelRow("验收标准")].concat(task.criteria.map(function (criterion) {
       var check = task.checks.filter(function (c) { return c.criterion === criterion; })[0];
-      var mark = check ? (check.met ? "✓" : "✗") : "";
-      return h("div", { class: "todo" + (check && check.met ? " done" : "") }, [
-        h("span", { class: "mark", text: mark }),
-        h("div", { class: "main" }, [document.createTextNode(criterion), check ? h("div", { class: "note", text: check.evidence }) : null]),
+      var state = check ? (check.met ? " met" : " unmet") : "";
+      return h("div", { class: "criterion" + state }, [
+        h("span", { class: "mark" }, [check ? markIcon(check.met ? "check" : "cross") : null]),
+        h("div", {}, [document.createTextNode(criterion), check ? h("div", { class: "note", text: check.evidence }) : null]),
       ]);
-    })));
+    }), checked ? [] : [h("div", { class: "side-note", text: "交结果时逐条对：满足没有、凭什么。对不上交不了。" })])));
   }
-  nodes.push(section("todo" + (task.progress.total ? "（" + task.progress.done + "/" + task.progress.total + "）" : ""), task.todos.length ? task.todos.map(function (todo, i) {
-    return h("div", { class: "todo " + todo.state }, [
-      h("span", { class: "mark", text: TODO_MARKS[todo.state] }),
-      h("div", { class: "main" }, [document.createTextNode((i + 1) + ". " + todo.text), todo.note ? h("div", { class: "note", text: todo.note }) : null]),
-    ]);
-  }) : [h("div", { class: "empty", text: task.state === "queued" ? "还在排队，开始做时会先拆 todo" : "还没拆" })]));
-  if (task.result) nodes.push(section("结果", [h("div", { class: "text" }, rich(task.result))]));
-  if (task.error) nodes.push(section("没做成", [h("div", { class: "text", text: task.error })]));
+  if (task.result) main.push(card([labelRow("结果"), h("div", { class: "text" }, rich(task.result))]));
+  else if (task.error) main.push(card([labelRow("没做成"), h("div", { class: "text", text: task.error })]));
+  else if (open) main.push(card([labelRow("结果"), h("div", { text: "还在做。交了以后结果放在这里，也会回到和 yoyo 的对话里。" })], "pending"));
+
+  var labels = { input: "收到", say: "说", call: "调用工具", result: "工具回了" };
   var steps = task.steps.map(function (step) {
-    var labels = { input: "收到", say: "说", call: "调用 " + (step.name || ""), result: "结果 " + (step.name || "") };
-    return h("div", { class: "step " + step.kind }, [h("div", { class: "k", text: clock(step.at) + " " + labels[step.kind] }), h("div", { class: "t", text: step.text })]);
+    var head = clock(step.at) + " · " + labels[step.kind] + (step.name ? " · " + step.name : "");
+    return h("div", { class: "tl " + step.kind }, [
+      h("div", { class: "rail" }, [h("span", { class: "node" }), h("span", { class: "stem" })]),
+      h("div", { class: "body" }, [h("div", { class: "k", text: head }), h("div", { class: "t", text: step.text })]),
+    ]);
   });
-  var details = h("details", { class: "steps" }, [h("summary", { text: "过程（" + task.steps.length + " 步）" })].concat(steps));
-  if (open) details.open = true;
-  if (steps.length) nodes.push(h("div", { class: "panel" }, [details]));
-  fill($("#task-page"), nodes, "");
+  var side = card([labelRow("过程", task.steps.length ? task.steps.length + " 步" : "")].concat(steps.length ? steps : [h("div", { class: "empty", text: "还没开始" })]));
+  fill($("#task-page"), [h("div", { class: "columns" }, [h("div", { class: "col-main" }, main), h("div", { class: "col-side" }, [side])])], "");
+}
+
+/** 记得的事按话题筛：话题按钮只列出有的 */
+function renderFacts() {
+  var topics = [];
+  memoryFacts.forEach(function (fact) { if (fact.topic && topics.indexOf(fact.topic) < 0) topics.push(fact.topic); });
+  if (factFilter && topics.indexOf(factFilter) < 0) factFilter = "";
+  fill($("#fact-topics"), [""].concat(topics).map(function (topic) {
+    return h("button", { type: "button", "aria-pressed": String(factFilter === topic), text: topic ? (TOPICS[topic] || topic) : "全部", onclick: function () { factFilter = topic; renderFacts(); } });
+  }), "");
+  $("#fact-topics").hidden = topics.length === 0;
+  var shown = memoryFacts.filter(function (fact) { return !factFilter || fact.topic === factFilter; });
+  fill($("#facts"), shown.map(function (fact) {
+    var forget = h("button", { class: "danger", type: "button", text: "忘掉", onclick: confirmThen("真的忘掉这条？删了就找不回来。", function () {
+      api("DELETE", "/api/memory/facts/" + encodeURIComponent(fact.id)).then(function () { toast("忘掉了"); views.memory.load(); }, fail);
+    }) });
+    return h("div", { class: "fact" }, [
+      fact.topic ? h("span", { class: "tag " + fact.topic, text: TOPICS[fact.topic] || fact.topic }) : null,
+      h("span", { class: "main", text: fact.text }),
+      h("span", { class: "side-note", text: fact.recalls ? "召回 " + fact.recalls + " 次" : when(fact.validFrom) }),
+      forget,
+    ]);
+  }), "还没记住什么");
 }
 
 function openTaskView(id) {
@@ -640,17 +777,17 @@ var current = "chat";
 
 function show(name) {
   current = name;
-  document.querySelectorAll("[data-view]").forEach(function (button) {
-    if (button.dataset.view === name && button.closest(".rail")) button.setAttribute("aria-current", "page");
+  document.querySelectorAll(".nav-item").forEach(function (button) {
+    if (button.dataset.view === name) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
   document.querySelectorAll("main .view").forEach(function (section) {
     section.classList.toggle("active", section.id === name);
   });
-  $("#chat-list").hidden = name !== "chat" && name !== "task";
-  $("#main-session").classList.toggle("active", name === "chat");
-  $("#search").hidden = name !== "chat";
+  $("#search-box").hidden = name !== "chat";
+  if (name !== "task") $("#bar-actions").replaceChildren();
   $("#title").textContent = views[name].title;
+  $("#subtitle").textContent = views[name].sub;
   try { sessionStorage.setItem("yoyo-view", name === "task" ? "chat" : name); } catch (e) {}
   views[name].load().catch(fail);
   if (name === "chat") setTimeout(function () { $("#say").focus(); }, 0);
@@ -731,7 +868,6 @@ document.addEventListener("DOMContentLoaded", function () {
     if (current === "task") views.task.load().catch(function () {});
     if (current === "chat" || current === "task") loadTasks().catch(function () {});
   }, 4000);
-  $("#main-session").addEventListener("click", function () { show("chat"); });
   setInterval(function () {
     if (document.hidden || current !== "chat") return;
     loadStatus().catch(function () {});
@@ -742,65 +878,78 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 `;
 
-function railButton(view: string, name: string, label: string): string {
-  return `<button data-view="${view}" title="${label}">${icon(name)}<span>${label}</span></button>`;
+function navButton(view: string, name: string, label: string): string {
+  return `<button class="nav-item" data-view="${view}" type="button">${icon(name)}<span>${label}</span></button>`;
 }
 
 const BODY = String.raw`
 <div id="locked">从桌宠右键的「管理」或 <code>yoyo web open</code> 打开这一页。</div>
-<div id="icons" hidden><span data-icon="alarm">${icon('alarm')}</span><span data-icon="task">${icon('task')}</span></div>
+<div id="icons" hidden>${['alarm', 'task', 'check', 'cross'].map((name) => `<span data-icon="${name}">${icon(name)}</span>`).join('')}</div>
 <div class="app" id="app">
-  <nav class="rail">
-    <div class="brand" title="yoyo"><span class="ring"></span></div>
-    ${railButton('chat', 'chat', '对话')}
-    ${railButton('memory', 'memory', '心迹')}
-    ${railButton('alarms', 'alarm', '日程')}
-    ${railButton('activity', 'trail', '轨迹')}
-    ${railButton('contacts', 'people', '联系人')}
-    <div class="spacer"></div>
-    ${railButton('settings', 'gear', '设置')}
-  </nav>
-  <aside class="list" id="chat-list">
-    <div class="list-head">聊天列表</div>
-    <div class="group">主聊天</div>
-    <button class="session active" id="main-session" type="button"><span class="ring sm"></span><span class="name">yoyo</span></button>
-    <div class="group">子任务</div>
-    <div id="task-list"></div>
-    <div class="hint" id="task-empty">还没有。要花时间的事跟 yoyo 说，它会派出去在后台做。</div>
-    <div class="status" id="status"></div>
-    <div class="quick">
-      <button class="plain small" id="do-whisper" type="button">说一句</button>
-      <button class="plain small" id="do-listen" type="button">听一句</button>
+  <aside class="side">
+    <div class="me">
+      <img class="avatar lg" id="avatar" src="${AVATAR}" alt="yoyo">
+      <div class="who"><div class="name">yoyo</div><div class="mood" id="mood"></div></div>
+    </div>
+    <nav class="nav">
+      ${navButton('chat', 'chat', '对话')}
+      ${navButton('memory', 'memory', '记忆')}
+      ${navButton('alarms', 'alarm', '日程')}
+      ${navButton('activity', 'trail', '轨迹')}
+      ${navButton('contacts', 'people', '联系人')}
+    </nav>
+    <div class="section-title">子任务<span class="count" id="task-count"></span></div>
+    <div class="tasks" id="task-list"></div>
+    <div class="hint" id="task-empty">要花时间的事跟 yoyo 说，她会派到后台去做，进度在这里。</div>
+    <div class="side-foot">
+      <div class="status" id="status"></div>
+      <div class="quick">
+        <button class="plain small" id="do-whisper" type="button">说一句</button>
+        <button class="plain small" id="do-listen" type="button">听一句</button>
+      </div>
+      ${navButton('settings', 'gear', '设置')}
     </div>
   </aside>
   <main>
     <header class="bar">
-      <div class="left"></div>
-      <h1 id="title">yoyo</h1>
-      <button class="tool" data-view="alarms" type="button">${icon('alarm')}<span>智能闹钟</span></button>
-      <input id="search" type="search" placeholder="搜索对话" aria-label="搜索对话">
+      <div class="titles"><h1 id="title">和 yoyo</h1><div class="sub" id="subtitle"></div></div>
+      <div class="bar-actions" id="bar-actions"></div>
+      <label class="search" id="search-box">${icon('search')}<span class="sr">搜对话</span><input id="search" type="search" placeholder="搜对话"></label>
     </header>
     <section class="view" id="chat">
       <div class="thread" id="thread"><div class="thread-inner" id="thread-inner"></div></div>
       <form class="composer" id="composer">
-        <textarea id="say" rows="1" placeholder="和 yoyo 说点什么…" aria-label="和 yoyo 说"></textarea>
-        <div class="row2">
-          <span class="side" id="model-name"></span>
-          <span class="side keys">Enter 发送 · Shift+Enter 换行</span>
+        <div class="field">
+          <textarea id="say" rows="1" placeholder="跟 yoyo 说点什么，要花时间的事她会派到后台做" aria-label="跟 yoyo 说"></textarea>
           <button class="send" id="send" type="submit" aria-label="发送" disabled>${icon('up')}</button>
         </div>
+        <div class="hints"><span id="model-name"></span><span class="keys">Enter 发送 · Shift+Enter 换行</span></div>
       </form>
     </section>
-    <section class="view scroll" id="memory"><div class="page">
-      <div class="panel">
-        <h2>画像</h2>
-        <p class="empty" id="memory-off" hidden>记忆没打开：config.json 的 memory.enabled 设成 true 才会记新的。</p>
-        <textarea id="core-text" aria-label="画像"></textarea>
-        <div class="actions"><button class="primary" id="core-save">保存</button><span class="side" id="core-at"></span></div>
+    <section class="view scroll" id="memory"><div class="page"><div class="columns">
+      <div class="col-side">
+        <section class="card">
+          <div class="core-head">
+            <img class="avatar" src="${AVATAR}" alt="">
+            <div><h2 class="title">画像</h2><div class="side-note" id="core-at"></div></div>
+          </div>
+          <p class="empty" id="memory-off" hidden>记忆没打开：config.json 的 memory.enabled 设成 true 才会记新的。</p>
+          <label><span class="sr">画像</span><textarea id="core-text"></textarea></label>
+          <div class="actions end"><button class="primary" id="core-save" type="button">保存画像</button></div>
+        </section>
       </div>
-      <div class="panel"><h2>记得的事</h2><div id="facts"></div></div>
-      <div class="panel"><h2>规矩</h2><div id="rules"></div></div>
-    </div></section>
+      <div class="col-main">
+        <section class="card">
+          <div class="card-head"><h2 class="title">记得的事</h2><span class="side-note" id="fact-count"></span></div>
+          <div class="chips" id="fact-topics"></div>
+          <div id="facts"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2 class="title">规矩</h2><span class="side-note">确认够了才交给模型</span></div>
+          <div id="rules"></div>
+        </section>
+      </div>
+    </div></div></section>
     <section class="view scroll" id="alarms"><div class="page">
       <div class="panel">
         <form class="inline" id="alarm-form">
@@ -841,7 +990,7 @@ const BODY = String.raw`
       <div class="panel">
         <h2>整份配置</h2>
         <textarea class="code" id="config-text" spellcheck="false" aria-label="整份配置"></textarea>
-        <div class="actions"><button class="primary" id="config-save">保存</button><span class="side" id="config-file"></span></div>
+        <div class="actions"><button class="primary" id="config-save">保存</button><span class="side-note" id="config-file"></span></div>
       </div>
     </div></section>
   </main>

@@ -3,6 +3,7 @@
  * 用的也是同一套函数。HTTP 和安全检查在 `server.ts`。
  */
 import { compareEntries, textOf, type Context, type Entry, type MemoryStore } from '@modelctx-ai/ctx';
+import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
@@ -174,6 +175,8 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         when: rule.when,
         do: rule.do,
         confirmations: rule.confirmations,
+        // 确认够了才交给模型，和命令行的 memory rules 一样
+        effective: rule.confirmations >= MEMORY_DEFAULTS.confirmations,
       })),
     };
   }
