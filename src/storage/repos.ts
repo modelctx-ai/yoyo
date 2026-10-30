@@ -161,6 +161,9 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       'INSERT INTO schedule (id, title, kind, time, date, repeat, weekday, enabled, last_fired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ),
     markFired: db.prepare('UPDATE schedule SET last_fired = ? WHERE id = ?'),
+    updateSchedule: db.prepare(
+      'UPDATE schedule SET title = ?, kind = ?, time = ?, date = ?, repeat = ?, weekday = ?, enabled = ?, last_fired = ? WHERE id = ?',
+    ),
     removeSchedule: db.prepare('DELETE FROM schedule WHERE id = ?'),
     clips: db.prepare('SELECT text, at FROM clipboard ORDER BY id DESC LIMIT ?'),
     insertClip: db.prepare('INSERT INTO clipboard (text, at) VALUES (?, ?)'),
@@ -239,6 +242,20 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       },
       markFired(id, occurrence) {
         sql.markFired.run(occurrence, id);
+      },
+      update(item) {
+        const result = sql.updateSchedule.run(
+          item.title,
+          item.kind,
+          item.time,
+          item.date ?? null,
+          item.repeat ?? null,
+          item.weekday ?? null,
+          item.enabled ? 1 : 0,
+          item.lastFired ?? null,
+          item.id,
+        );
+        return Number(result.changes) > 0;
       },
       remove(id) {
         return Number(sql.removeSchedule.run(id).changes) > 0;

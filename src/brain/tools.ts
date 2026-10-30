@@ -5,7 +5,7 @@ import { createToolRegistry, tool, type LocalToolRegistry } from '@modelctx-ai/c
 import { z } from 'zod';
 
 import { errorText } from '../app/log.ts';
-import { addSchedule } from '../features/alarms/schedule.ts';
+import { addSchedule, updateSchedule } from '../features/alarms/schedule.ts';
 import { ARTIFACT_MAX, ARTIFACTS_PER_TASK, deliverArtifact, deliveredNote } from '../features/tasks/artifacts.ts';
 import { DEFAULT_AGENT, agentMenu, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
 import {
@@ -171,6 +171,46 @@ export function createYoyoTools(
             },
             at,
           );
+        } catch (error) {
+          return errorText(error);
+        }
+      },
+    }),
+  );
+
+  registry.addTool(
+    'update_alarm',
+    tool({
+      description:
+        '改一个已经设好的闹钟或定时任务，或者暂停、恢复它。先用 list_alarms 看编号，只写要改的项。暂停是到点不响、日程留着。返回改好的日程，或者说明哪里不对。',
+      inputSchema: z.object({
+        id: z.string().describe('日程编号，list_alarms 里的 id'),
+        title: z.string().optional().describe('新的提醒内容'),
+        time: z.string().optional().describe('新的时间，HH:MM，24 小时制'),
+        date: z.string().optional().describe('一次性提醒的新日期：YYYY-MM-DD，或「今天」「明天」「后天」'),
+        repeat: z
+          .enum(['daily', 'weekdays', 'weekly', 'none'])
+          .optional()
+          .describe('新的重复：每天 daily，工作日 weekdays，每周 weekly；none 是改成一次性（要同时给 date）'),
+        weekday: z.number().int().optional().describe('每周提醒在星期几，0 是周日'),
+        kind: z.enum(['alarm', 'task']).optional().describe('alarm 是闹钟；task 是任务'),
+        enabled: z.boolean().optional().describe('false 暂停，true 恢复'),
+      }),
+      execute: async (input) => {
+        const at = now();
+        try {
+          const found = repos.schedule.list().find((entry) => entry.id === input.id);
+          if (!found) return `没有这条日程：${input.id}，先用 list_alarms 看编号`;
+          const time = input.time ?? found.time;
+          return updateSchedule(repos, input.id, {
+            ...(input.title !== undefined ? { title: input.title } : {}),
+            ...(input.time !== undefined ? { time: input.time } : {}),
+            ...(input.date !== undefined ? { date: resolveDate(input.date, time, at) } : {}),
+            ...(input.repeat !== undefined ? { repeat: input.repeat === 'none' ? null : input.repeat } : {}),
+            ...(input.weekday !== undefined ? { weekday: input.weekday } : {}),
+            ...(input.kind !== undefined ? { kind: input.kind } : {}),
+            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+          });
         } catch (error) {
           return errorText(error);
         }

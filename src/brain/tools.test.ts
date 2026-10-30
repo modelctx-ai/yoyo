@@ -54,6 +54,11 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
         const found = schedule[index];
         if (found) schedule[index] = { ...found, lastFired: occurrence };
       },
+      update: (next) => {
+        const index = schedule.findIndex((item) => item.id === next.id);
+        if (index >= 0) schedule[index] = next;
+        return index >= 0;
+      },
       remove: () => false,
     },
     clipboard: { list: () => [], insert: () => {} },
@@ -133,12 +138,12 @@ describe('brain/tools', () => {
     const full = createYoyoTools({ repos, search: searcher('x') });
     assert.deepEqual(
       full.list().map((info) => `${info.name}@${info.source}`),
-      ['web_search@local', 'weather_forecast@local', 'list_alarms@local', 'add_alarm@local'],
+      ['web_search@local', 'weather_forecast@local', 'list_alarms@local', 'add_alarm@local', 'update_alarm@local'],
     );
     const offline = createYoyoTools({ repos, search: null });
     assert.deepEqual(
       offline.list().map((info) => info.name),
-      ['weather_forecast', 'list_alarms', 'add_alarm'],
+      ['weather_forecast', 'list_alarms', 'add_alarm', 'update_alarm'],
     );
   });
 
@@ -407,6 +412,31 @@ describe('brain/tools', () => {
     );
   });
 
+  test('update_alarm 改日程、暂停、恢复，记 schedule-edit、schedule-pause、schedule-resume；写错了回说明', async () => {
+    const repos = memoryRepos();
+    const tools = createYoyoTools({ repos, search: null, now: () => NOW });
+    const saved = (await run(tools, 'add_alarm', { title: '喝水', time: '15:30', repeat: 'daily' })) as ScheduleItem;
+    const moved = (await run(tools, 'update_alarm', { id: saved.id, time: '16:00', title: '喝温水' })) as ScheduleItem;
+    assert.deepEqual([moved.time, moved.title, moved.repeat, moved.enabled], ['16:00', '喝温水', 'daily', true]);
+    const paused = (await run(tools, 'update_alarm', { id: saved.id, enabled: false })) as ScheduleItem;
+    assert.equal(paused.enabled, false);
+    assert.equal(((await run(tools, 'list_alarms')) as ScheduleItem[])[0]?.enabled, false, 'list_alarms 看得出暂停');
+    const resumed = (await run(tools, 'update_alarm', { id: saved.id, enabled: true })) as ScheduleItem;
+    assert.equal(resumed.enabled, true);
+    // 改成一次性，日期认「明天」
+    const once = (await run(tools, 'update_alarm', { id: saved.id, repeat: 'none', date: '明天' })) as ScheduleItem;
+    assert.deepEqual([once.repeat, once.date], [null, '2026-10-24']);
+    assert.deepEqual(
+      repos.events.map((event) => event.type),
+      ['schedule-add', 'schedule-edit', 'schedule-pause', 'schedule-resume', 'schedule-edit'],
+    );
+    assert.equal(await run(tools, 'update_alarm', { id: saved.id, time: '25:00' }), '时间要写成 HH:MM');
+    assert.equal(
+      await run(tools, 'update_alarm', { id: 's_nope', title: '喝水' }),
+      '没有这条日程：s_nope，先用 list_alarms 看编号',
+    );
+  });
+
   test('一次性提醒不写日期就取最近的那个时间点，也认今天、明天、后天', async () => {
     assert.equal(await dateOf(NOW, { time: '15:00' }), '2026-10-23');
     assert.equal(await dateOf(NOW, { time: '14:10' }), '2026-10-23');
@@ -459,7 +489,7 @@ describe('brain/tools', () => {
     );
     assert.deepEqual(
       model.doGenerateCalls[0]!.tools?.map((item) => item.name),
-      ['weather_forecast', 'list_alarms', 'add_alarm'],
+      ['weather_forecast', 'list_alarms', 'add_alarm', 'update_alarm'],
     );
   });
 });

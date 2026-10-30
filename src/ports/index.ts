@@ -143,6 +143,8 @@ export interface ScheduleRepo {
   list(): ScheduleItem[];
   insert(item: ScheduleItem): void;
   markFired(id: string, occurrence: string): void;
+  /** 按编号整条换成新的（编号不变）；返回有没有这一条。 */
+  update(item: ScheduleItem): boolean;
   /** 删掉一条；返回删没删掉。 */
   remove(id: string): boolean;
 }

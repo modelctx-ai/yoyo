@@ -35,7 +35,7 @@ import {
 import { createYoyoContext, taskSession, taskSteps, type TaskStep } from '../brain/context.ts';
 import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
-import { addSchedule } from '../features/alarms/schedule.ts';
+import { addSchedule, pauseSchedule, resumeSchedule, updateSchedule } from '../features/alarms/schedule.ts';
 import {
   ApprovalError,
   STATE_LABELS as APPROVAL_LABELS,
@@ -183,6 +183,12 @@ function approvalOf(env: CommandEnv, args: readonly string[]): Approval {
   return item;
 }
 
+function scheduleId(args: readonly string[]): string {
+  const id = (args[0] ?? '').trim();
+  if (!id) throw new Error('要给日程编号：yoyo alarm list 能看到');
+  return id;
+}
+
 function taskId(args: readonly string[]): number {
   const id = Number(args[0]);
   if (!Number.isInteger(id) || id <= 0) throw new Error('要给子任务编号，例如 yoyo task show 3');
@@ -285,7 +291,8 @@ export function buildDomains(env: CommandEnv): Domain[] {
     {
       name: 'alarm',
       summary: '闹钟和周期性日程',
-      detail: '到点后 15 分钟内说一次。repeat 可以是 daily、weekdays、weekly。',
+      detail:
+        '到点后 15 分钟内说一次。repeat 可以是 daily、weekdays、weekly；edit 的 --repeat none 是改成一次性（要同时给 --date）。pause 暂停的日程到点不响，list 里标「暂停中」，resume 恢复。',
       verbs: [
         {
           name: 'list',
@@ -294,7 +301,10 @@ export function buildDomains(env: CommandEnv): Domain[] {
           run() {
             const items = env.repos().schedule.list();
             if (items.length === 0) return env.out('还没有日程');
-            for (const item of items) env.out(`${item.kind}\t${item.time}\t${item.repeat || item.date}\t${item.title}`);
+            for (const item of items) {
+              const line = `${item.kind}\t${item.time}\t${item.repeat || item.date}\t${item.title}\t${item.id}`;
+              env.out(item.enabled ? line : `${line}\t暂停中`);
+            }
           },
         },
         {
@@ -316,6 +326,48 @@ export function buildDomains(env: CommandEnv): Domain[] {
               env.now(),
             );
             env.out(`${item.kind}\t${item.time}\t${item.title}`);
+          },
+        },
+        {
+          name: 'edit',
+          summary: '改一条日程：写哪项改哪项，其余不动',
+          usage: '<编号>',
+          flags: ['title', 'time', 'repeat', 'date', 'weekday', 'kind'],
+          run(flags, args) {
+            const weekday = flagText(flags, 'weekday');
+            const repeat = flagText(flags, 'repeat');
+            const patch = {
+              title: flagText(flags, 'title'),
+              time: flagText(flags, 'time'),
+              date: flagText(flags, 'date'),
+              repeat: repeat === undefined ? undefined : repeat === 'none' ? null : repeat,
+              weekday: weekday === undefined ? undefined : Number(weekday),
+              kind: flagText(flags, 'kind'),
+            };
+            const id = scheduleId(args);
+            const item = updateSchedule(env.repos(), id, patch);
+            if (!item) throw new Error(`没有这条日程：${id}`);
+            env.out(`${item.kind}\t${item.time}\t${item.title}`);
+          },
+        },
+        {
+          name: 'pause',
+          summary: '暂停一条日程：到点不响，留着',
+          run(_flags, args) {
+            const id = scheduleId(args);
+            const item = pauseSchedule(env.repos(), id);
+            if (!item) throw new Error(`没有这条日程：${id}`);
+            env.out(`已暂停\t${item.title}\t${item.id}`);
+          },
+        },
+        {
+          name: 'resume',
+          summary: '恢复暂停的日程',
+          run(_flags, args) {
+            const id = scheduleId(args);
+            const item = resumeSchedule(env.repos(), id);
+            if (!item) throw new Error(`没有这条日程：${id}`);
+            env.out(`已恢复\t${item.title}\t${item.id}`);
           },
         },
       ],
