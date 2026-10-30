@@ -36,6 +36,8 @@ export interface DaemonApp {
   startHotkey(): void;
   /** 后台做子任务的；`tasks.enabled` 关着时是 null。 */
   readonly tasks?: { start(signal: AbortSignal): void } | null;
+  /** 批准以后照做、把结果交回去的；没有读写文件的工具时是 null。 */
+  readonly approvals?: { start(signal: AbortSignal): void } | null;
   close(): Promise<void>;
 }
 
@@ -212,5 +214,6 @@ export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Pr
 
   app.orchestrator.start(signal);
   app.tasks?.start(signal);
+  app.approvals?.start(signal);
   await finished;
 }

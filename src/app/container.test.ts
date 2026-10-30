@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
+import { decideApproval } from '../features/approvals/approvals.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { Director } from '../runtime/director.ts';
 import { fakeDirector, memoryLogger } from '../runtime/testing.ts';
@@ -21,6 +23,10 @@ function tempPaths(): Paths {
 }
 
 const LLM = { baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'llm-key', model: 'mock-model' };
+
+function withTools(files: object, sandbox: object) {
+  return parseConfig({ stage: 'console', llm: { ...LLM, tools: true }, files, sandbox });
+}
 
 function memoryTables(app: { readonly db: DatabaseSync }): string[] {
   return (
@@ -173,6 +179,112 @@ describe('container', () => {
     );
     assert.ok(existsSync(paths.workspaceDir));
     await app.close();
+  });
+
+  test('先问：ask 的工具照样有；主线程调了只记请求，批准后常驻进程照做、结果写回主会话、叫醒主线程转告', async () => {
+    const usage = {
+      inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 1, text: 1, reasoning: 0 },
+    };
+    const toolCall = {
+      content: [
+        {
+          type: 'tool-call' as const,
+          toolCallId: 'w1',
+          toolName: 'write',
+          input: JSON.stringify({ path: 'notes/周报.md', content: '# 周报\n' }),
+        },
+      ],
+      finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+      usage,
+      warnings: [],
+    };
+    const say = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      finishReason: { unified: 'stop' as const, raw: 'stop' },
+      usage,
+      warnings: [],
+    });
+    const model = new MockLanguageModelV4({
+      doGenerate: [toolCall, say('周报要你在工作台里批准才写'), say('周报写好了，在 notes 里')],
+    });
+    const calls: string[] = [];
+    const paths = tempPaths();
+    const app = await createApp(
+      parseConfig({ stage: 'console', llm: { ...LLM, tools: true }, files: { write: 'ask' } }),
+      paths,
+      { logger: memoryLogger(), model, director: fakeDirector(calls, { choose: async () => null }) },
+    );
+    assert.equal(app.tools?.has('write'), true, 'ask 的工具照样有');
+    assert.match(app.tools?.get('write')?.description ?? '', /要主人在工作台里批准才会真的做/);
+    assert.equal(await app.orchestrator.chat('把周报写进 notes'), '周报要你在工作台里批准才写');
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[1]?.prompt),
+      /要主人在工作台里批准才会做：「写 notes\/周报.md（新建，1 行，9 B）」（批准请求 #1）/,
+    );
+    const [request] = app.repos.approvals.list();
+    assert.deepEqual([request?.state, request?.task, request?.tool], ['pending', null, 'write']);
+    assert.equal(existsSync(join(paths.workspaceDir, 'notes', '周报.md')), false, '没批准不写');
+
+    // 主人在工作台里批准；常驻进程看一遍：照做、写回主会话
+    decideApproval(app.repos, request!.id, 'approved', new Date(), 'web');
+    await app.approvals!.step();
+    assert.equal(readFileSync(join(paths.workspaceDir, 'notes', '周报.md'), 'utf8'), '# 周报\n');
+    const events = (await app.context.entries()).filter((entry) => entry.type === 'event' && entry.kind === 'approval');
+    assert.match(
+      events[0]?.type === 'event' ? (events[0].text ?? '') : '',
+      /批准请求 #1「写 notes\/周报.md（新建，1 行，9 B）」：主人在工作台里批准了，已经照做/,
+    );
+    // 下一拍：叫醒主线程转告，桌宠说出来
+    await app.orchestrator.tick();
+    assert.ok(calls.includes('speak:周报写好了，在 notes 里'), calls.join('\n'));
+    assert.match(
+      JSON.stringify(model.doGenerateCalls[2]?.prompt),
+      /<approval-notification>[^]*<status>approved<\/status>/,
+    );
+    const offered = model.doGenerateCalls[2]?.tools?.map((item) => item.name) ?? [];
+    assert.equal(offered.includes('write'), false, '转告那一轮不给读写文件的工具，ask 也一样');
+    await app.close();
+  });
+
+  test('没有读写文件的工具（llm.tools 关着）：没有批准的常驻进程', async () => {
+    const app = await createApp(parseConfig({ stage: 'console', llm: LLM }), tempPaths(), { logger: memoryLogger() });
+    assert.equal(app.approvals, null);
+    await app.close();
+  });
+
+  test('bash：沙箱程序找得到才有，找不到记一行；llm.tools 没开或者 files.bash 是 deny 就没有', async () => {
+    const missing = memoryLogger();
+    const without = await createApp(withTools({}, { command: '/nowhere/srt' }), tempPaths(), { logger: missing });
+    assert.equal(without.tools?.has('bash'), false);
+    assert.equal(without.tools?.has('read'), true, '别的工具照常');
+    assert.deepEqual(
+      missing.lines.filter((line) => line.startsWith('没有 bash 工具')),
+      ['没有 bash 工具：沙箱程序 /nowhere/srt 找不到（命令一律经沙箱跑，不退回不加沙箱的跑法）'],
+    );
+    await without.close();
+
+    const fake = fileURLToPath(new URL('../brain/fixtures/fake-srt.mjs', import.meta.url));
+    const logger = memoryLogger();
+    const paths = tempPaths();
+    const withSandbox = await createApp(withTools({}, { command: fake }), paths, { logger });
+    assert.equal(withSandbox.tools?.has('bash'), true);
+    assert.deepEqual(
+      logger.lines.filter((line) => line.startsWith('没有 bash 工具')),
+      [],
+    );
+    assert.ok(readdirSync(join(paths.dataDir, 'sandbox')).length > 0, '设置文件写在数据目录里');
+    await withSandbox.close();
+
+    const denied = memoryLogger();
+    const off = await createApp(withTools({ bash: 'deny' }, { command: fake }), tempPaths(), { logger: denied });
+    assert.equal(off.tools?.has('bash'), false);
+    assert.equal(
+      denied.lines.some((line) => line.includes('bash')),
+      false,
+      '不给就不找也不记',
+    );
+    await off.close();
   });
 
   test('recall 工具：只在记忆打开、llm.tools 打开时注册，只交给回复，调用走记忆这个执行环境', async () => {

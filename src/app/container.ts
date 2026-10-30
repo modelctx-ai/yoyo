@@ -43,6 +43,9 @@ import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { createWhisperPacer, recentLines } from '../brain/pace.ts';
 import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
+import type { ActionTable } from '../brain/action.ts';
+import { createApprovalGate } from '../brain/approvals.ts';
+import { addBashTool, prepareBash } from '../brain/bash.ts';
 import { addFileTools, createFileAccess } from '../brain/files.ts';
 import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
@@ -63,6 +66,7 @@ import type {
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
 import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
+import { createApprovalRunner, type ApprovalRunner } from '../runtime/approvals.ts';
 import { createTaskRunner, type TaskRunner } from '../runtime/tasks.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { openDatabase } from '../storage/db.ts';
@@ -117,6 +121,8 @@ export interface App extends AppServices {
   startHotkey(): void;
   /** 后台做子任务的。`tasks.enabled` 关着时是 null。 */
   readonly tasks: TaskRunner | null;
+  /** 批准以后照做、把结果交回去的。`llm.tools` 关着（没有读写文件的工具）时是 null。 */
+  readonly approvals: ApprovalRunner | null;
   /** 关掉编排器（等正在跑的一轮）、按键助手、管理页、MCP 连接和对话渠道。数据库留给进程退出时关。 */
   close(): Promise<void>;
 }
@@ -212,11 +218,21 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   const cli = overrides.cli ?? createCliRunner(paths);
   // 读写文件：工作区能读能写，别处按 files.readable、files.denyRead
   const fileAccess = config.llm.tools ? createFileAccess({ config: config.files, paths }) : null;
+  // 跑命令：沙箱程序找得到才有 bash，找不到记一行，不退回不加沙箱的跑法
+  const bash = fileAccess
+    ? prepareBash({ files: config.files, sandbox: config.sandbox, paths, access: fileAccess, logger })
+    : null;
+  // 开关是 ask 的工具：模型调了只记一条批准请求，批准以后常驻进程照这张表做
+  const actions: ActionTable = new Map();
+  const askDeps = { actions, gate: createApprovalGate({ repos }) };
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
     const local = createYoyoTools({ repos, search, cli, tasks: config.tasks.enabled, agents });
-    if (fileAccess) addFileTools(local, { access: fileAccess, repos, allow: config.files });
+    if (fileAccess) addFileTools(local, { access: fileAccess, repos, allow: config.files, ...askDeps });
+    if (fileAccess && bash) {
+      addBashTool(local, { access: fileAccess, repos, sandbox: bash, config: config.files, ...askDeps });
+    }
     tools = local;
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
@@ -316,7 +332,10 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let tasks: TaskRunner | null = null;
   if (config.tasks.enabled) {
     const worker = createYoyoTools({ repos, search, cli });
-    if (fileAccess) addFileTools(worker, { access: fileAccess, repos, allow: config.files });
+    if (fileAccess) addFileTools(worker, { access: fileAccess, repos, allow: config.files, ...askDeps });
+    if (fileAccess && bash) {
+      addBashTool(worker, { access: fileAccess, repos, sandbox: bash, config: config.files, ...askDeps });
+    }
     addTaskWorkerTools(worker, { repos, files: artifactFiles, ...(fileAccess ? { access: fileAccess } : {}) });
     const shared = new Set(executors.map((executor) => executor.name));
     for (const definition of tools?.list() ?? []) {
@@ -339,6 +358,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       concurrency: config.tasks.concurrency,
       // 结果写回主会话以后，叫醒主线程转告主人
       onFinished: (task) => orchestrator.relayTask(task.id),
+      onAsked: (task) => orchestrator.relayTask(task.id),
+      answerTimeoutMs: config.tasks.answerTimeout * 3_600_000,
       agents,
       toolNames: () => worker.list().map((definition) => definition.name),
       // 类型写了 model：服务商、地址和密钥照 llm，只换模型名
@@ -347,6 +368,18 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       secrets: [config.llm.apiKey].filter(Boolean),
     });
   }
+
+  // 批准了的照做，结果交回主线程（叫醒它转告）或等批准的子任务
+  const approvals: ApprovalRunner | null = fileAccess
+    ? createApprovalRunner({
+        repos,
+        logger,
+        actions,
+        main: context,
+        onDecided: (approval) => orchestrator.relayApproval(approval.id),
+        timeoutMs: config.files.askTimeout * 3_600_000,
+      })
+    : null;
 
   let channel: Promise<Channel> | null = null;
   let web: Promise<WebServer | null> | null = null;
@@ -378,6 +411,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     pacer,
     orchestrator,
     tasks,
+    approvals,
     openChannel() {
       if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
       if (!channel) {
@@ -413,6 +447,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             schedule: () => orchestrator.state,
             talk: (text) => orchestrator.talk(text),
             files: artifactFiles,
+            // 工作台里点了批准：常驻进程马上照做，不等下一次轮到
+            onApproved: () => approvals?.poke(),
             ...(opener.reveal ? { reveal: (path: string) => opener.reveal?.(path) } : {}),
             app: paths.appBundle !== null,
             logger,
@@ -454,6 +490,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       try {
         // 正在做的子任务放回排队，下次接着做
         await tasks?.close();
+        await approvals?.close();
       } catch (error) {
         logger.warn(`子任务没停好：${errorText(error)}`);
       }

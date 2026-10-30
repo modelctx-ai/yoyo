@@ -4,6 +4,8 @@
  * 输入、工具调用和结果都记进那个会话的日志，工作台里能看着它做。规则（拆 todo、标状态、验收）在
  * `features/tasks` 和子 agent 的工具里，这里只管轮次：一轮停下了但还没交结果，就带着 todo 的现状催它接着做，
  * 最多 `MAX_ROUNDS` 轮。做完、没做成、取消，都把结果写回主线程（主会话的 `task` 事件），主线程下一轮就看得到。
+ * 子 agent 中途问主人（`task_ask`）：这一轮停下，子任务成「等回答」，不占并行名额，问题同样写回主线程、叫醒它转告；
+ * 回答来了（`task_answer`、命令行、工作台）子任务放回排队，下一轮接着做；等太久没回答按没做成结束。
  */
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -14,7 +16,14 @@ import { taskAgent } from '../brain/agents.ts';
 import { run } from '../brain/compose.ts';
 import { TASK_EVENT, taskSession } from '../brain/context.ts';
 import { agentTools, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
-import { continuePrompt, failTask, resultNote, taskBrief } from '../features/tasks/tasks.ts';
+import {
+  answerExpired,
+  continuePrompt,
+  expireAnswer,
+  failTask,
+  resultNote,
+  taskBrief,
+} from '../features/tasks/tasks.ts';
 import type { AgentTask } from '../kernel/types.ts';
 import type { Logger, Repos } from '../ports/index.ts';
 
@@ -33,6 +42,10 @@ export interface TaskRunnerDeps {
   readonly main: Pick<Context, 'append'>;
   /** 结果写回主会话以后叫一声：编排器据此叫醒主线程转告主人。 */
   readonly onFinished?: (task: AgentTask) => void;
+  /** 子 agent 提了问题、问题写回主会话以后叫一声：编排器据此叫醒主线程转告主人。 */
+  readonly onAsked?: (task: AgentTask) => void;
+  /** 等回答等多久算超时（毫秒）；不给或 0 不超时。 */
+  readonly answerTimeoutMs?: number;
   /** 子 agent 收哪些事实来源；不给就全部。 */
   readonly sources?: readonly string[];
   /** 有哪些子 agent 类型；不给就只有内置的。 */
@@ -65,6 +78,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
   const profiles = deps.agents ?? mergeAgents([]);
   const clock = deps.now ?? (() => Date.now());
   const pollMs = deps.pollMs ?? TASK_POLL_MS;
+  const answerTimeoutMs = Math.max(0, deps.answerTimeoutMs ?? 0);
   const limit = Math.max(1, Math.floor(deps.concurrency ?? 1));
   const stopping = new AbortController();
   /** 正在做的：编号到它那件事。 */
@@ -98,9 +112,32 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     }
   }
 
+  /** 等回答等太久的：按没做成结束，和别的结束一样写回主线程、叫醒转告。 */
+  async function expireWaiting(): Promise<void> {
+    if (answerTimeoutMs <= 0) return;
+    for (const task of repos.agentTasks.list({ states: ['waiting'] })) {
+      if (!answerExpired(task, clock(), answerTimeoutMs)) continue;
+      const final = expireAnswer(repos, task.id, answerTimeoutMs, new Date(clock()));
+      logger.info(`子任务 #${final.id} 等主人回答超时，按没做成结束`);
+      await report(final);
+    }
+  }
+
+  /** 把现状写回主线程：主线程下一轮看得到，工作台的主聊天里也有。 */
+  async function report(final: AgentTask): Promise<void> {
+    const artifacts = repos.artifacts.list({ task: final.id });
+    await main.append(
+      eventEntry(TASK_EVENT, { text: resultNote(final, artifacts), meta: { id: final.id, state: final.state } }),
+    );
+    if (final.state === 'waiting') deps.onAsked?.(final);
+    else deps.onFinished?.(final);
+  }
+
   async function work(task: AgentTask, outer: AbortSignal | undefined): Promise<AgentTask> {
     if (!model) throw new Error('没配 llm，子任务做不了');
     const resumed = task.startedAt !== null;
+    // 排队等名额时主人回答了：第一轮的输入带上回答
+    const answered = task.answer !== null && task.askedAt !== null && (task.answeredAt ?? 0) >= task.askedAt;
     repos.agentTasks.update(task.id, { state: 'running', ...(resumed ? {} : { startedAt: clock() }) }, clock());
     logger.info(`子任务 #${task.id} ${resumed ? '接着做' : '开始'}：${task.title}`);
     const controller = new AbortController();
@@ -117,7 +154,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       for (let round = 1; round <= MAX_ROUNDS; round += 1) {
         const current = repos.agentTasks.get(task.id);
         if (!current || current.state !== 'running') break;
-        const input = round === 1 && !resumed ? taskBrief(current) : continuePrompt(current);
+        const input = round === 1 && !resumed ? taskBrief(current) : continuePrompt(current, round === 1 && answered);
         await run(
           runs,
           { session: taskSession(task.id), agent, input, record: true, signal: controller.signal },
@@ -142,13 +179,12 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       stopping.signal.removeEventListener('abort', stop);
     }
     const final = repos.agentTasks.get(task.id) ?? task;
-    // 结果写回主线程：主线程下一轮看得到，工作台的主聊天里也有
-    const artifacts = repos.artifacts.list({ task: final.id });
-    await main.append(
-      eventEntry(TASK_EVENT, { text: resultNote(final, artifacts), meta: { id: final.id, state: final.state } }),
+    // 问完了又马上被回答了（来不及写回）：已经排回队里，不用报
+    if (final.state === 'queued') return final;
+    await report(final);
+    logger.info(
+      `子任务 #${final.id} ${final.state === 'done' ? '做完了' : final.state === 'waiting' ? '在等主人回答' : `停在「${final.state}」`}`,
     );
-    deps.onFinished?.(final);
-    logger.info(`子任务 #${final.id} ${final.state === 'done' ? '做完了' : `停在「${final.state}」`}`);
     return final;
   }
 
@@ -191,6 +227,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
           } else {
             fill(signal);
           }
+          await expireWaiting().catch((error: unknown) => logger.error(`看等回答超时出错：${errorText(error)}`));
           // 有一件做完就马上补位，不然隔一会儿看一次有没有新排队的
           const tick = delay(pollMs, undefined, { signal: stop }).catch(() => {});
           await Promise.race([tick, ...working.values()]);

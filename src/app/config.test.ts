@@ -137,28 +137,77 @@ describe('config', () => {
     assert.equal(parseConfig({ web: null }).web.enabled, true);
   });
 
-  test('子任务：缺省打开、做完说一声、同时做两件；写错按缺省', () => {
-    const defaults = { enabled: true, notify: true, concurrency: 2 };
+  test('子任务：缺省打开、做完说一声、同时做两件、等回答 24 小时；写错按缺省', () => {
+    const defaults = { enabled: true, notify: true, concurrency: 2, answerTimeout: 24 };
     assert.deepEqual(parseConfig({}).tasks, defaults);
-    assert.deepEqual(parseConfig({ tasks: { enabled: 'false', notify: false, concurrency: '4' } }).tasks, {
-      enabled: false,
-      notify: false,
-      concurrency: 4,
-    });
+    assert.deepEqual(
+      parseConfig({ tasks: { enabled: 'false', notify: false, concurrency: '4', answerTimeout: '2.5' } }).tasks,
+      { enabled: false, notify: false, concurrency: 4, answerTimeout: 2.5 },
+    );
+    assert.equal(parseConfig({ tasks: { answerTimeout: 0 } }).tasks.answerTimeout, 0, '0 是不超时');
+    for (const answerTimeout of [-1, 721, 'soon']) {
+      assert.equal(parseConfig({ tasks: { answerTimeout } }).tasks.answerTimeout, 24, String(answerTimeout));
+    }
     assert.deepEqual(parseConfig({ tasks: 'x' }).tasks, defaults);
     for (const concurrency of [0, 9, 1.5, 'many']) {
       assert.equal(parseConfig({ tasks: { concurrency } }).tasks.concurrency, 2, String(concurrency));
     }
   });
 
-  test('读写文件：工作区缺省、三个工具都给；写错的按缺省', () => {
-    const defaults = { workspace: '', readable: [], denyRead: [], read: 'allow', write: 'allow', edit: 'allow' };
+  test('读写文件：工作区缺省、四个工具都给、bash 网络全关；写错的按缺省', () => {
+    const defaults = {
+      workspace: '',
+      readable: [],
+      denyRead: [],
+      read: 'allow',
+      write: 'allow',
+      edit: 'allow',
+      bash: 'allow',
+      bashNetwork: [],
+      bashTimeout: 120,
+      bashMaxTimeout: 600,
+      askTimeout: 24,
+    };
     assert.deepEqual(parseConfig({}).files, defaults);
     assert.deepEqual(parseConfig({ files: 'x' }).files, defaults);
     assert.deepEqual(
       parseConfig({ files: { workspace: '~/work', readable: ['~/Documents', 3], write: 'deny', edit: 'ask' } }).files,
-      { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny' },
+      { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny', edit: 'ask' },
     );
+    assert.deepEqual(parseConfig({ files: { read: 'ask', write: 'ask', bash: 'ask', askTimeout: '2.5' } }).files, {
+      ...defaults,
+      read: 'ask',
+      write: 'ask',
+      bash: 'ask',
+      askTimeout: 2.5,
+    });
+    for (const askTimeout of [-1, 721, 'soon']) {
+      assert.equal(parseConfig({ files: { askTimeout } }).files.askTimeout, 24, String(askTimeout));
+    }
+    assert.equal(parseConfig({ files: { askTimeout: 0 } }).files.askTimeout, 0, '0 是不过期');
+    for (const wrong of ['maybe', 'Ask', 1, true, null, ['ask']]) {
+      assert.deepEqual(
+        [parseConfig({ files: { read: wrong, write: wrong, edit: wrong, bash: wrong } }).files].map((files) => [
+          files.read,
+          files.write,
+          files.edit,
+          files.bash,
+        ])[0],
+        ['allow', 'allow', 'allow', 'allow'],
+        `写错按 allow：${JSON.stringify(wrong)}`,
+      );
+    }
+    assert.deepEqual(
+      parseConfig({
+        files: { bash: 'deny', bashNetwork: ['pypi.org', 7, null], bashTimeout: '30', bashMaxTimeout: 900 },
+      }).files,
+      { ...defaults, bash: 'deny', bashNetwork: ['pypi.org', '7'], bashTimeout: 30, bashMaxTimeout: 900 },
+    );
+    for (const bashTimeout of [0, -1, 5000, 'long', '']) {
+      assert.equal(parseConfig({ files: { bashTimeout } }).files.bashTimeout, 120, String(bashTimeout));
+    }
+    assert.equal(parseConfig({ files: { bash: 'nope', bashNetwork: 'pypi.org' } }).files.bash, 'allow');
+    assert.deepEqual(parseConfig({ files: { bashNetwork: 'pypi.org' } }).files.bashNetwork, []);
   });
 
   test('整段写成 null 或者不是对象，当没写', () => {

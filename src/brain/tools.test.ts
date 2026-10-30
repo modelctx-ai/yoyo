@@ -74,6 +74,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
     tasks: { list: () => [] },
     agentTasks: sqlite.agentTasks,
     artifacts: sqlite.artifacts,
+    approvals: sqlite.approvals,
   };
 }
 
@@ -219,7 +220,7 @@ describe('brain/tools', () => {
         .list()
         .map((info) => info.name)
         .filter((name) => name.startsWith('task_')),
-      ['task_create', 'task_cancel'],
+      ['task_create', 'task_cancel', 'task_answer'],
     );
     const worker = createYoyoTools({ repos, search: null });
     addTaskWorkerTools(worker, { repos, now: () => NOW });
@@ -228,7 +229,7 @@ describe('brain/tools', () => {
         .list()
         .map((info) => info.name)
         .filter((name) => name.startsWith('task_')),
-      ['task_plan', 'task_todo', 'task_finish', 'task_fail'],
+      ['task_plan', 'task_todo', 'task_ask', 'task_finish', 'task_fail'],
     );
 
     assert.equal(
@@ -254,6 +255,49 @@ describe('brain/tools', () => {
     const checks = [{ criterion: '三个项目都有', met: true, evidence: '有' }];
     assert.equal(await run(worker, 'task_finish', { id: 1, result: '周报', checks }), '交好了，子任务 #1 做完');
     assert.equal(await run(main, 'task_cancel', { id: 1 }), '子任务 #1 已经「做完」');
+  });
+
+  test('子任务中途问主人：子 agent 用 task_ask 问，这一轮停下；主线程用 task_answer 按编号交回回答；对不上的原样交回去', async () => {
+    const repos = memoryRepos();
+    const main = createYoyoTools({ repos, search: null, tasks: true, now: () => NOW });
+    const worker = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(worker, { repos, now: () => NOW });
+    for (const title of ['做封面', '做正文']) createAgentTask(repos, { title, goal: '目标', origin: 'main' }, NOW);
+    assert.equal(
+      await run(worker, 'task_ask', { id: 1, question: '蓝色还是绿色？' }),
+      '子任务 #1 现在是「排队」，不能提问',
+    );
+    repos.agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    repos.agentTasks.update(2, { state: 'running' }, NOW.getTime());
+    assert.equal(await run(worker, 'task_ask', { id: 1, question: ' ' }), '问题不能空着');
+    assert.match(
+      String(await run(worker, 'task_ask', { id: 1, question: '蓝色还是绿色？' })),
+      /^问题记下了，子任务 #1 等主人回答。这一轮到此为止/,
+    );
+    assert.equal(repos.agentTasks.get(1)?.state, 'waiting');
+    assert.equal(
+      await run(worker, 'task_ask', { id: 1, question: '再问一个' }),
+      '子任务 #1 已经有一个问题在等主人回答了，一次只问一个',
+    );
+    assert.equal(
+      await run(worker, 'task_todo', { id: 1, index: 1, state: 'done' }),
+      '子任务 #1 现在是「等回答」，不能再改',
+    );
+
+    // 主线程：编号对上才交，别的子任务不受影响
+    assert.equal(await run(main, 'task_answer', { id: 2, answer: '蓝色' }), '子任务 #2 现在是「在做」，没有在等回答');
+    assert.equal(await run(main, 'task_answer', { id: 1, answer: ' ' }), '回答不能空着');
+    assert.equal(await run(main, 'task_answer', { id: 9, answer: '蓝色' }), '没有子任务 #9');
+    assert.equal(
+      await run(main, 'task_answer', { id: 1, answer: '蓝色' }),
+      '回答交给子任务 #1「做封面」了，它排队接着做',
+    );
+    const task = repos.agentTasks.get(1);
+    assert.deepEqual([task?.state, task?.answer], ['queued', '蓝色']);
+    assert.equal(repos.agentTasks.get(2)?.answer, null);
+    assert.match(main.get('task_answer')?.description ?? '', /只对「等回答」的子任务有效/);
+    assert.equal(worker.get('task_answer'), undefined, '子 agent 不能替主人回答');
+    assert.equal(main.get('task_ask'), undefined, '主线程不提问');
   });
 
   test('task_deliver 用 path 交工作区里的文件：按读文件的规则查，名字缺省用原来的', async () => {

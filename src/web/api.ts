@@ -7,10 +7,11 @@ import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
-import { TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
+import { APPROVAL_EVENT, TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
+import { ApprovalError, decideApproval } from '../features/approvals/approvals.ts';
 import { artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
-import { TaskError, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
-import type { AgentTask, Artifact } from '../kernel/types.ts';
+import { TaskError, answerTask, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
+import type { AgentTask, Approval, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
 import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
@@ -33,6 +34,8 @@ export interface WebDeps {
   readonly talk?: (text: string) => Promise<string>;
   /** 子任务交付物的文件；不给就看不了、删不了原文。 */
   readonly files?: ArtifactFiles;
+  /** 工作台里批准了一件事：常驻进程马上照做，不等下一次轮到。 */
+  readonly onApproved?: () => void;
   /** 在访达里选中一个文件。只有 macOS 有。 */
   readonly reveal?: (path: string) => void;
   /** 是不是在 yoyo.app 的窗口里：下载换成在访达里显示。 */
@@ -84,6 +87,23 @@ function taskSummary(task: AgentTask): unknown {
   return { id, title, agent, state, origin, createdAt, finishedAt, progress: progress(task) };
 }
 
+/** 列表里的一项：不带参数和结果全文（写的内容可以有几 MB），展开时另取。 */
+function approvalSummary(approval: Approval): unknown {
+  const { id, tool, summary, task, state, createdAt, decidedAt, note } = approval;
+  return { id, tool, summary, task, state, createdAt, decidedAt, note, done: approval.result !== null };
+}
+
+/** 一条请求的全部：加上完整参数和做完以后的结果。 */
+function approvalView(approval: Approval): unknown {
+  let input: unknown = approval.input;
+  try {
+    input = JSON.parse(approval.input);
+  } catch {
+    // 不是 JSON 就原样给
+  }
+  return { ...(approvalSummary(approval) as object), input, result: approval.result };
+}
+
 function field(body: unknown, name: string): unknown {
   return typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[name] : undefined;
 }
@@ -110,8 +130,9 @@ export interface ContextItem {
   readonly text: string;
   /** 从哪来的：`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音和自己说的。 */
   readonly via?: string;
-  /** `task` 那条是哪个子任务、结束时的状态。 */
+  /** `task` 那条是哪个子任务、结束时的状态；`approval` 那条是哪条批准请求、结论是什么。 */
   readonly task?: number;
+  readonly approval?: number;
   readonly state?: string;
 }
 
@@ -126,6 +147,16 @@ export function contextItem(entry: Entry): ContextItem | null {
     return { at: entry.at, kind: 'whisper', text: entry.text };
   }
   if (entry.type === 'summary') return { at: entry.at, kind: 'summary', text: entry.text };
+  if (entry.type === 'event' && entry.kind === APPROVAL_EVENT && entry.text) {
+    const meta = entry.meta ?? {};
+    return {
+      at: entry.at,
+      kind: 'approval',
+      text: entry.text,
+      ...(typeof meta['id'] === 'number' ? { approval: meta['id'] } : {}),
+      ...(typeof meta['state'] === 'string' ? { state: meta['state'] } : {}),
+    };
+  }
   if (entry.type === 'event' && entry.kind === TASK_EVENT && entry.text) {
     const meta = entry.meta ?? {};
     return {
@@ -170,6 +201,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       lastTalk: schedule && schedule.lastTalk > 0 ? schedule.lastTalk : null,
       alarms: repos.schedule.list().length,
       contacts: repos.contacts.list().length,
+      approvals: repos.approvals.list({ states: ['pending'], limit: 200 }).length,
       app: deps.app ?? false,
       reveal: deps.reveal !== undefined,
     };
@@ -277,7 +309,27 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     const task = Number.isInteger(taskId) ? repos.agentTasks.get(taskId) : null;
     if (!task) throw new RequestError(`没有子任务 #${taskId}`, 404);
     const steps = taskSteps(await deps.context.store.list(taskSession(task.id)));
-    return { ...task, progress: progress(task), steps: steps.slice(-STEPS_MAX) };
+    const approvals = repos.approvals.list({ task: task.id, limit: 20 }).map(approvalSummary);
+    return { ...task, progress: progress(task), steps: steps.slice(-STEPS_MAX), approvals };
+  }
+
+  function approvalOf(id: string): Approval {
+    const approval = repos.approvals.get(Number(id));
+    if (!approval) throw new RequestError(`没有批准请求 #${id}`, 404);
+    return approval;
+  }
+
+  /** 批准或拒绝：只对等批准的有效，点第二遍报 409。 */
+  function decide(id: string, verdict: 'approved' | 'denied'): unknown {
+    approvalOf(id);
+    try {
+      const decided = decideApproval(repos, Number(id), verdict, now(), 'web');
+      if (verdict === 'approved') deps.onApproved?.();
+      return approvalSummary(decided);
+    } catch (error) {
+      if (error instanceof ApprovalError) throw new RequestError(error.message, 409);
+      throw error;
+    }
   }
 
   function artifactOf(id: string): Artifact {
@@ -356,6 +408,29 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
           if (error instanceof TaskError) throw new RequestError(error.message, 409);
           throw error;
         }
+      }
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'answer') {
+        const answer = text(body, 'answer');
+        if (answer === undefined) throw new RequestError('要给 answer，回答要是一段文字');
+        try {
+          return ok(taskSummary(answerTask(repos, Number(parts[2]), answer, now())));
+        } catch (error) {
+          if (error instanceof TaskError) throw new RequestError(error.message, 409);
+          throw error;
+        }
+      }
+      if (route === 'GET /api/approvals') {
+        // 等批准的都列，再带上最近处理过的
+        const pending = repos.approvals.list({ states: ['pending'], limit: 200 });
+        const settled = repos.approvals.list({ limit: 40 }).filter((item) => item.state !== 'pending');
+        return ok([...pending, ...settled].map(approvalSummary));
+      }
+      if (method === 'GET' && parts.length === 3 && parts[1] === 'approvals') return ok(approvalView(approvalOf(id)));
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'approvals' && parts[3] === 'approve') {
+        return ok(decide(parts[2] ?? '', 'approved'));
+      }
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'approvals' && parts[3] === 'deny') {
+        return ok(decide(parts[2] ?? '', 'denied'));
       }
       if (route === 'GET /api/artifacts') {
         const task = url.searchParams.get('task');

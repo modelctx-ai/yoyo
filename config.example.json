@@ -65,7 +65,8 @@
   "tasks": {
     "enabled": true,
     "notify": true,
-    "concurrency": 2
+    "concurrency": 2,
+    "answerTimeout": 24
   },
   "files": {
     "workspace": "",
@@ -73,7 +74,12 @@
     "denyRead": [],
     "read": "allow",
     "write": "allow",
-    "edit": "allow"
+    "edit": "allow",
+    "bash": "allow",
+    "bashNetwork": [],
+    "bashTimeout": 120,
+    "bashMaxTimeout": 600,
+    "askTimeout": 24
   },
   "context": {
     "keep": 40

@@ -12,6 +12,8 @@ import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
+import { requestApproval } from '../features/approvals/approvals.ts';
+import { askTask } from '../features/tasks/tasks.ts';
 import { drain } from '../runtime/inbox.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { memoryLogger, memoryRepos } from '../runtime/testing.ts';
@@ -62,6 +64,7 @@ describe('web 管理页', () => {
   let web: WebServer;
   const files = createArtifactFiles(paths.artifactsDir);
   const revealed: string[] = [];
+  const approved: number[] = [];
 
   async function call(method: string, path: string, body?: unknown): Promise<{ status: number; data: unknown }> {
     const response = await fetch(new URL(path, web.origin), {
@@ -97,6 +100,7 @@ describe('web 管理页', () => {
       now: () => new Date(T0),
       files,
       reveal: (path) => void revealed.push(path),
+      onApproved: () => void approved.push(repos.approvals.list({ states: ['approved'] }).at(0)?.id ?? 0),
       logger,
     });
   });
@@ -280,6 +284,49 @@ describe('web 管理页', () => {
     );
   });
 
+  test('子任务等回答：详情带问题，POST /api/tasks/:id/answer 回答以后排队接着做；不在等的、空回答、没有的都报清楚', async () => {
+    const task = repos.agentTasks.create(
+      { title: '做封面', goal: '做封面', criteria: [], agent: 'general', origin: 'main' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running', startedAt: T0 }, T0);
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' }), {
+      status: 409,
+      data: { error: `子任务 #${task.id} 现在是「在做」，没有在等回答` },
+    });
+    askTask(repos, task.id, '封面用蓝色还是绿色？', new Date(T0));
+    const waiting = (await call('GET', `/api/tasks/${task.id}`)).data as {
+      state: string;
+      question: string;
+      askedAt: number;
+      answer: string | null;
+    };
+    assert.deepEqual(
+      [waiting.state, waiting.question, waiting.askedAt, waiting.answer],
+      ['waiting', '封面用蓝色还是绿色？', T0, null],
+    );
+    assert.equal(((await call('GET', '/api/tasks')).data as { state: string }[])[0]?.state, 'waiting');
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, {}), {
+      status: 400,
+      data: { error: '要给 answer，回答要是一段文字' },
+    });
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/answer`, { answer: '  ' }), {
+      status: 409,
+      data: { error: '回答不能空着' },
+    });
+    assert.equal((await call('POST', '/api/tasks/99/answer', { answer: '蓝' })).status, 409);
+    const answered = (await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' })).data as {
+      state: string;
+    };
+    assert.equal(answered.state, 'queued');
+    assert.equal(repos.agentTasks.get(task.id)?.answer, '蓝色');
+    assert.equal(
+      (await call('POST', `/api/tasks/${task.id}/answer`, { answer: '蓝色' })).status,
+      409,
+      '答过了不能再答',
+    );
+  });
+
   test('子任务：列表、详情带一步步的过程、取消；主聊天里做完的那条带编号', async () => {
     const task = repos.agentTasks.create(
       { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'], agent: 'research', origin: 'main' },
@@ -381,6 +428,96 @@ describe('web 管理页', () => {
     assert.equal((await call('DELETE', `/api/artifacts/${md.id}`)).status, 404);
     const status = (await call('GET', '/api/status')).data as { app: boolean; reveal: boolean };
     assert.deepEqual([status.app, status.reveal], [false, true]);
+  });
+
+  test('待批准：列表不带参数全文，详情带；批准、拒绝只能点一次，批准会叫常驻进程马上做；状态里有等批准的个数', async () => {
+    const before = ((await call('GET', '/api/status')).data as { approvals: number }).approvals;
+    const write = requestApproval(
+      repos,
+      {
+        tool: 'write',
+        summary: '写 notes/周报.md（新建，2 行，11 B）',
+        input: { path: 'notes/周报.md', content: '# 周报\nA\n' },
+        task: null,
+      },
+      new Date(T0),
+    );
+    const task = repos.agentTasks.create(
+      { title: '画图', goal: '画图', criteria: [], agent: 'general', origin: 'main' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running', startedAt: T0 }, T0);
+    const bash = requestApproval(
+      repos,
+      { tool: 'bash', summary: '跑命令：python plot.py', input: { command: 'python plot.py' }, task: task.id },
+      new Date(T0 + 1),
+    );
+    askTask(repos, task.id, '想做下面这件事', new Date(T0));
+    assert.equal(((await call('GET', '/api/status')).data as { approvals: number }).approvals, before + 2);
+
+    const list = (await call('GET', '/api/approvals')).data as Record<string, unknown>[];
+    assert.deepEqual(
+      list
+        .filter((item) => [write.id, bash.id].includes(item['id'] as number))
+        .map((item) => [item['id'], item['state'], item['task'], 'input' in item]),
+      [
+        [bash.id, 'pending', task.id, false],
+        [write.id, 'pending', null, false],
+      ],
+      '等批准的新的在前，列表里不带参数',
+    );
+    const detail = (await call('GET', `/api/approvals/${write.id}`)).data as Record<string, unknown>;
+    assert.deepEqual(detail['input'], { path: 'notes/周报.md', content: '# 周报\nA\n' });
+    assert.deepEqual(
+      [detail['tool'], detail['summary'], detail['result']],
+      ['write', '写 notes/周报.md（新建，2 行，11 B）', null],
+    );
+    assert.equal((await call('GET', '/api/approvals/999')).status, 404);
+    const inTask = (await call('GET', `/api/tasks/${task.id}`)).data as { approvals: { id: number; state: string }[] };
+    assert.deepEqual(
+      inTask.approvals.map((item) => [item.id, item.state]),
+      [[bash.id, 'pending']],
+      '子任务详情带着它要批准的',
+    );
+
+    assert.equal((await call('POST', `/api/approvals/${write.id}/approve`, {})).status, 200);
+    assert.deepEqual(approved, [write.id], '点了批准就叫一声');
+    assert.equal(repos.approvals.get(write.id)?.state, 'approved');
+    assert.deepEqual(await call('POST', `/api/approvals/${write.id}/deny`, {}), {
+      status: 409,
+      data: { error: `批准请求 #${write.id} 已经「批准了」，不能再改` },
+    });
+    assert.equal((await call('POST', `/api/approvals/${bash.id}/deny`, {})).status, 200);
+    assert.deepEqual(approved, [write.id], '拒绝不叫');
+    assert.equal((await call('POST', `/api/approvals/${bash.id}/approve`, {})).status, 409);
+    assert.equal((await call('POST', '/api/approvals/999/approve', {})).status, 404);
+    assert.deepEqual(
+      repos.activity
+        .list(50)
+        .filter((e) => e.type === 'approval-approve' || e.type === 'approval-deny')
+        .map((e) => [e.type, e['via']]),
+      [
+        ['approval-approve', 'web'],
+        ['approval-deny', 'web'],
+      ],
+    );
+    assert.equal(((await call('GET', '/api/status')).data as { approvals: number }).approvals, before);
+
+    await context.append(
+      eventEntry('approval', {
+        text: '批准请求 #1「写 a.md」：主人在工作台里拒绝了，没有做。',
+        meta: { id: 1, state: 'denied' },
+        at: T0 + 20,
+      }),
+    );
+    const items = (await call('GET', '/api/context')).data as { kind: string; approval?: number; state?: string }[];
+    assert.deepEqual(items.at(-1), {
+      at: T0 + 20,
+      kind: 'approval',
+      text: '批准请求 #1「写 a.md」：主人在工作台里拒绝了，没有做。',
+      approval: 1,
+      state: 'denied',
+    });
   });
 
   test('说一句、听一句交给收件箱，下一拍做', async () => {

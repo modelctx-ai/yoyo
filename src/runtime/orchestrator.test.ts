@@ -562,8 +562,107 @@ describe('orchestrator 跑模型', () => {
     await orchestrator.close();
   });
 
-  test('转告那一轮：工具照给，读写文件的不给；没开工具就都不给', () => {
-    assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'yoyo']), ['web_search', 'yoyo']);
+  test('子任务提了问题：和结束的排在同一条队列里一个一个说，<task-notification> 带问题；说过的不再说，答了又问的新问题再说一次', async () => {
+    const model = createScriptedModel([
+      { type: 'text', text: '做封面的子任务问你，封面用蓝色还是绿色？' },
+      { type: 'text', text: '周报整理好了。' },
+      { type: 'text', text: '做封面的子任务又问：要不要加图？' },
+    ]);
+    const { orchestrator, calls, repos } = orchestratorRig({ model, state: { nextWhisper: T0 + 3_600_000 } });
+    const make = (title: string, patch: Partial<AgentTask>) => {
+      const task = repos.agentTasks.create({ title, goal: '目标', criteria: [], agent: 'general', origin: 'main' }, T0);
+      repos.agentTasks.update(task.id, { startedAt: T0, ...patch }, T0);
+      return task.id;
+    };
+    const spoken = () => calls.filter((call) => call.startsWith('speak:'));
+    const asking = make('做封面', { state: 'waiting', question: '封面用蓝色还是绿色？', askedAt: T0 });
+    const done = make('周报', { state: 'done', result: 'A 上线', finishedAt: T0 });
+    // 一条队列，按编号先后一个一个说
+    orchestrator.relayTask(done);
+    orchestrator.relayTask(asking);
+    await orchestrator.tick();
+    assert.deepEqual(spoken(), ['speak:做封面的子任务问你，封面用蓝色还是绿色？', 'speak:周报整理好了。']);
+    const prompts = model.doGenerateCalls.map((call) => JSON.stringify(call.prompt));
+    assert.match(
+      prompts[0]!,
+      /<task-id>1<\/task-id>.*<status>needs_input<\/status>.*<question>封面用蓝色还是绿色？<\/question>/,
+    );
+    assert.match(prompts[0]!, /做到一半要主人拿主意.*说清楚是哪个子任务在问/);
+    assert.match(prompts[1]!, /<status>completed<\/status>/);
+    const after = repos.agentTasks.get(asking)!;
+    assert.notEqual(after.questionAnnouncedAt, null, '问题转告过了');
+    assert.equal(after.announcedAt, null, '没结束，不算结束转告过');
+    assert.equal(after.state, 'waiting', '转告不改状态：还在等回答');
+
+    await orchestrator.tick();
+    orchestrator.relayTask(asking);
+    await orchestrator.tick();
+    assert.equal(spoken().length, 2, '转告过的问题不重复说');
+
+    // 主人回答了，子任务接着做，又问了新问题：能再转告
+    repos.agentTasks.update(asking, { state: 'queued', answer: '蓝色', answeredAt: T0 + 1 }, T0 + 1);
+    orchestrator.relayTask(asking);
+    await orchestrator.tick();
+    assert.equal(spoken().length, 2, '已经答了的问题不用再说');
+    repos.agentTasks.update(
+      asking,
+      {
+        state: 'waiting',
+        question: '要不要加图？',
+        askedAt: T0 + 2,
+        answer: null,
+        answeredAt: null,
+        questionAnnouncedAt: null,
+      },
+      T0 + 2,
+    );
+    orchestrator.relayTask(asking);
+    await orchestrator.tick();
+    assert.equal(spoken().length, 3);
+    assert.match(JSON.stringify(model.doGenerateCalls[2]?.prompt), /<question>要不要加图？<\/question>/);
+    await orchestrator.close();
+  });
+
+  test('子任务提了问题：没配模型就报一声固定的；tasks.notify 关着只记下不说；上次没转告的问题开始时补上，转告过的不补', async () => {
+    const seed = (repos: Repos) => {
+      const ask = (title: string, patch: Partial<AgentTask>) => {
+        const task = repos.agentTasks.create(
+          { title, goal: '目标', criteria: [], agent: 'general', origin: 'main' },
+          T0,
+        );
+        repos.agentTasks.update(
+          task.id,
+          { state: 'waiting', question: '加图吗？', askedAt: T0, startedAt: T0, ...patch },
+          T0,
+        );
+      };
+      ask('周报', {});
+      ask('封面', { questionAnnouncedAt: T0 });
+    };
+    const plain = orchestratorRig({ seed, state: { nextWhisper: T0 + 3_600_000 } });
+    await plain.orchestrator.tick();
+    assert.deepEqual(
+      plain.calls.filter((call) => call.startsWith('speak:')),
+      ['speak:「周报」有件事要问你，问题写在工作台里。'],
+    );
+    assert.notEqual(plain.repos.agentTasks.get(1)?.questionAnnouncedAt, null);
+    assert.equal(plain.repos.agentTasks.get(1)?.state, 'waiting', '重启和转告都不改状态：等回答的还在等');
+
+    const quiet = orchestratorRig({
+      seed,
+      config: { tasks: { notify: false } },
+      state: { nextWhisper: T0 + 3_600_000 },
+    });
+    await quiet.orchestrator.tick();
+    assert.deepEqual(
+      quiet.calls.filter((call) => call.startsWith('speak:')),
+      [],
+    );
+    assert.notEqual(quiet.repos.agentTasks.get(1)?.questionAnnouncedAt, null);
+  });
+
+  test('转告那一轮：工具照给，读写文件和跑命令的不给；没开工具就都不给', () => {
+    assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'bash', 'yoyo']), ['web_search', 'yoyo']);
     assert.equal(relayTools(false, ['web_search', 'read']), false);
     assert.equal(relayTools(true, undefined), true);
   });
@@ -594,6 +693,104 @@ describe('orchestrator 跑模型', () => {
       [],
     );
     assert.notEqual(quiet.repos.agentTasks.get(1)?.announcedAt, null);
+  });
+
+  test('批准请求有了结论：叫醒主线程，把 <approval-notification> 交给回复的 agent，批准了讲结果，拒绝、过期也说一句；说过的不再说', async () => {
+    const model = createScriptedModel([
+      { type: 'text', text: '周报写好了，在 notes 里。' },
+      { type: 'text', text: '那件事你没批准，我没做。' },
+      { type: 'text', text: '等太久了，那件事没做。' },
+    ]);
+    const { orchestrator, calls, repos } = orchestratorRig({ model, state: { nextWhisper: T0 + 3_600_000 } });
+    const make = (summary: string, state: 'approved' | 'denied' | 'expired', patch: object = {}) => {
+      const item = repos.approvals.create({ tool: 'write', summary, input: '{}', task: null, runId: null }, T0);
+      repos.approvals.decide(item.id, state, T0);
+      repos.approvals.update(item.id, patch);
+      orchestrator.relayApproval(item.id);
+      return item.id;
+    };
+    make('写 notes/周报.md', 'approved', { result: '写好了：notes/周报.md（2 行，11 B）' });
+    make('跑命令：rm -r x', 'denied');
+    make('写 b.md', 'expired', { note: '等了 24 小时没批准' });
+    await orchestrator.tick();
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith('speak:')),
+      ['speak:周报写好了，在 notes 里。', 'speak:那件事你没批准，我没做。', 'speak:等太久了，那件事没做。'],
+    );
+    const prompts = model.doGenerateCalls.map((call) => JSON.stringify(call.prompt));
+    assert.match(prompts[0]!, /<approval-notification>.*<status>approved<\/status>.*<result>.*写好了：notes/);
+    assert.match(prompts[0]!, /主人在工作台里批准了，已经照做。用一两句话把结果告诉主人/);
+    assert.match(prompts[1]!, /<status>denied<\/status>.*主人在工作台里拒绝了，没有做/);
+    assert.match(prompts[2]!, /<status>expired<\/status>.*<note>等了 24 小时没批准<\/note>/);
+    await orchestrator.tick();
+    assert.equal(calls.filter((call) => call.startsWith('speak:')).length, 3, '说过的不再说');
+    await orchestrator.close();
+  });
+
+  test('批准请求的转告：没配模型报一声固定的；tasks.notify 关着不说；转告那一轮照旧不给读写文件的工具', async () => {
+    const seed = (repos: Repos) => {
+      const item = repos.approvals.create(
+        { tool: 'bash', summary: '跑命令：ls', input: '{}', task: null, runId: null },
+        T0,
+      );
+      repos.approvals.decide(item.id, 'denied', T0);
+    };
+    const plain = orchestratorRig({ seed, state: { nextWhisper: T0 + 3_600_000 } });
+    plain.orchestrator.relayApproval(1);
+    await plain.orchestrator.tick();
+    assert.deepEqual(
+      plain.calls.filter((call) => call.startsWith('speak:')),
+      ['speak:「跑命令：ls」你没批准，我就没做。'],
+    );
+    const quiet = orchestratorRig({
+      seed,
+      config: { tasks: { notify: false } },
+      state: { nextWhisper: T0 + 3_600_000 },
+    });
+    quiet.orchestrator.relayApproval(1);
+    await quiet.orchestrator.tick();
+    assert.deepEqual(
+      quiet.calls.filter((call) => call.startsWith('speak:')),
+      [],
+    );
+    plain.orchestrator.relayApproval(99);
+    await plain.orchestrator.tick();
+    assert.equal(plain.calls.filter((call) => call.startsWith('speak:')).length, 1, '没有这一条就跳过');
+    // 开着 ask 的四个工具也不给转告那一轮：按名字去掉，和开关无关
+    assert.deepEqual(relayTools(true, ['read', 'write', 'edit', 'bash', 'weather_forecast']), ['weather_forecast']);
+  });
+
+  test('等批准的子任务转告时不叫提问：告诉主人去工作台批准，不要用 task_answer 代答', async () => {
+    const model = createScriptedModel([{ type: 'text', text: '画图的子任务想跑个命令，去工作台批准一下。' }]);
+    const { orchestrator, calls, repos } = orchestratorRig({
+      model,
+      state: { nextWhisper: T0 + 3_600_000 },
+      seed: (seeded) => {
+        const task = seeded.agentTasks.create(
+          { title: '画图', goal: '画', criteria: [], agent: 'general', origin: 'main' },
+          T0,
+        );
+        seeded.agentTasks.update(
+          task.id,
+          { state: 'waiting', question: '想做下面这件事', askedAt: T0, startedAt: T0 },
+          T0,
+        );
+        seeded.approvals.create(
+          { tool: 'bash', summary: '跑命令：python plot.py', input: '{}', task: task.id, runId: null },
+          T0,
+        );
+      },
+    });
+    await orchestrator.tick();
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith('speak:')),
+      ['speak:画图的子任务想跑个命令，去工作台批准一下。'],
+    );
+    const prompt = JSON.stringify(model.doGenerateCalls[0]?.prompt);
+    assert.match(prompt, /想做的事要主人批准（不是提问）：「跑命令：python plot.py」/);
+    assert.match(prompt, /不要用 task_answer 代答，也别替主人批准/);
+    assert.notEqual(repos.agentTasks.get(1)?.questionAnnouncedAt, null);
+    await orchestrator.close();
   });
 
   test('右键对话：没配模型就报错；调用方取消就停', async () => {

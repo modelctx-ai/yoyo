@@ -36,9 +36,14 @@ export function taskSource(deps: TaskDeps): ContextSource {
   });
 }
 
-/** 还在排队和在做的子任务：主线程每一轮都看得到，主人问起不用再查。 */
-export function agentTasksSource(repos: Pick<Repos, 'agentTasks'>): ContextSource {
-  return defineSource('tasks', () => tasksFact(repos.agentTasks.list({ states: ['queued', 'running'], limit: 10 })));
+/** 还在排队、在做和等回答的子任务：主线程每一轮都看得到，主人问起不用再查；等回答的带着问题，等批准的列出要批准什么。 */
+export function agentTasksSource(repos: Pick<Repos, 'agentTasks' | 'approvals'>): ContextSource {
+  return defineSource('tasks', () =>
+    tasksFact(
+      repos.agentTasks.list({ states: ['queued', 'running', 'waiting'], limit: 10 }),
+      repos.approvals.list({ states: ['pending'], limit: 50 }).toReversed(),
+    ),
+  );
 }
 
 /** 最近一次复制的内容，前 160 字。 */

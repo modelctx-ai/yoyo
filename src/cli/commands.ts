@@ -36,19 +36,27 @@ import { createYoyoContext, taskSession, taskSteps, type TaskStep } from '../bra
 import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
+import {
+  ApprovalError,
+  STATE_LABELS as APPROVAL_LABELS,
+  approvalDetail,
+  approvalRow,
+  decideApproval,
+} from '../features/approvals/approvals.ts';
 import { addContact } from '../features/contacts/contacts.ts';
 import type { AgentProfile } from '../features/tasks/agents.ts';
 import { artifactRow, artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
 import {
   STATE_LABELS,
   TaskError,
+  answerTask,
   cancelAgentTask,
   createAgentTask,
   taskDetail,
   taskRow,
 } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
-import type { AgentTaskState, Artifact, InboxRequest } from '../kernel/types.ts';
+import type { AgentTaskState, Approval, ApprovalState, Artifact, InboxRequest } from '../kernel/types.ts';
 import type { ArtifactFiles, Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
 import { compactContext } from '../runtime/compact.ts';
 import { directorAlive, enqueue } from '../runtime/inbox.ts';
@@ -158,6 +166,23 @@ function artifactOf(env: CommandEnv, args: readonly string[]): Artifact {
   return item;
 }
 
+/** `--state` 写的批准状态，逗号分开；写错报出能写哪些。 */
+function approvalStates(value: string): ApprovalState[] {
+  const all = Object.keys(APPROVAL_LABELS) as ApprovalState[];
+  const picked = value.split(',').map((item) => item.trim());
+  const wrong = picked.filter((item) => !(all as string[]).includes(item));
+  if (wrong.length > 0) throw new Error(`没有「${wrong.join('、')}」这种状态，有：${all.join('、')}`);
+  return picked as ApprovalState[];
+}
+
+function approvalOf(env: CommandEnv, args: readonly string[]): Approval {
+  const id = Number((args[0] ?? '').replace(/^#/, ''));
+  if (!Number.isInteger(id) || id <= 0) throw new Error('要给批准请求的编号，例如 yoyo approval show 3');
+  const item = env.repos().approvals.get(id);
+  if (!item) throw new Error(`没有批准请求 #${id}`);
+  return item;
+}
+
 function taskId(args: readonly string[]): number {
   const id = Number(args[0]);
   if (!Number.isInteger(id) || id <= 0) throw new Error('要给子任务编号，例如 yoyo task show 3');
@@ -169,7 +194,7 @@ function guard<T>(work: () => T): T {
   try {
     return work();
   } catch (error) {
-    if (error instanceof TaskError) throw new Error(error.message, { cause: error });
+    if (error instanceof TaskError || error instanceof ApprovalError) throw new Error(error.message, { cause: error });
     throw error;
   }
 }
@@ -609,13 +634,19 @@ export function buildDomains(env: CommandEnv): Domain[] {
         },
         {
           name: 'show',
-          summary: '一个子任务的全部：目标、验收标准、todo、结果',
+          summary: '一个子任务的全部：目标、验收标准、todo、问题和回答、结果',
           agent: true,
           usage: '<编号>',
           run(_flags, args) {
             const task = env.repos().agentTasks.get(taskId(args));
             if (!task) throw new Error(`没有子任务 #${args[0]}`);
-            env.out(taskDetail(task, env.repos().artifacts.list({ task: task.id })));
+            env.out(
+              taskDetail(
+                task,
+                env.repos().artifacts.list({ task: task.id }),
+                env.repos().approvals.list({ task: task.id }).toReversed(),
+              ),
+            );
           },
         },
         {
@@ -668,12 +699,76 @@ export function buildDomains(env: CommandEnv): Domain[] {
           },
         },
         {
+          name: 'answer',
+          summary: '回答在等回答的子任务（子 agent 做到一半问的问题），它排队接着做',
+          usage: '<编号> <回答…>',
+          run(_flags, args) {
+            const id = taskId(args);
+            const task = guard(() => answerTask(env.repos(), id, args.slice(1).join(' '), env.now()));
+            env.out(`回答交给子任务 #${task.id} 了，常驻进程在跑就会接着做`);
+          },
+        },
+        {
           name: 'cancel',
-          summary: '取消还在排队或在做的子任务',
+          summary: '取消还开着（排队、在做、等回答）的子任务',
           usage: '<编号>',
           run(_flags, args) {
             const task = guard(() => cancelAgentTask(env.repos(), taskId(args), env.now()));
             env.out(`取消了子任务 #${task.id}`);
+          },
+        },
+      ],
+    },
+    {
+      name: 'approval',
+      aliases: ['approvals'],
+      summary: '要你批准的事：开关是 ask 的工具（读写文件、跑命令）每次动手前先问',
+      detail:
+        'config.json 里 files.read、files.write、files.edit、files.bash 写成 "ask"：yoyo 想读、写、改文件或跑命令时不当场做，记成一条批准请求，等你在工作台的「待批准」里或这里批准。批准了常驻进程照原参数做一次，结果回到 yoyo 那里；拒绝或等太久（files.askTimeout，缺省 24 小时）就不做。批准不能扩大范围：不在工作区和只读目录里的，批准了也还是读写不了。',
+      verbs: [
+        {
+          name: 'list',
+          summary: '最近的批准请求：编号、状态、工具、谁要的、摘要，等批准的在前',
+          agent: true,
+          flags: ['state'],
+          run(flags) {
+            const state = flagText(flags, 'state');
+            const states = state ? approvalStates(state) : undefined;
+            const all = env.repos().approvals.list({ limit: 200, ...(states ? { states } : {}) });
+            const items = states
+              ? all.slice(0, 20)
+              : [...all.filter((a) => a.state === 'pending'), ...all.filter((a) => a.state !== 'pending').slice(0, 20)];
+            if (items.length === 0) return env.out(state ? `没有「${state}」的批准请求` : '还没有批准请求');
+            for (const item of items) env.out(approvalRow(item));
+          },
+        },
+        {
+          name: 'show',
+          summary: '一条批准请求的全部：完整参数（写的内容、改的原文和新文、命令）和做完的结果',
+          agent: true,
+          usage: '<编号>',
+          run(_flags, args) {
+            env.out(approvalDetail(approvalOf(env, args)));
+          },
+        },
+        {
+          name: 'approve',
+          summary: '批准：常驻进程照原参数做一次，结果回到 yoyo 那里（先 show 看看要做什么）',
+          usage: '<编号>',
+          run(_flags, args) {
+            const id = approvalOf(env, args).id;
+            const item = guard(() => decideApproval(env.repos(), id, 'approved', env.now(), 'cli'));
+            env.out(`批准了 #${item.id}「${item.summary}」，常驻进程在跑就会照做`);
+          },
+        },
+        {
+          name: 'deny',
+          summary: '拒绝：不做，yoyo 会知道没做',
+          usage: '<编号>',
+          run(_flags, args) {
+            const id = approvalOf(env, args).id;
+            const item = guard(() => decideApproval(env.repos(), id, 'denied', env.now(), 'cli'));
+            env.out(`拒绝了 #${item.id}「${item.summary}」`);
           },
         },
       ],

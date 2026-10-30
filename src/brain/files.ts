@@ -1,23 +1,28 @@
 /**
  * 读、写、改文件三个工具，照 Claude Code 和 pi 的 read、write、edit。能碰哪里由 `features/files/access.ts` 的规则定：
  * 工作区能读能写，`files.readable` 只能读，配置、yoyo 自己的数据和密钥读不到。路径先展开 `~`、相对路径从工作区算起，
- * 再顺着符号链接解析成真实路径才比规则，链接指到外面也出不去。不问主人：范围本身就是把关。
+ * 再顺着符号链接解析成真实路径才比规则，链接指到外面也出不去。范围先查：不在范围里的直接拒绝，不会变成批准请求。
+ * 开关是 `ask` 的工具照样给，每次动手前要主人在工作台里批准（`action.ts`）。
  * 写和改都记进轨迹。只在主人发起的那一轮给（回复、右键对话、工作台、子任务），转告那一轮不给。
+ * 跑命令的 `bash` 在 `bash.ts`，用同一份范围。
  */
-import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
-import { tool, type LocalToolRegistry } from '@modelctx-ai/ctx';
+import type { LocalToolRegistry } from '@modelctx-ai/ctx';
 import { z } from 'zod';
 
 import type { FilesConfig } from '../app/config.ts';
 import type { Paths } from '../app/paths.ts';
 import { checkAccess, inside, type FileMode, type FileRules } from '../features/files/access.ts';
 import type { Repos } from '../ports/index.ts';
+import { FileError, addGated, answered, defineAction, type AskDeps } from './action.ts';
 
-/** 三个工具的名字。转告那一轮按这个清单去掉。 */
-export const FILE_TOOL_NAMES: readonly string[] = ['read', 'write', 'edit'];
+export { FileError };
+
+/** 只在主人发起的那一轮给的工具：读写文件的三个和跑命令的 `bash`。转告那一轮按这个清单去掉。 */
+export const OWNER_TOOL_NAMES: readonly string[] = ['read', 'write', 'edit', 'bash'];
 
 /** 一次最多读多少行、一行最多多少字、一次最多交回多少字。 */
 export const READ_LINES = 2000;
@@ -29,14 +34,13 @@ export const WRITE_MAX = 5 * 1024 * 1024;
 /** 目录最多列多少项。 */
 export const LIST_MAX = 200;
 
-/** 规则不让、路径不对、文件不在：原样交回模型的一句话。 */
-export class FileError extends Error {}
-
 /** 不管有没有打开，一律读不到的位置（相对主目录）。 */
 const SECRET_DIRS = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.netrc', '.config/gcloud', 'Library/Keychains'];
 
 export interface FileAccess {
   readonly workspace: string;
+  /** 解析好的规则（真实路径）；`bash` 的沙箱设置照它拼。 */
+  readonly rules: FileRules;
   /** 主人给的路径解析成真实的绝对路径，按规则查过；不让就抛 `FileError`。 */
   resolve(path: string, mode: FileMode): string;
   /** 给模型和轨迹看的写法：工作区里的写相对路径，别的写 `~/…` 或绝对路径。 */
@@ -92,6 +96,7 @@ export function createFileAccess(options: FileAccessOptions): FileAccess {
   const realHome = real(home);
   return {
     workspace,
+    rules,
     resolve(path, mode) {
       if (!path.trim()) throw new FileError('要给路径');
       const target = real(expand(path, workspace));
@@ -158,118 +163,130 @@ export function readLines(text: string, offset = 1, limit = READ_LINES): string 
   return out.join('\n');
 }
 
-/** 规则不让、文件不在这些原样交回模型；别的错照常抛。 */
-function answered(work: () => string): string {
-  try {
-    return work();
-  } catch (error) {
-    if (error instanceof FileError) return error.message;
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return '没有这个文件或目录';
-    if (code === 'EISDIR') return '这是目录';
-    if (code === 'ENOTDIR') return '路径中间有一段不是目录';
-    if (code === 'EACCES' || code === 'EPERM') return '系统不让读写这个位置';
-    throw error;
-  }
-}
-
-export interface FileToolDeps {
+export interface FileToolDeps extends AskDeps {
   readonly access: FileAccess;
   readonly repos: Pick<Repos, 'activity'>;
-  /** 三个工具各自给不给，见 `files.read`、`files.write`、`files.edit`。 */
+  /** 三个工具各自给不给，见 `files.read`、`files.write`、`files.edit`：`allow` 直接做，`ask` 要批准，`deny` 没有。 */
   readonly allow: Pick<FilesConfig, 'read' | 'write' | 'edit'>;
+}
+
+/** 写的内容有几行，末尾的换行不算一行。 */
+function linesOf(content: string): number {
+  return content ? content.replace(/\n$/, '').split('\n').length : 0;
 }
 
 export function addFileTools(registry: LocalToolRegistry, deps: FileToolDeps): void {
   const { access, repos, allow } = deps;
   const where = `工作区是 ${access.workspace}，相对路径从这里算起`;
 
-  if (allow.read === 'allow') {
-    registry.addTool(
-      'read',
-      tool({
-        description:
-          `读一个文件（带行号）或列一个目录。${where}；另外能读子任务的交付物和主人给的只读目录，配置、yoyo 自己的数据和密钥读不到。` +
-          `一次最多 ${READ_LINES} 行，长文件用 offset、limit 分段读。`,
-        inputSchema: z.object({
-          path: z.string().describe('文件或目录，例如「notes/周报.md」「~/Documents」'),
-          offset: z.number().int().positive().optional().describe('从第几行读起，缺省 1'),
-          limit: z.number().int().positive().optional().describe(`最多读几行，缺省 ${READ_LINES}`),
+  const readSchema = z.object({
+    path: z.string().describe('文件或目录，例如「notes/周报.md」「~/Documents」'),
+    offset: z.number().int().positive().optional().describe('从第几行读起，缺省 1'),
+    limit: z.number().int().positive().optional().describe(`最多读几行，缺省 ${READ_LINES}`),
+  });
+  addGated(registry, deps, {
+    name: 'read',
+    permission: allow.read,
+    description:
+      `读一个文件（带行号）或列一个目录。${where}；另外能读子任务的交付物和主人给的只读目录，配置、yoyo 自己的数据和密钥读不到。` +
+      `一次最多 ${READ_LINES} 行，长文件用 offset、limit 分段读。`,
+    schema: readSchema,
+    action: defineAction(
+      readSchema,
+      (input) => {
+        const path = access.resolve(input.path, 'read');
+        const stat = statSync(path);
+        return `${stat.isDirectory() ? '列目录' : '读'} ${access.show(path)}`;
+      },
+      (input) =>
+        answered(() => {
+          const path = access.resolve(input.path, 'read');
+          const stat = statSync(path);
+          if (stat.isDirectory()) return listDirectory(path);
+          const { size } = stat;
+          if (size > READ_FILE_MAX) throw new FileError(`太大了（${sizeOf(size)}），最多读 ${sizeOf(READ_FILE_MAX)}`);
+          const bytes = readFileSync(path);
+          if (binary(bytes)) return `二进制文件（${sizeOf(size)}），读不了内容`;
+          return readLines(bytes.toString('utf8'), input.offset, input.limit);
         }),
-        execute: async (input) =>
-          answered(() => {
-            const path = access.resolve(input.path, 'read');
-            const stat = statSync(path);
-            if (stat.isDirectory()) return listDirectory(path);
-            const { size } = stat;
-            if (size > READ_FILE_MAX) throw new FileError(`太大了（${sizeOf(size)}），最多读 ${sizeOf(READ_FILE_MAX)}`);
-            const bytes = readFileSync(path);
-            if (binary(bytes)) return `二进制文件（${sizeOf(size)}），读不了内容`;
-            return readLines(bytes.toString('utf8'), input.offset, input.limit);
-          }),
-      }),
-    );
-  }
+    ),
+  });
 
-  if (allow.write === 'allow') {
-    registry.addTool(
-      'write',
-      tool({
-        description: `写一个文本文件，已有的整个换掉，目录不在会建好。只能写在工作区里（${access.workspace}）。改一小段用 edit。`,
-        inputSchema: z.object({
-          path: z.string().describe('文件，例如「notes/周报.md」'),
-          content: z.string().describe('全部内容'),
+  const writeSchema = z.object({
+    path: z.string().describe('文件，例如「notes/周报.md」'),
+    content: z.string().describe('全部内容'),
+  });
+  addGated(registry, deps, {
+    name: 'write',
+    permission: allow.write,
+    description: `写一个文本文件，已有的整个换掉，目录不在会建好。只能写在工作区里（${access.workspace}）。改一小段用 edit。`,
+    schema: writeSchema,
+    action: defineAction(
+      writeSchema,
+      (input) => {
+        const path = access.resolve(input.path, 'write');
+        const size = Buffer.byteLength(input.content, 'utf8');
+        if (size > WRITE_MAX) throw new FileError(`太大了（${sizeOf(size)}），最多 ${sizeOf(WRITE_MAX)}`);
+        const fresh = !existsSync(path);
+        return `写 ${access.show(path)}（${fresh ? '新建' : '覆盖'}，${linesOf(input.content)} 行，${sizeOf(size)}）`;
+      },
+      (input) =>
+        answered(() => {
+          const path = access.resolve(input.path, 'write');
+          const bytes = Buffer.from(input.content, 'utf8');
+          if (bytes.length > WRITE_MAX)
+            throw new FileError(`太大了（${sizeOf(bytes.length)}），最多 ${sizeOf(WRITE_MAX)}`);
+          mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+          writeFileSync(path, bytes, { mode: 0o600 });
+          const shown = access.show(path);
+          repos.activity.record({ type: 'file-write', path: shown, size: bytes.length });
+          return `写好了：${shown}（${linesOf(input.content)} 行，${sizeOf(bytes.length)}）`;
         }),
-        execute: async (input) =>
-          answered(() => {
-            const path = access.resolve(input.path, 'write');
-            const bytes = Buffer.from(input.content, 'utf8');
-            if (bytes.length > WRITE_MAX)
-              throw new FileError(`太大了（${sizeOf(bytes.length)}），最多 ${sizeOf(WRITE_MAX)}`);
-            mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-            writeFileSync(path, bytes, { mode: 0o600 });
-            const shown = access.show(path);
-            repos.activity.record({ type: 'file-write', path: shown, size: bytes.length });
-            // 末尾的换行不算一行
-            const lines = input.content ? input.content.replace(/\n$/, '').split('\n').length : 0;
-            return `写好了：${shown}（${lines} 行，${sizeOf(bytes.length)}）`;
-          }),
-      }),
-    );
-  }
+    ),
+  });
 
-  if (allow.edit === 'allow') {
-    registry.addTool(
-      'edit',
-      tool({
-        description:
-          `改工作区里的一个文件：把一段原文换成新的。原文要一字不差，而且只出现一次（多给点上下文）；要全换就 all 写 true。` +
-          `只能改工作区里的（${access.workspace}）。改之前先 read 看一眼。`,
-        inputSchema: z.object({
-          path: z.string().describe('文件'),
-          old: z.string().describe('要换掉的原文，一字不差'),
-          new: z.string().describe('换成什么'),
-          all: z.boolean().optional().describe('出现几次换几次'),
+  const editSchema = z.object({
+    path: z.string().describe('文件'),
+    old: z.string().describe('要换掉的原文，一字不差'),
+    new: z.string().describe('换成什么'),
+    all: z.boolean().optional().describe('出现几次换几次'),
+  });
+  /** 查一遍能不能换，能就交回路径、换完的全文和换了几处。批准前后各查一次：文件可能变了。 */
+  const planEdit = (input: z.infer<typeof editSchema>) => {
+    const path = access.resolve(input.path, 'write');
+    if (!input.old) throw new FileError('原文不能空着；要写新文件用 write');
+    if (input.old === input.new) throw new FileError('原文和新的一样，不用改');
+    const text = readFileSync(path, 'utf8');
+    const count = text.split(input.old).length - 1;
+    if (count === 0) throw new FileError('没找到要换的原文：要一字不差，先 read 看一眼');
+    if (count > 1 && !input.all) {
+      throw new FileError(`原文出现了 ${count} 次：多给点上下文让它只出现一次，或者 all 写 true`);
+    }
+    const next = input.all ? text.split(input.old).join(input.new) : text.replace(input.old, () => input.new);
+    if (Buffer.byteLength(next) > WRITE_MAX) throw new FileError(`改完太大了，最多 ${sizeOf(WRITE_MAX)}`);
+    return { path, next, changed: input.all ? count : 1 };
+  };
+  addGated(registry, deps, {
+    name: 'edit',
+    permission: allow.edit,
+    description:
+      `改工作区里的一个文件：把一段原文换成新的。原文要一字不差，而且只出现一次（多给点上下文）；要全换就 all 写 true。` +
+      `只能改工作区里的（${access.workspace}）。改之前先 read 看一眼。`,
+    schema: editSchema,
+    action: defineAction(
+      editSchema,
+      (input) => {
+        const plan = planEdit(input);
+        return `改 ${access.show(plan.path)}（换 ${plan.changed} 处）`;
+      },
+      (input) =>
+        answered(() => {
+          const plan = planEdit(input);
+          writeFileSync(plan.path, plan.next, 'utf8');
+          const shown = access.show(plan.path);
+          repos.activity.record({ type: 'file-edit', path: shown, count: plan.changed });
+          return `改好了：${shown}，换了 ${plan.changed} 处`;
         }),
-        execute: async (input) =>
-          answered(() => {
-            const path = access.resolve(input.path, 'write');
-            if (!input.old) throw new FileError('原文不能空着；要写新文件用 write');
-            if (input.old === input.new) throw new FileError('原文和新的一样，不用改');
-            const text = readFileSync(path, 'utf8');
-            const count = text.split(input.old).length - 1;
-            if (count === 0) throw new FileError('没找到要换的原文：要一字不差，先 read 看一眼');
-            if (count > 1 && !input.all) {
-              throw new FileError(`原文出现了 ${count} 次：多给点上下文让它只出现一次，或者 all 写 true`);
-            }
-            const next = input.all ? text.split(input.old).join(input.new) : text.replace(input.old, () => input.new);
-            if (Buffer.byteLength(next) > WRITE_MAX) throw new FileError(`改完太大了，最多 ${sizeOf(WRITE_MAX)}`);
-            writeFileSync(path, next, 'utf8');
-            const shown = access.show(path);
-            repos.activity.record({ type: 'file-edit', path: shown, count: input.all ? count : 1 });
-            return `改好了：${shown}，换了 ${input.all ? count : 1} 处`;
-          }),
-      }),
-    );
-  }
+    ),
+  });
 }

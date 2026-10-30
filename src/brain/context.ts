@@ -49,17 +49,23 @@ export const yoyoProjection: ProjectionOptions = {
 /** 子任务做完写回主线程的 `task` 事件：作为一条系统消息交给主线程，由它转告主人。 */
 export const TASK_EVENT = 'task';
 
-/** 主线程的投影：再加上子任务的结果。子任务自己的会话用 `yoyoProjection`。 */
+/** 要批准的工具调用有了结论，写回主线程的 `approval` 事件：同样作为一条系统消息交给主线程。 */
+export const APPROVAL_EVENT = 'approval';
+
+const systemMessage = {
+  render: (events: readonly { readonly text?: string }[]) =>
+    events
+      .filter((event) => event.text)
+      .map((event) => ({ role: 'user' as const, content: `系统消息：${event.text ?? ''}` })),
+};
+
+/** 主线程的投影：再加上子任务的结果和批准请求的结果。子任务自己的会话用 `yoyoProjection`。 */
 export const mainProjection: ProjectionOptions = {
   ...yoyoProjection,
   events: {
     ...yoyoProjection.events,
-    [TASK_EVENT]: {
-      render: (events) =>
-        events
-          .filter((event) => event.text)
-          .map((event) => ({ role: 'user' as const, content: `系统消息：${event.text ?? ''}` })),
-    },
+    [TASK_EVENT]: systemMessage,
+    [APPROVAL_EVENT]: systemMessage,
   },
 };
 
@@ -112,6 +118,12 @@ export function taskSteps(entries: readonly Entry[]): TaskStep[] {
 /** 每个子任务一个会话，输入、工具调用和结果都记在里面。 */
 export function taskSession(id: number): string {
   return `task:${id}`;
+}
+
+/** 会话是哪个子任务的；主线程的会话不是子任务，返回 null。 */
+export function taskOfSession(session: string): number | null {
+  const match = /^task:(\d+)$/.exec(session);
+  return match ? Number(match[1]) : null;
 }
 
 export interface YoyoContextOptions {

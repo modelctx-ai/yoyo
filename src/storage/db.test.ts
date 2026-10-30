@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS kv (
 const APP_TABLES = [
   'activity',
   'agent_tasks',
+  'approvals',
   'artifacts',
   'clipboard',
   'contacts',
@@ -83,7 +84,7 @@ const APP_TABLES = [
 ];
 
 /** 旧版以后新加的表：只加表，旧表一字不动。 */
-const ADDED_TABLES = ['agent_tasks', 'artifacts'];
+const ADDED_TABLES = ['agent_tasks', 'approvals', 'artifacts'];
 
 /** 去掉新加的表，剩下的应该和旧版一样。 */
 function oldTables(sql: Record<string, string>): Record<string, string> {
@@ -355,6 +356,22 @@ describe('openDatabase', () => {
     old.close();
     const repos = createRepos(openDatabase(file));
     assert.equal(repos.agentTasks.get(1)?.agent, 'general');
+    // 问主人的几列也补上了：以前的子任务都没问过
+    const old1 = repos.agentTasks.get(1)!;
+    assert.deepEqual(
+      [old1.question, old1.askedAt, old1.answer, old1.answeredAt, old1.questionAnnouncedAt],
+      [null, null, null, null, null],
+    );
+    const asked = repos.agentTasks.update(
+      1,
+      { state: 'waiting', question: '加图吗？', askedAt: 5, answer: null, questionAnnouncedAt: 6 },
+      7,
+    )!;
+    assert.deepEqual(
+      [asked.state, asked.question, asked.askedAt, asked.questionAnnouncedAt],
+      ['waiting', '加图吗？', 5, 6],
+    );
+    assert.equal(repos.agentTasks.update(1, { answer: '加', answeredAt: 8 }, 9)?.answer, '加');
     assert.equal(
       repos.agentTasks.create({ title: '查', goal: '查', criteria: [], agent: 'research', origin: 'cli' }, 2).agent,
       'research',

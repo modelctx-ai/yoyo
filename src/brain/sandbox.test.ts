@@ -7,8 +7,10 @@ import { describe, test } from 'vite-plus/test';
 
 import { parseConfig } from '../app/config.ts';
 import {
+  bashSandboxSettings,
   findProgram,
   prepareSandbox,
+  sandboxArgv,
   sandboxed,
   sandboxSettings,
   settingsFile,
@@ -52,6 +54,64 @@ describe('brain/sandbox', () => {
       },
       '写错的段当没写',
     );
+  });
+
+  test('bash 的设置：policy 里范围以外的字段留着，域名和可写目录换成 bash 自己的，denyWrite 只加落在工作区里的位置', () => {
+    const scope = {
+      workspace: '/w',
+      tmpDir: '/tmp/yoyo-bash-1',
+      denyRead: ['/h/.yoyo', '/h/.ssh'],
+      allowRead: ['/h/.yoyo/workspace'],
+      allowedDomains: ['pypi.org'],
+      dataDir: '/h/.yoyo',
+      configFile: '/w/config.json',
+      policyFile: '/w/sub/policy.json',
+    };
+    const policy = {
+      enableWeakerNestedSandbox: true,
+      network: { allowedDomains: ['api.example.com'], deniedDomains: ['evil.example'], allowLocalBinding: true },
+      filesystem: { allowWrite: ['/opt'], denyRead: ['/etc/shadow'], denyWrite: ['/etc'], allowRead: ['/x'] },
+    };
+    assert.deepEqual(bashSandboxSettings(policy, scope), {
+      enableWeakerNestedSandbox: true,
+      network: { allowedDomains: ['pypi.org'], deniedDomains: ['evil.example'] },
+      filesystem: {
+        denyRead: ['/etc/shadow', '/h/.yoyo', '/h/.ssh'],
+        allowRead: ['/h/.yoyo/workspace'],
+        allowWrite: ['/w', '/tmp/yoyo-bash-1'],
+        denyWrite: ['/etc', '/w/config.json', '/w/sub/policy.json'],
+      },
+    });
+    assert.deepEqual(policy.filesystem.allowWrite, ['/opt'], '不改用户的配置');
+    // 写错的段当没写；数据目录包着工作区时不进 denyWrite，不然工作区也写不了
+    assert.deepEqual(
+      bashSandboxSettings(
+        { network: 'x', filesystem: [] },
+        { ...scope, workspace: '/h/.yoyo/workspace', configFile: '/c.json', policyFile: '' },
+      ),
+      {
+        network: { allowedDomains: ['pypi.org'], deniedDomains: [] },
+        filesystem: {
+          denyRead: ['/h/.yoyo', '/h/.ssh'],
+          allowRead: ['/h/.yoyo/workspace'],
+          allowWrite: ['/h/.yoyo/workspace', '/tmp/yoyo-bash-1'],
+          denyWrite: [],
+        },
+      },
+    );
+  });
+
+  test('命令行：沙箱程序、它的选项、--settings 文件、--、再接要跑的', () => {
+    assert.deepEqual(sandboxArgv(launcher, ['/bin/bash', '-c', 'ls']), [
+      '/usr/bin/srt',
+      '--debug',
+      '--settings',
+      '/h/sandbox/settings-x.json',
+      '--',
+      '/bin/bash',
+      '-c',
+      'ls',
+    ]);
   });
 
   test('设置文件按内容哈希命名，目录 0700、文件 0600，内容相同的复用', () => {

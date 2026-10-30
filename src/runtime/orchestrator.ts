@@ -16,7 +16,7 @@ import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
-import { FILE_TOOL_NAMES } from '../brain/files.ts';
+import { OWNER_TOOL_NAMES } from '../brain/files.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { fixedPacer } from '../brain/pace.ts';
@@ -24,8 +24,9 @@ import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
 import { shouldSearch } from '../features/search/question.ts';
-import { announceLine, relayPrompt } from '../features/tasks/tasks.ts';
-import type { AgentTask } from '../kernel/types.ts';
+import { approvalAnnounceLine, approvalRelayPrompt } from '../features/approvals/approvals.ts';
+import { announceLine, needsRelay, pendingApprovals, relayPrompt } from '../features/tasks/tasks.ts';
+import type { AgentTask, Approval } from '../kernel/types.ts';
 import { nextWhisperAt, whisperIntervalMs, type PaceDecision, type PaceInput } from '../kernel/pace.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
@@ -187,10 +188,15 @@ export interface YoyoOrchestrator extends Orchestrator {
    */
   talk(text: string, signal?: AbortSignal): Promise<string>;
   /**
-   * 子任务结束了（结果已经写回主会话）：排进来，下一拍叫醒主线程转告主人。照 Claude Code 后台任务的
+   * 子任务结束了或提了问题（结果、问题已经写回主会话）：排进来，下一拍叫醒主线程转告主人。照 Claude Code 后台任务的
    * `<task-notification>`：通知进主线程，主线程用自己的话告诉主人。
    */
   relayTask(id: number): void;
+  /**
+   * 主线程要的一件事（开关是 `ask` 的工具）有了结论，结果已经写回主会话：排进来，下一拍叫醒主线程转告主人，
+   * 批准了讲结果，拒绝或过期了也说一句。进程在转告前停了就不补：结果已经在主会话里，主线程下一轮看得到。
+   */
+  relayApproval(id: number): void;
   /** 桌宠自己的「碎碎念」（右键里没藏起来时）：交给碎碎念的 agent 写一句，返回正文。不写日志。 */
   petWhisper(signal?: AbortSignal): Promise<string>;
   /**
@@ -204,12 +210,12 @@ export interface YoyoOrchestrator extends Orchestrator {
 }
 
 /**
- * 转告那一轮给哪些工具：这一轮是 yoyo 自己发起的，没有主人看着，工具照给，读写文件的不给。
- * 不知道注册表里有哪些（`names` 没给）就全给，那时也没有读写文件的。
+ * 转告那一轮给哪些工具：这一轮是 yoyo 自己发起的，没有主人看着，工具照给，读写文件和跑命令的不给。
+ * 不知道注册表里有哪些（`names` 没给）就全给，那时也没有这些。
  */
 export function relayTools(enabled: boolean, names: readonly string[] | undefined): boolean | readonly string[] {
   if (!enabled) return false;
-  return names ? names.filter((name) => !FILE_TOOL_NAMES.includes(name)) : true;
+  return names ? names.filter((name) => !OWNER_TOOL_NAMES.includes(name)) : true;
 }
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {
@@ -242,17 +248,20 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   /** 写过用户话或回复、还没门控过。门控跳过时留着，下一拍再跑。 */
   let wrote = false;
   /**
-   * 结束了、等着转告的子任务。子任务的跑法在结果写回主会话以后才交过来，所以转告时主线程已经看得到结果。
+   * 等着转告的子任务：结束了的，和提了问题、在等主人回答的。子任务的跑法在结果（问题）写回主会话以后才交过来，
+   * 所以转告时主线程已经看得到。结束的和提问的排在同一条队列里，一个一个说。
    * 上次没转告完就停了的，开始时补上。
    */
   const relayQueue = new Set<number>(
     config.tasks.enabled
       ? repos.agentTasks
-          .list({ states: ['done', 'failed', 'cancelled'], limit: 20 })
-          .filter((task) => task.announcedAt === null)
+          .list({ states: ['waiting', 'done', 'failed', 'cancelled'], limit: 20 })
+          .filter(needsRelay)
           .map((task) => task.id)
       : [],
   );
+  /** 等着转告的批准请求编号。 */
+  const approvalQueue = new Set<number>();
   let gating: Promise<void> | null = null;
   let consolidating: Promise<void> | null = null;
   /** 可能有待处理的笔记：启动时不知道，门控写下待处理的笔记以后又有了。 */
@@ -445,30 +454,69 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   }
 
   /**
-   * 子任务结束后排进来的通知，按结束的先后处理：做完和没做成的叫醒主线程跑一轮，把通知交给它，
-   * 它用一两句话转告、桌宠说出来（`tasks.notify` 关着就不叫醒，结果照样在主会话里）；取消的不叫醒。
-   * 转告没成（模型出错）就说一句固定的。处理过的记下来，不再说。
+   * 子任务结束或提问后排进来的通知，按先后处理：做完、没做成和在等回答的叫醒主线程跑一轮，把通知交给它，
+   * 它用一两句话转告、桌宠说出来（`tasks.notify` 关着就不叫醒，结果和问题照样在主会话里）；取消的不叫醒。
+   * 转告没成（模型出错）就说一句固定的。处理过的记下来，不再说：结束的记 `announcedAt`，
+   * 问题记 `questionAnnouncedAt`（答了又问的新问题会清掉它，能再转告）。
+   * 排队时已经不用说的（问题已经被回答了、转告过了）跳过。
    */
   async function relayTasks(now: Date): Promise<void> {
     const ids = [...relayQueue].toSorted((a, b) => a - b);
     relayQueue.clear();
     for (const id of ids) {
       const task = repos.agentTasks.get(id);
-      if (!task || task.announcedAt !== null) continue;
-      if (config.tasks.notify && (task.state === 'done' || task.state === 'failed')) {
+      if (!task || !needsRelay(task)) continue;
+      const asking = task.state === 'waiting';
+      if (config.tasks.notify && (asking || task.state === 'done' || task.state === 'failed')) {
         await director.speak(await relayLine(task, now), now);
         state.lastTalk = clock();
         wrote = true;
       }
-      repos.agentTasks.update(id, { announcedAt: clock() }, clock());
+      repos.agentTasks.update(id, asking ? { questionAnnouncedAt: clock() } : { announcedAt: clock() }, clock());
+    }
+  }
+
+  /**
+   * 批准请求有了结论（做完、拒绝、过期）后排进来的通知：叫醒主线程跑一轮转告，和子任务一样受 `tasks.notify` 管。
+   * 转告没成（模型出错）就说一句固定的。
+   */
+  async function relayApprovals(now: Date): Promise<void> {
+    const ids = [...approvalQueue].toSorted((a, b) => a - b);
+    approvalQueue.clear();
+    if (!config.tasks.notify) return;
+    for (const id of ids) {
+      const approval = repos.approvals.get(id);
+      if (!approval) continue;
+      await director.speak(await approvalLine(approval, now), now);
+      state.lastTalk = clock();
+      wrote = true;
+    }
+  }
+
+  async function approvalLine(approval: Approval, now: Date): Promise<Line> {
+    if (!model) return approvalAnnounceLine(approval, now);
+    try {
+      return await generateRelay(context, orchestrator, {
+        notice: approvalRelayPrompt(approval),
+        tone: toneForHour(now.getHours()),
+        model,
+        secrets,
+        tools: relayTools(config.llm.tools, deps.toolNames?.()),
+        signal: stopping.signal,
+        ...(factSources ? { sources: factSources.reply } : {}),
+      });
+    } catch (error) {
+      logger.warn(`批准请求 #${approval.id} 的结果没转告成，先报一声：${errorText(error)}`);
+      return approvalAnnounceLine(approval, now);
     }
   }
 
   async function relayLine(task: AgentTask, now: Date): Promise<Line> {
-    if (!model) return announceLine(task, now);
+    const approving = task.state === 'waiting' ? pendingApprovals(repos, task.id) : [];
+    if (!model) return announceLine(task, now, approving.length > 0);
     try {
       return await generateRelay(context, orchestrator, {
-        notice: relayPrompt(task, repos.artifacts.list({ task: task.id })),
+        notice: relayPrompt(task, repos.artifacts.list({ task: task.id }), config.llm.tools, approving),
         tone: toneForHour(now.getHours()),
         model,
         secrets,
@@ -478,7 +526,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       });
     } catch (error) {
       logger.warn(`子任务 #${task.id} 的结果没转告成，先报一声：${errorText(error)}`);
-      return announceLine(task, now);
+      return announceLine(task, now, approving.length > 0);
     }
   }
 
@@ -530,6 +578,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         state.lastTalk = clock();
       }
       if (config.tasks.enabled && relayQueue.size > 0) await relayTasks(now);
+      if (approvalQueue.size > 0) await relayApprovals(now);
       if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
@@ -613,6 +662,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     talk,
     relayTask(id) {
       relayQueue.add(id);
+    },
+    relayApproval(id) {
+      approvalQueue.add(id);
     },
     petWhisper,
     tick,

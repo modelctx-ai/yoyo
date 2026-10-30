@@ -5,6 +5,8 @@ import type {
   ActivityValue,
   AgentTask,
   AgentTaskState,
+  Approval,
+  ApprovalState,
   Artifact,
   Contact,
   MemePack,
@@ -69,6 +71,31 @@ function artifactOf(row: Row): Artifact {
   };
 }
 
+function approvalOf(row: Row): Approval {
+  return {
+    id: Number(row.id),
+    tool: str(row.tool),
+    summary: str(row.summary),
+    input: str(row.input),
+    task: numOrNull(row.task_id),
+    runId: strOrNull(row.run_id),
+    state: str(row.state) as ApprovalState,
+    createdAt: Number(row.created_at),
+    decidedAt: numOrNull(row.decided_at),
+    ranAt: numOrNull(row.ran_at),
+    result: strOrNull(row.result),
+    note: strOrNull(row.note),
+    announcedAt: numOrNull(row.announced_at),
+  };
+}
+
+/** 批准请求 `update` 能改的字段对应的列。 */
+const APPROVAL_COLUMNS: Readonly<Record<string, string>> = {
+  result: 'result',
+  note: 'note',
+  announcedAt: 'announced_at',
+};
+
 function agentTaskOf(row: Row): AgentTask {
   return {
     id: Number(row.id),
@@ -87,6 +114,11 @@ function agentTaskOf(row: Row): AgentTask {
     finishedAt: numOrNull(row.finished_at),
     updatedAt: Number(row.updated_at),
     announcedAt: numOrNull(row.announced_at),
+    question: strOrNull(row.question),
+    askedAt: numOrNull(row.asked_at),
+    answer: strOrNull(row.answer),
+    answeredAt: numOrNull(row.answered_at),
+    questionAnnouncedAt: numOrNull(row.question_announced_at),
   };
 }
 
@@ -100,6 +132,11 @@ const TASK_COLUMNS: Readonly<Record<string, string>> = {
   startedAt: 'started_at',
   finishedAt: 'finished_at',
   announcedAt: 'announced_at',
+  question: 'question',
+  askedAt: 'asked_at',
+  answer: 'answer',
+  answeredAt: 'answered_at',
+  questionAnnouncedAt: 'question_announced_at',
 };
 
 function activityOf(row: Row): ActivityRecord {
@@ -155,6 +192,16 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
     taskArtifacts: db.prepare('SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'),
     removeArtifact: db.prepare('DELETE FROM artifacts WHERE id = ?'),
     agentTasks: db.prepare('SELECT * FROM agent_tasks ORDER BY id DESC LIMIT ?'),
+    insertApproval: db.prepare(
+      'INSERT INTO approvals (tool, summary, input, task_id, run_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ),
+    approval: db.prepare('SELECT * FROM approvals WHERE id = ?'),
+    approvals: db.prepare('SELECT * FROM approvals ORDER BY id DESC LIMIT ?'),
+    taskApprovals: db.prepare('SELECT * FROM approvals WHERE task_id = ? ORDER BY id DESC LIMIT ?'),
+    decideApproval: db.prepare(
+      "UPDATE approvals SET state = ?, decided_at = ?, note = COALESCE(?, note) WHERE id = ? AND state = 'pending'",
+    ),
+    claimApproval: db.prepare("UPDATE approvals SET ran_at = ? WHERE id = ? AND state = 'approved' AND ran_at IS NULL"),
   };
 
   return {
@@ -292,6 +339,55 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
           values.push(Array.isArray(value) ? JSON.stringify(value) : (value as string | number | null));
         }
         const changed = db.prepare(`UPDATE agent_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+        return Number(changed.changes) > 0 ? this.get(id) : null;
+      },
+    },
+    approvals: {
+      create(input, now) {
+        const { lastInsertRowid } = sql.insertApproval.run(
+          input.tool,
+          input.summary,
+          input.input,
+          input.task,
+          input.runId,
+          'pending',
+          now,
+        );
+        return approvalOf(sql.approval.get(lastInsertRowid)!);
+      },
+      get(id) {
+        const row = sql.approval.get(id);
+        return row ? approvalOf(row) : null;
+      },
+      list(options = {}) {
+        // 批准请求不会多：按状态筛的取最近的一批再筛
+        const filtered = options.states !== undefined;
+        const limit = filtered ? 500 : (options.limit ?? 50);
+        const rows = (
+          options.task === undefined ? sql.approvals.all(limit) : sql.taskApprovals.all(options.task, limit)
+        ).map(approvalOf);
+        const picked = filtered ? rows.filter((item) => options.states!.includes(item.state)) : rows;
+        return picked.slice(0, options.limit ?? 50);
+      },
+      decide(id, to, now, note) {
+        const changed = sql.decideApproval.run(to, now, note ?? null, id);
+        return Number(changed.changes) > 0 ? this.get(id) : null;
+      },
+      claim(id, now) {
+        const changed = sql.claimApproval.run(now, id);
+        return Number(changed.changes) > 0 ? this.get(id) : null;
+      },
+      update(id, patch) {
+        const sets: string[] = [];
+        const values: (string | number | null)[] = [];
+        for (const [key, value] of Object.entries(patch)) {
+          const column = APPROVAL_COLUMNS[key];
+          if (!column || value === undefined) continue;
+          sets.push(`${column} = ?`);
+          values.push(value);
+        }
+        if (sets.length === 0) return this.get(id);
+        const changed = db.prepare(`UPDATE approvals SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
         return Number(changed.changes) > 0 ? this.get(id) : null;
       },
     },

@@ -10,6 +10,7 @@ export const TASK_TOOL_NAMES: readonly string[] = [
   'task_plan',
   'task_todo',
   'task_deliver',
+  'task_ask',
   'task_finish',
   'task_fail',
 ];

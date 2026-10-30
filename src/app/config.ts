@@ -140,18 +140,28 @@ const web = z.looseObject({
 /** 子任务：主线程派给后台子 agent 的事，见 `runtime/tasks.ts`。 */
 const tasks = z.looseObject({
   enabled: flag(true),
-  /** 做完或没做成时桌宠说一声。 */
+  /** 做完、没做成或要问主人时桌宠说一声。 */
   notify: flag(true),
   /** 同时做几件，1 到 8；多的排队。 */
   concurrency: z.coerce.number().int().min(1).max(8).catch(2).default(2),
+  /** 子 agent 问了主人，等多久没回答就按没做成结束，单位小时；0 不超时。 */
+  answerTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
-/** 读、写、改文件三个工具的开关：`allow` 给，`deny` 不给。写错按 `allow`。 */
+/**
+ * 读、写、改文件、跑命令四个工具的开关：`allow` 给，`ask` 给但每次动手前要主人在工作台里批准，`deny` 不给。
+ * 写错按 `allow`。
+ */
 function permission() {
-  return z.enum(['allow', 'deny']).catch('allow').default('allow');
+  return z.enum(['allow', 'ask', 'deny']).catch('allow').default('allow');
 }
 
-/** 读写文件的工具，见 `brain/files.ts`。只在 `llm.tools` 打开时有。 */
+/** 1 到 3600 秒，可以写成字符串；空着、不是数、超出范围按缺省值。 */
+function seconds(fallback: number) {
+  return z.coerce.number().min(1).max(3600).catch(fallback).default(fallback);
+}
+
+/** 读写文件和跑命令的工具，见 `brain/files.ts`。只在 `llm.tools` 打开时有。 */
 const files = z.looseObject({
   /** 能写的地方，也能读。不写是数据目录下的 `workspace`。`~` 开头算主人的主目录。 */
   workspace: z.string().catch('').default(''),
@@ -162,6 +172,15 @@ const files = z.looseObject({
   read: permission(),
   write: permission(),
   edit: permission(),
+  /** 跑命令的 `bash`：一律经沙箱程序，沙箱程序（`sandbox.command`）找不到就没有这个工具，`allow` 也一样。 */
+  bash: permission(),
+  /** `bash` 里放行的域名；缺省空，网络全关。 */
+  bashNetwork: stringList().default([]),
+  /** `bash` 没写超时时等多少秒，和一次最多能要多少秒（1 到 3600）。写错按缺省。 */
+  bashTimeout: seconds(120),
+  bashMaxTimeout: seconds(600),
+  /** 开关是 `ask` 的工具，等主人批准等多久没批就按拒绝算，单位小时；0 不过期。 */
+  askTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
 const context = z.looseObject({
