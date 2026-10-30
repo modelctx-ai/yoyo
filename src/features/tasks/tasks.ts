@@ -5,7 +5,7 @@
  */
 import { TONE_CUES, toneForHour } from '../../kernel/tone.ts';
 import { DEFAULT_AGENT } from './agents.ts';
-import type { AgentTask, AgentTaskState, CriterionCheck, Line, Todo, TodoState } from '../../kernel/types.ts';
+import type { AgentTask, AgentTaskState, Artifact, CriterionCheck, Line, Todo, TodoState } from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
 
 export const TITLE_MAX = 60;
@@ -221,7 +221,25 @@ function todoLines(todos: readonly Todo[]): string[] {
 }
 
 /** 一个子任务的全部：命令行的 `task show` 用它，主线程经 `yoyo` 工具看到的也是这段。 */
-export function taskDetail(task: AgentTask): string {
+type Delivered = Pick<Artifact, 'name' | 'size'>;
+
+/** `1.2 KB` 这样的大小。 */
+export function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, '')} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, '')} MB`;
+}
+
+/** 交付物在文字里的样子：`周报.md（1.2 KB）`。 */
+export function artifactLine(artifact: Delivered): string {
+  return `${artifact.name}（${sizeText(artifact.size)}）`;
+}
+
+function deliveredLines(artifacts: readonly Delivered[]): string[] {
+  return artifacts.map(artifactLine);
+}
+
+export function taskDetail(task: AgentTask, artifacts: readonly Delivered[] = []): string {
   const parts = [`#${task.id} ${task.title}（${STATE_LABELS[task.state]}，${task.agent}）`, '', `目标：${task.goal}`];
   if (task.criteria.length > 0) parts.push('', '验收标准：', ...task.criteria.map((c, i) => `${i + 1}. ${c}`));
   if (task.todos.length > 0) {
@@ -232,6 +250,7 @@ export function taskDetail(task: AgentTask): string {
     parts.push('', '验收：', ...task.checks.map((c) => `${c.met ? '✓' : '✗'} ${c.criterion}：${c.evidence}`));
   }
   if (task.result) parts.push('', '结果：', task.result);
+  if (artifacts.length > 0) parts.push('', '交付物：', ...deliveredLines(artifacts));
   if (task.error) parts.push('', `没做成：${task.error}`);
   return parts.join('\n');
 }
@@ -259,8 +278,9 @@ export function continuePrompt(task: AgentTask): string {
 }
 
 /** 做完以后写回主线程的那段：主线程据此告诉主人。 */
-export function resultNote(task: AgentTask): string {
-  if (task.state === 'done') return `子任务 #${task.id}「${task.title}」做完了。\n结果：\n${task.result ?? ''}`;
+export function resultNote(task: AgentTask, artifacts: readonly Delivered[] = []): string {
+  const files = artifacts.length > 0 ? `\n交付物（在工作台里）：${deliveredLines(artifacts).join('、')}` : '';
+  if (task.state === 'done') return `子任务 #${task.id}「${task.title}」做完了。\n结果：\n${task.result ?? ''}${files}`;
   if (task.state === 'failed') return `子任务 #${task.id}「${task.title}」没做成：${task.error ?? ''}`;
   return `子任务 #${task.id}「${task.title}」${STATE_LABELS[task.state]}。`;
 }
@@ -277,7 +297,7 @@ const STATUS: Readonly<Record<AgentTaskState, string>> = {
  * 子任务结束时交给主线程的通知，照 Claude Code 后台任务的 `<task-notification>`：编号、状态、标题，
  * 做完带结果和逐条验收，没做成带原因。主线程据此用自己的话告诉主人。
  */
-export function taskNotification(task: AgentTask): string {
+export function taskNotification(task: AgentTask, artifacts: readonly Delivered[] = []): string {
   const parts = [
     '<task-notification>',
     `<task-id>${task.id}</task-id>`,
@@ -290,18 +310,21 @@ export function taskNotification(task: AgentTask): string {
       `<checks>\n${task.checks.map((c) => `${c.met ? '✓' : '✗'} ${c.criterion}：${c.evidence}`).join('\n')}\n</checks>`,
     );
   }
+  if (artifacts.length > 0) parts.push(`<artifacts>\n${deliveredLines(artifacts).join('\n')}\n</artifacts>`);
   if (task.error) parts.push(`<error>${task.error}</error>`);
   parts.push('</task-notification>');
   return parts.join('\n');
 }
 
 /** 主线程被子任务的通知叫醒时收到的话：通知本身，加上该怎么转告。 */
-export function relayPrompt(task: AgentTask): string {
+export function relayPrompt(task: AgentTask, artifacts: readonly Delivered[] = []): string {
+  const files =
+    artifacts.length > 0 ? '交了文件的，说一声放在工作台里了（例如「周报放在工作台里了」），不用念文件名的后缀。' : '';
   const how =
     task.state === 'done'
-      ? '你派出去的子任务做完了。用一两句话把结论告诉主人，挑最要紧的说；细节在工作台里，不用全念。'
+      ? `你派出去的子任务做完了。用一两句话把结论告诉主人，挑最要紧的说；细节在工作台里，不用全念。${files}`
       : '你派出去的子任务没做成。用一两句话告诉主人卡在哪、要主人做什么。';
-  return `${taskNotification(task)}\n\n${how}`;
+  return `${taskNotification(task, artifacts)}\n\n${how}`;
 }
 
 /** 转告没成（模型出错）时桌宠说的那句：只报一声，结果在主线程和工作台里。 */

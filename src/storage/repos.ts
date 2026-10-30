@@ -5,6 +5,7 @@ import type {
   ActivityValue,
   AgentTask,
   AgentTaskState,
+  Artifact,
   Contact,
   MemePack,
   Repeat,
@@ -54,6 +55,17 @@ function scheduleOf(row: Row): ScheduleItem {
     weekday: numOrNull(row.weekday),
     enabled: row.enabled === 1,
     lastFired: strOrNull(row.lastFired),
+  };
+}
+
+function artifactOf(row: Row): Artifact {
+  return {
+    id: Number(row.id),
+    task: Number(row.task_id),
+    name: str(row.name),
+    type: str(row.type),
+    size: Number(row.size),
+    createdAt: Number(row.created_at),
   };
 }
 
@@ -133,6 +145,15 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
       'INSERT INTO agent_tasks (title, goal, criteria, agent, state, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ),
     agentTask: db.prepare('SELECT * FROM agent_tasks WHERE id = ?'),
+    saveArtifact: db.prepare(
+      'INSERT INTO artifacts (task_id, name, type, size, created_at) VALUES (?, ?, ?, ?, ?) ' +
+        'ON CONFLICT (task_id, name) DO UPDATE SET type = excluded.type, size = excluded.size, created_at = excluded.created_at',
+    ),
+    artifact: db.prepare('SELECT * FROM artifacts WHERE id = ?'),
+    artifactByName: db.prepare('SELECT * FROM artifacts WHERE task_id = ? AND name = ?'),
+    artifacts: db.prepare('SELECT * FROM artifacts ORDER BY created_at DESC, id DESC LIMIT ?'),
+    taskArtifacts: db.prepare('SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'),
+    removeArtifact: db.prepare('DELETE FROM artifacts WHERE id = ?'),
     agentTasks: db.prepare('SELECT * FROM agent_tasks ORDER BY id DESC LIMIT ?'),
   };
 
@@ -272,6 +293,24 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
         }
         const changed = db.prepare(`UPDATE agent_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
         return Number(changed.changes) > 0 ? this.get(id) : null;
+      },
+    },
+    artifacts: {
+      save(input) {
+        sql.saveArtifact.run(input.task, input.name, input.type, input.size, input.createdAt);
+        return artifactOf(sql.artifactByName.get(input.task, input.name)!);
+      },
+      get(id) {
+        const row = sql.artifact.get(id);
+        return row ? artifactOf(row) : null;
+      },
+      list(options = {}) {
+        const limit = options.limit ?? 200;
+        const rows = options.task === undefined ? sql.artifacts.all(limit) : sql.taskArtifacts.all(options.task, limit);
+        return rows.map(artifactOf);
+      },
+      remove(id) {
+        return Number(sql.removeArtifact.run(id).changes) > 0;
       },
     },
   };

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { errorText } from '../app/log.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
+import { ARTIFACTS_PER_TASK, deliverArtifact, deliveredNote } from '../features/tasks/artifacts.ts';
 import { DEFAULT_AGENT, agentMenu, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
 import {
   CRITERIA_MAX,
@@ -17,7 +18,7 @@ import {
 } from '../features/tasks/tasks.ts';
 import { ensurePlace, fetchUpcoming, weatherReport } from '../features/weather/weather.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
-import type { Repos, WebSearch } from '../ports/index.ts';
+import type { ArtifactFiles, Repos, WebSearch } from '../ports/index.ts';
 
 /** 跑一条 yoyo 命令行（只开 agent 那部分），交回它打出的文字。 */
 export type CliRun = (argv: readonly string[]) => Promise<string>;
@@ -254,10 +255,16 @@ function addTaskTools(
 }
 
 /**
- * 子 agent 自己用的：拆 todo、改 todo、交结果、交不了。都要带上子任务编号，只对在做的那个有效。
+ * 子 agent 自己用的：拆 todo、改 todo、交文件、交结果、交不了。都要带上子任务编号，只对在做的那个有效。
  * 加在子 agent 的注册表里，主线程看不到。
  */
-export function addTaskWorkerTools(registry: LocalToolRegistry, deps: Pick<YoyoToolDeps, 'repos' | 'now'>): void {
+export function addTaskWorkerTools(
+  registry: LocalToolRegistry,
+  deps: Pick<YoyoToolDeps, 'repos' | 'now'> & {
+    /** 交付物的文件放哪；不给就没有 `task_deliver`。 */
+    readonly files?: ArtifactFiles;
+  },
+): void {
   const { repos } = deps;
   const now = deps.now ?? (() => new Date());
   const id = z.number().int().describe('子任务编号');
@@ -325,6 +332,29 @@ export function addTaskWorkerTools(registry: LocalToolRegistry, deps: Pick<YoyoT
       inputSchema: z.object({ id, reason: z.string().describe('卡在哪，要什么才能做') }),
       execute: async (input) =>
         guarded(() => `记下了，子任务 #${failTask(repos, input.id, input.reason, now()).id} 没做成`),
+    }),
+  );
+
+  const { files } = deps;
+  if (!files) return;
+  registry.addTool(
+    'task_deliver',
+    tool({
+      description:
+        '交一个文件给主人：整理好的 Markdown、CSV 表格、JSON、图片。存进这个子任务自己的交付物里，工作台能看能下载。' +
+        `文件名只写名字（例如「周报.md」「对比.csv」），同名的会换成新的；单个最多 5 MB，一个子任务最多 ${ARTIFACTS_PER_TASK} 个。` +
+        '结果里照样写结论，并说交了哪些文件。',
+      inputSchema: z.object({
+        id,
+        name: z.string().describe('文件名，带扩展名，例如「周报.md」'),
+        content: z.string().describe('文件内容；图片之类的二进制给 base64'),
+        encoding: z.enum(['utf8', 'base64']).optional().describe('content 的写法：文字 utf8（缺省），二进制 base64'),
+      }),
+      execute: async (input) =>
+        guarded(() => {
+          const artifact = deliverArtifact(repos, files, input, now());
+          return deliveredNote({ id: input.id }, artifact, repos.artifacts.list({ task: input.id }).length);
+        }),
     }),
   );
 }

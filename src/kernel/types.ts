@@ -199,6 +199,18 @@ export interface AgentTaskInput {
   readonly origin: string;
 }
 
+/** 子任务交的文件：存在 `artifacts/<子任务>/<文件名>`，同一个子任务里文件名不重复。 */
+export interface Artifact {
+  readonly id: number;
+  readonly task: number;
+  readonly name: string;
+  /** content-type，按扩展名定。 */
+  readonly type: string;
+  /** 字节数。 */
+  readonly size: number;
+  readonly createdAt: number;
+}
+
 /** 能改的字段。 */
 export type AgentTaskPatch = Partial<
   Pick<AgentTask, 'state' | 'todos' | 'result' | 'checks' | 'error' | 'startedAt' | 'finishedAt' | 'announcedAt'>

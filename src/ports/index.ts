@@ -9,6 +9,7 @@ import type {
   AgentTaskInput,
   AgentTaskPatch,
   AgentTaskState,
+  Artifact,
   ClipEntry,
   Contact,
   MemePack,
@@ -108,6 +109,8 @@ export interface Clipboard {
 
 export interface UrlOpener {
   open(url: string): void;
+  /** 在访达里选中这个文件；只有 macOS 有。 */
+  reveal?(path: string): void;
 }
 
 export interface WebSearch {
@@ -177,6 +180,25 @@ export interface AgentTaskRepo {
   update(id: number, patch: AgentTaskPatch, now: number): AgentTask | null;
 }
 
+/** 子任务的交付物。同一个子任务里同名的再交一次，原来那条换成新的（编号不变）。 */
+export interface ArtifactRepo {
+  save(input: Omit<Artifact, 'id'>): Artifact;
+  get(id: number): Artifact | null;
+  /** 新的在前；给了 `task` 只列这个子任务的。 */
+  list(options?: { readonly task?: number; readonly limit?: number }): Artifact[];
+  remove(id: number): boolean;
+}
+
+/** 交付物的文件，放在 `<目录>/<子任务编号>/<文件名>`。文件名由调用的一方先洗干净。 */
+export interface ArtifactFiles {
+  /** 写进去（同名覆盖），返回完整路径。 */
+  write(task: number, name: string, bytes: Uint8Array): string;
+  /** 没有返回 null。 */
+  read(task: number, name: string): Uint8Array | null;
+  remove(task: number, name: string): void;
+  path(task: number, name: string): string;
+}
+
 export interface Repos {
   readonly contacts: ContactRepo;
   readonly schedule: ScheduleRepo;
@@ -187,4 +209,5 @@ export interface Repos {
   readonly kv: KvRepo;
   readonly tasks: TaskRepo;
   readonly agentTasks: AgentTaskRepo;
+  readonly artifacts: ArtifactRepo;
 }

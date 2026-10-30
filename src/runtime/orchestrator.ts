@@ -429,7 +429,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     if (!model) return announceLine(task, now);
     try {
       return await generateRelay(context, orchestrator, {
-        notice: relayPrompt(task),
+        notice: relayPrompt(task, repos.artifacts.list({ task: task.id })),
         tone: toneForHour(now.getHours()),
         model,
         secrets,

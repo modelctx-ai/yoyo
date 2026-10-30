@@ -45,6 +45,7 @@ import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.
 import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
 import type {
+  ArtifactFiles,
   AudioPlayer,
   Clipboard,
   Logger,
@@ -60,6 +61,7 @@ import type {
 import { createDirector, type Director } from '../runtime/director.ts';
 import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
 import { createTaskRunner, type TaskRunner } from '../runtime/tasks.ts';
+import { createArtifactFiles } from '../storage/artifacts.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
@@ -82,6 +84,8 @@ export interface AppServices {
   readonly transcriber: Transcriber;
   readonly clipboard: Clipboard;
   readonly opener: UrlOpener;
+  /** 子任务交付物的文件。 */
+  readonly artifactFiles: ArtifactFiles;
   readonly search: WebSearch | null;
   readonly model: LanguageModel | null;
   /** 只有 `llm.tools` 打开时才有。 */
@@ -161,6 +165,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   const host = use('host', () => createPetHost(config, logger));
   const clipboard = use('clipboard', () => (mac ? createPbpasteClipboard() : noopClipboard));
   const opener = use('opener', () => (mac ? createMacOpener() : noopOpener));
+  const artifactFiles = use('artifactFiles', () => createArtifactFiles(paths.artifactsDir));
   // 语音没配齐就只出字；不是 macOS 就不播放，也不做配音
   const synthesizer = use('synthesizer', () =>
     speechReady(config.speech)
@@ -292,7 +297,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let tasks: TaskRunner | null = null;
   if (config.tasks.enabled) {
     const worker = createYoyoTools({ repos, search, cli });
-    addTaskWorkerTools(worker, { repos });
+    addTaskWorkerTools(worker, { repos, files: artifactFiles });
     const shared = new Set(executors.map((executor) => executor.name));
     for (const definition of tools?.list() ?? []) {
       if (shared.has(definition.executor)) worker.add(definition, { replace: true });
@@ -342,6 +347,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     transcriber,
     clipboard,
     opener,
+    artifactFiles,
     search,
     model,
     tools,
@@ -385,6 +391,9 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             host,
             schedule: () => orchestrator.state,
             talk: (text) => orchestrator.talk(text),
+            files: artifactFiles,
+            ...(opener.reveal ? { reveal: (path: string) => opener.reveal?.(path) } : {}),
+            app: paths.appBundle !== null,
             logger,
             port,
             ...(resume?.webToken ? { token: resume.webToken } : {}),

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS kv (
 const APP_TABLES = [
   'activity',
   'agent_tasks',
+  'artifacts',
   'clipboard',
   'contacts',
   'kv',
@@ -82,7 +83,7 @@ const APP_TABLES = [
 ];
 
 /** 旧版以后新加的表：只加表，旧表一字不动。 */
-const ADDED_TABLES = ['agent_tasks'];
+const ADDED_TABLES = ['agent_tasks', 'artifacts'];
 
 /** 去掉新加的表，剩下的应该和旧版一样。 */
 function oldTables(sql: Record<string, string>): Record<string, string> {

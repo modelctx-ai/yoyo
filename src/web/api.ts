@@ -8,13 +8,14 @@ import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import { TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
+import { artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
 import { TaskError, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
-import type { AgentTask } from '../kernel/types.ts';
+import type { AgentTask, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
 import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
 import { addContact, removeContact } from '../features/contacts/contacts.ts';
-import type { PetHost, Repos } from '../ports/index.ts';
+import type { ArtifactFiles, PetHost, Repos } from '../ports/index.ts';
 import { enqueue } from '../runtime/inbox.ts';
 import { SettingsError, readSettings, saveSwitches, saveText } from './settings.ts';
 
@@ -30,12 +31,28 @@ export interface WebDeps {
   readonly schedule?: () => { readonly nextWhisper: number; readonly lastTalk: number };
   /** 工作台里和 yoyo 聊一句，返回回复。常驻进程里才有。 */
   readonly talk?: (text: string) => Promise<string>;
+  /** 子任务交付物的文件；不给就看不了、删不了原文。 */
+  readonly files?: ArtifactFiles;
+  /** 在访达里选中一个文件。只有 macOS 有。 */
+  readonly reveal?: (path: string) => void;
+  /** 是不是在 yoyo.app 的窗口里：下载换成在访达里显示。 */
+  readonly app?: boolean;
   readonly now?: () => Date;
 }
 
 export interface ApiResult {
   readonly status: number;
   readonly body: unknown;
+  /** 有这个就原样回文件，不回 JSON。 */
+  readonly file?: ApiFile;
+}
+
+export interface ApiFile {
+  readonly bytes: Uint8Array;
+  readonly type: string;
+  readonly name: string;
+  /** 工作台里直接看（文本、图片）还是只给下载。 */
+  readonly inline: boolean;
 }
 
 /** 主人能改的、说清楚哪里不对的错：回 400 和这句话。 */
@@ -55,6 +72,11 @@ const CORE_MAX = 4000;
 const TALK_MAX = 4000;
 /** 子任务的过程最多给最近这么多步。 */
 const STEPS_MAX = 300;
+
+/** 交付物：加上工作台怎么给人看。 */
+function artifactSummary(artifact: Artifact): unknown {
+  return { ...artifact, view: artifactView(artifact.type) };
+}
 
 /** 列表里的一项：不带目标和结果全文。 */
 function taskSummary(task: AgentTask): unknown {
@@ -148,6 +170,8 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       lastTalk: schedule && schedule.lastTalk > 0 ? schedule.lastTalk : null,
       alarms: repos.schedule.list().length,
       contacts: repos.contacts.list().length,
+      app: deps.app ?? false,
+      reveal: deps.reveal !== undefined,
     };
   }
 
@@ -256,6 +280,20 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     return { ...task, progress: progress(task), steps: steps.slice(-STEPS_MAX) };
   }
 
+  function artifactOf(id: string): Artifact {
+    const artifact = repos.artifacts.get(Number(id));
+    if (!artifact) throw new RequestError(`没有交付物 ${id}`, 404);
+    return artifact;
+  }
+
+  function artifactFile(id: string): ApiResult {
+    const artifact = artifactOf(id);
+    const bytes = deps.files?.read(artifact.task, artifact.name);
+    if (!bytes) throw new RequestError(`交付物 ${artifact.name} 的文件不在了`, 404);
+    const inline = artifactView(artifact.type) !== 'file';
+    return { status: 200, body: null, file: { bytes, type: artifact.type, name: artifact.name, inline } };
+  }
+
   function newContact(body: unknown): unknown {
     try {
       return addContact(repos, { name: text(body, 'name'), yoyo: text(body, 'yoyo'), note: text(body, 'note') }, now());
@@ -318,6 +356,22 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
           if (error instanceof TaskError) throw new RequestError(error.message, 409);
           throw error;
         }
+      }
+      if (route === 'GET /api/artifacts') {
+        const task = url.searchParams.get('task');
+        const options = task ? { task: Number(task) } : {};
+        return ok(repos.artifacts.list(options).map(artifactSummary));
+      }
+      if (method === 'GET' && parts.length === 3 && parts[1] === 'artifacts') return artifactFile(id);
+      if (method === 'DELETE' && parts.length === 3 && parts[1] === 'artifacts') {
+        if (!deps.files) throw new RequestError('常驻进程里才能删', 503);
+        return ok(removed(removeArtifact(repos, deps.files, Number(id)), '个交付物'));
+      }
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'artifacts' && parts[3] === 'reveal') {
+        const artifact = artifactOf(parts[2] ?? '');
+        if (!deps.reveal || !deps.files) throw new RequestError('只有 macOS 上能在访达里显示', 503);
+        deps.reveal(deps.files.path(artifact.task, artifact.name));
+        return ok({ revealed: artifact.id });
       }
       if (route === 'POST /api/actions/whisper' || route === 'POST /api/actions/listen') {
         // 和右键菜单一样交给常驻进程的收件箱，下一拍做
