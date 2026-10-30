@@ -166,13 +166,37 @@ describe('config', () => {
       bashNetwork: [],
       bashTimeout: 120,
       bashMaxTimeout: 600,
+      askTimeout: 24,
     };
     assert.deepEqual(parseConfig({}).files, defaults);
     assert.deepEqual(parseConfig({ files: 'x' }).files, defaults);
     assert.deepEqual(
       parseConfig({ files: { workspace: '~/work', readable: ['~/Documents', 3], write: 'deny', edit: 'ask' } }).files,
-      { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny' },
+      { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny', edit: 'ask' },
     );
+    assert.deepEqual(parseConfig({ files: { read: 'ask', write: 'ask', bash: 'ask', askTimeout: '2.5' } }).files, {
+      ...defaults,
+      read: 'ask',
+      write: 'ask',
+      bash: 'ask',
+      askTimeout: 2.5,
+    });
+    for (const askTimeout of [-1, 721, 'soon']) {
+      assert.equal(parseConfig({ files: { askTimeout } }).files.askTimeout, 24, String(askTimeout));
+    }
+    assert.equal(parseConfig({ files: { askTimeout: 0 } }).files.askTimeout, 0, '0 是不过期');
+    for (const wrong of ['maybe', 'Ask', 1, true, null, ['ask']]) {
+      assert.deepEqual(
+        [parseConfig({ files: { read: wrong, write: wrong, edit: wrong, bash: wrong } }).files].map((files) => [
+          files.read,
+          files.write,
+          files.edit,
+          files.bash,
+        ])[0],
+        ['allow', 'allow', 'allow', 'allow'],
+        `写错按 allow：${JSON.stringify(wrong)}`,
+      );
+    }
     assert.deepEqual(
       parseConfig({
         files: { bash: 'deny', bashNetwork: ['pypi.org', 7, null], bashTimeout: '30', bashMaxTimeout: 900 },
@@ -182,7 +206,7 @@ describe('config', () => {
     for (const bashTimeout of [0, -1, 5000, 'long', '']) {
       assert.equal(parseConfig({ files: { bashTimeout } }).files.bashTimeout, 120, String(bashTimeout));
     }
-    assert.equal(parseConfig({ files: { bash: 'ask', bashNetwork: 'pypi.org' } }).files.bash, 'allow');
+    assert.equal(parseConfig({ files: { bash: 'nope', bashNetwork: 'pypi.org' } }).files.bash, 'allow');
     assert.deepEqual(parseConfig({ files: { bashNetwork: 'pypi.org' } }).files.bashNetwork, []);
   });
 

@@ -81,6 +81,21 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at INTEGER NOT NULL,
   UNIQUE (task_id, name)
 );
+CREATE TABLE IF NOT EXISTS approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  input TEXT NOT NULL,
+  task_id INTEGER,
+  run_id TEXT,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER,
+  ran_at INTEGER,
+  result TEXT,
+  note TEXT,
+  announced_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

@@ -146,9 +146,12 @@ const tasks = z.looseObject({
   answerTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
-/** 读、写、改文件、跑命令四个工具的开关：`allow` 给，`deny` 不给。写错按 `allow`。 */
+/**
+ * 读、写、改文件、跑命令四个工具的开关：`allow` 给，`ask` 给但每次动手前要主人在工作台里批准，`deny` 不给。
+ * 写错按 `allow`。
+ */
 function permission() {
-  return z.enum(['allow', 'deny']).catch('allow').default('allow');
+  return z.enum(['allow', 'ask', 'deny']).catch('allow').default('allow');
 }
 
 /** 1 到 3600 秒，可以写成字符串；空着、不是数、超出范围按缺省值。 */
@@ -174,6 +177,8 @@ const files = z.looseObject({
   /** `bash` 没写超时时等多少秒，和一次最多能要多少秒（1 到 3600）。写错按缺省。 */
   bashTimeout: seconds(120),
   bashMaxTimeout: seconds(600),
+  /** 开关是 `ask` 的工具，等主人批准等多久没批就按拒绝算，单位小时；0 不过期。 */
+  askTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
 const context = z.looseObject({

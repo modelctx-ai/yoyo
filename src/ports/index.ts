@@ -9,6 +9,10 @@ import type {
   AgentTaskInput,
   AgentTaskPatch,
   AgentTaskState,
+  Approval,
+  ApprovalInput,
+  ApprovalPatch,
+  ApprovalState,
   Artifact,
   ClipEntry,
   Contact,
@@ -180,6 +184,24 @@ export interface AgentTaskRepo {
   update(id: number, patch: AgentTaskPatch, now: number): AgentTask | null;
 }
 
+/** 要主人批准的工具调用，id 从 1 往上数。状态只往前走：等批准 → 批准、拒绝、过期。 */
+export interface ApprovalRepo {
+  create(input: ApprovalInput, now: number): Approval;
+  get(id: number): Approval | null;
+  /** 新的在前；给了 `task` 只列这个子任务要的。 */
+  list(options?: {
+    readonly states?: readonly ApprovalState[];
+    readonly task?: number;
+    readonly limit?: number;
+  }): Approval[];
+  /** 等批准的改成 `to`（批准、拒绝、过期）；已经不是等批准的返回 null，常驻进程和命令行同时点不会做两遍。 */
+  decide(id: number, to: Exclude<ApprovalState, 'pending'>, now: number, note?: string): Approval | null;
+  /** 批准了、还没开始做的：记下开始做的时间并返回它；别处已经领走了返回 null。 */
+  claim(id: number, now: number): Approval | null;
+  /** 改结果、原因、交回的时间；没有这一条返回 null。 */
+  update(id: number, patch: ApprovalPatch): Approval | null;
+}
+
 /** 子任务的交付物。同一个子任务里同名的再交一次，原来那条换成新的（编号不变）。 */
 export interface ArtifactRepo {
   save(input: Omit<Artifact, 'id'>): Artifact;
@@ -210,4 +232,5 @@ export interface Repos {
   readonly tasks: TaskRepo;
   readonly agentTasks: AgentTaskRepo;
   readonly artifacts: ArtifactRepo;
+  readonly approvals: ApprovalRepo;
 }

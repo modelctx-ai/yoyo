@@ -4,8 +4,18 @@
  * 子 agent 的工具、命令行和工作台都走这里，规则只有一份。
  */
 import { TONE_CUES, toneForHour } from '../../kernel/tone.ts';
+import { STATE_LABELS as APPROVAL_LABELS } from '../approvals/approvals.ts';
 import { DEFAULT_AGENT } from './agents.ts';
-import type { AgentTask, AgentTaskState, Artifact, CriterionCheck, Line, Todo, TodoState } from '../../kernel/types.ts';
+import type {
+  AgentTask,
+  AgentTaskState,
+  Approval,
+  Artifact,
+  CriterionCheck,
+  Line,
+  Todo,
+  TodoState,
+} from '../../kernel/types.ts';
 import type { Repos } from '../../ports/index.ts';
 
 export const TITLE_MAX = 60;
@@ -132,14 +142,41 @@ export function askTask(repos: TaskRepos, id: number, question: unknown, now: Da
   );
 }
 
-/** 主人回答了：只对「等回答」的有效。记下回答，放回排队，有名额就接着做，下一轮的输入带着回答。 */
-export function answerTask(repos: TaskRepos, id: number, answer: unknown, now: Date): AgentTask {
+/** 子任务在等主人批准的请求（`ask` 开关的工具）。 */
+export function pendingApprovals(repos: Pick<Repos, 'approvals'>, id: number): Approval[] {
+  return repos.approvals.list({ task: id, states: ['pending'] }).toReversed();
+}
+
+/**
+ * 主人回答了：只对「等回答」的有效。记下回答，放回排队，有名额就接着做，下一轮的输入带着回答。
+ * 在等批准的子任务不收回答：批不批要主人在工作台里点，不能用一句话代替。
+ */
+export function answerTask(
+  repos: TaskRepos & Pick<Repos, 'approvals'>,
+  id: number,
+  answer: unknown,
+  now: Date,
+): AgentTask {
   const task = found(repos, id);
   if (task.state !== 'waiting') {
     throw new TaskError(`子任务 #${id} 现在是「${STATE_LABELS[task.state]}」，没有在等回答`);
   }
-  const text = clean(answer, '回答', ANSWER_MAX);
-  repos.activity.record({ type: 'task-answer', id, title: task.title, text });
+  const waiting = pendingApprovals(repos, id);
+  if (waiting.length > 0) {
+    throw new TaskError(
+      `子任务 #${id} 在等你批准 ${waiting.length} 件事，不是提问：在工作台的「待批准」里点批准或拒绝（命令行 yoyo approval list）`,
+    );
+  }
+  return resumeTask(repos, id, clean(answer, '回答', ANSWER_MAX), now);
+}
+
+/** 把回答交给等回答的子任务，放回排队。批准请求都有了结论以后用它交结果，不经过「不收回答」的检查。 */
+export function resumeTask(repos: TaskRepos, id: number, text: string, now: Date): AgentTask {
+  const task = found(repos, id);
+  if (task.state !== 'waiting') {
+    throw new TaskError(`子任务 #${id} 现在是「${STATE_LABELS[task.state]}」，没有在等回答`);
+  }
+  repos.activity.record({ type: 'task-answer', id, title: task.title, text: text.slice(0, 300) });
   return saved(repos, id, { state: 'queued', answer: text, answeredAt: now.getTime() }, now);
 }
 
@@ -297,7 +334,11 @@ function deliveredLines(artifacts: readonly Delivered[]): string[] {
   return artifacts.map(artifactLine);
 }
 
-export function taskDetail(task: AgentTask, artifacts: readonly Delivered[] = []): string {
+export function taskDetail(
+  task: AgentTask,
+  artifacts: readonly Delivered[] = [],
+  approvals: readonly Pick<Approval, 'id' | 'state' | 'tool' | 'summary'>[] = [],
+): string {
   const parts = [`#${task.id} ${task.title}（${STATE_LABELS[task.state]}，${task.agent}）`, '', `目标：${task.goal}`];
   if (task.criteria.length > 0) parts.push('', '验收标准：', ...task.criteria.map((c, i) => `${i + 1}. ${c}`));
   if (task.todos.length > 0) {
@@ -307,6 +348,13 @@ export function taskDetail(task: AgentTask, artifacts: readonly Delivered[] = []
   if (task.question) {
     parts.push('', task.state === 'waiting' ? '问题（等主人回答）：' : '问过：', task.question);
     if (task.answer) parts.push('', '主人的回答：', task.answer);
+  }
+  if (approvals.length > 0) {
+    parts.push(
+      '',
+      '要批准的事：',
+      ...approvals.map((a) => `#${a.id} ${APPROVAL_LABELS[a.state]} ${a.tool}：${a.summary}`),
+    );
   }
   if (task.checks.length > 0) {
     parts.push('', '验收：', ...task.checks.map((c) => `${c.met ? '✓' : '✗'} ${c.criterion}：${c.evidence}`));
@@ -392,7 +440,20 @@ export function taskNotification(task: AgentTask, artifacts: readonly Delivered[
  * 主线程被子任务的通知叫醒时收到的话：通知本身，加上该怎么转告。
  * `canAnswer` 是主线程手上有没有 `task_answer`：没有就告诉主人去工作台里答。
  */
-export function relayPrompt(task: AgentTask, artifacts: readonly Delivered[] = [], canAnswer = true): string {
+export function relayPrompt(
+  task: AgentTask,
+  artifacts: readonly Delivered[] = [],
+  canAnswer = true,
+  approvals: readonly Pick<Approval, 'id' | 'tool' | 'summary'>[] = [],
+): string {
+  if (task.state === 'waiting' && approvals.length > 0) {
+    return (
+      `${taskNotification(task, artifacts)}\n\n` +
+      `你派出去的子任务 #${task.id} 想做的事要主人批准（不是提问）：${approvals.map((a) => `「${a.summary}」`).join('、')}。` +
+      `用自己的话告诉主人：哪个子任务想做什么，请主人在工作台里批准或拒绝（桌宠右键「管理」，在「待批准」里点）。` +
+      `批不批要主人自己在工作台里点：不要用 task_answer 代答，也别替主人批准。`
+    );
+  }
   if (task.state === 'waiting') {
     const after = canAnswer
       ? `主人回答以后，用 task_answer 把回答原样交给子任务 #${task.id}。现在先别调 task_answer：回答要等主人说了才算。`
@@ -413,12 +474,14 @@ export function relayPrompt(task: AgentTask, artifacts: readonly Delivered[] = [
 }
 
 /** 转告没成（模型出错）时桌宠说的那句：只报一声，结果在主线程和工作台里。 */
-export function announceLine(task: AgentTask, now: Date): Line {
+export function announceLine(task: AgentTask, now: Date, approving = false): Line {
   const tone = toneForHour(now.getHours());
   return {
     text:
       task.state === 'waiting'
-        ? `「${task.title}」有件事要问你，问题写在工作台里。`
+        ? approving
+          ? `「${task.title}」有件事要你批准，在工作台的「待批准」里。`
+          : `「${task.title}」有件事要问你，问题写在工作台里。`
         : task.state === 'done'
           ? `「${task.title}」做好啦，结果放在工作台里。`
           : `「${task.title}」没做成，原因写在工作台里。`,
@@ -433,10 +496,25 @@ export function announceLine(task: AgentTask, now: Date): Line {
  * 主线程每一轮都能看到的：排队、在做和等回答的子任务。等回答的把问题也列出来，
  * 主人回答时对得上是哪个，用 `task_answer` 带上那个编号。
  */
-export function tasksFact(tasks: readonly AgentTask[]): string | null {
+export function tasksFact(
+  tasks: readonly AgentTask[],
+  approvals: readonly Pick<Approval, 'id' | 'task' | 'summary'>[] = [],
+): string | null {
   if (tasks.length === 0) return null;
   const parts = ['子任务：', ...tasks.map(taskRow)];
-  const waiting = tasks.filter((task) => task.state === 'waiting' && task.question);
+  const approving = tasks.filter((task) => task.state === 'waiting' && approvals.some((a) => a.task === task.id));
+  if (approving.length > 0) {
+    parts.push(
+      '',
+      '在等主人批准的事（要主人在工作台里点批准或拒绝；不能用 task_answer 代答，也别替主人批准）：',
+      ...approving.flatMap((task) =>
+        approvals.filter((a) => a.task === task.id).map((a) => `#${task.id}「${task.title}」想：${a.summary}`),
+      ),
+    );
+  }
+  const waiting = tasks.filter(
+    (task) => task.state === 'waiting' && task.question && !approving.some((other) => other.id === task.id),
+  );
   if (waiting.length > 0) {
     parts.push(
       '',

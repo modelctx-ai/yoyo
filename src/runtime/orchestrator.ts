@@ -23,8 +23,9 @@ import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
 import { shouldSearch } from '../features/search/question.ts';
-import { announceLine, needsRelay, relayPrompt } from '../features/tasks/tasks.ts';
-import type { AgentTask } from '../kernel/types.ts';
+import { approvalAnnounceLine, approvalRelayPrompt } from '../features/approvals/approvals.ts';
+import { announceLine, needsRelay, pendingApprovals, relayPrompt } from '../features/tasks/tasks.ts';
+import type { AgentTask, Approval } from '../kernel/types.ts';
 import { nextWhisperAt } from '../kernel/pace.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
@@ -168,6 +169,11 @@ export interface YoyoOrchestrator extends Orchestrator {
    * `<task-notification>`：通知进主线程，主线程用自己的话告诉主人。
    */
   relayTask(id: number): void;
+  /**
+   * 主线程要的一件事（开关是 `ask` 的工具）有了结论，结果已经写回主会话：排进来，下一拍叫醒主线程转告主人，
+   * 批准了讲结果，拒绝或过期了也说一句。进程在转告前停了就不补：结果已经在主会话里，主线程下一轮看得到。
+   */
+  relayApproval(id: number): void;
   /** 桌宠自己的「碎碎念」（右键里没藏起来时）：交给碎碎念的 agent 写一句，返回正文。不写日志。 */
   petWhisper(signal?: AbortSignal): Promise<string>;
   /**
@@ -227,6 +233,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
           .map((task) => task.id)
       : [],
   );
+  /** 等着转告的批准请求编号。 */
+  const approvalQueue = new Set<number>();
   let gating: Promise<void> | null = null;
   let consolidating: Promise<void> | null = null;
   /** 可能有待处理的笔记：启动时不知道，门控写下待处理的笔记以后又有了。 */
@@ -441,11 +449,47 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     }
   }
 
-  async function relayLine(task: AgentTask, now: Date): Promise<Line> {
-    if (!model) return announceLine(task, now);
+  /**
+   * 批准请求有了结论（做完、拒绝、过期）后排进来的通知：叫醒主线程跑一轮转告，和子任务一样受 `tasks.notify` 管。
+   * 转告没成（模型出错）就说一句固定的。
+   */
+  async function relayApprovals(now: Date): Promise<void> {
+    const ids = [...approvalQueue].toSorted((a, b) => a - b);
+    approvalQueue.clear();
+    if (!config.tasks.notify) return;
+    for (const id of ids) {
+      const approval = repos.approvals.get(id);
+      if (!approval) continue;
+      await director.speak(await approvalLine(approval, now), now);
+      state.lastTalk = clock();
+      wrote = true;
+    }
+  }
+
+  async function approvalLine(approval: Approval, now: Date): Promise<Line> {
+    if (!model) return approvalAnnounceLine(approval, now);
     try {
       return await generateRelay(context, orchestrator, {
-        notice: relayPrompt(task, repos.artifacts.list({ task: task.id }), config.llm.tools),
+        notice: approvalRelayPrompt(approval),
+        tone: toneForHour(now.getHours()),
+        model,
+        secrets,
+        tools: relayTools(config.llm.tools, deps.toolNames?.()),
+        signal: stopping.signal,
+        ...(factSources ? { sources: factSources.reply } : {}),
+      });
+    } catch (error) {
+      logger.warn(`批准请求 #${approval.id} 的结果没转告成，先报一声：${errorText(error)}`);
+      return approvalAnnounceLine(approval, now);
+    }
+  }
+
+  async function relayLine(task: AgentTask, now: Date): Promise<Line> {
+    const approving = task.state === 'waiting' ? pendingApprovals(repos, task.id) : [];
+    if (!model) return announceLine(task, now, approving.length > 0);
+    try {
+      return await generateRelay(context, orchestrator, {
+        notice: relayPrompt(task, repos.artifacts.list({ task: task.id }), config.llm.tools, approving),
         tone: toneForHour(now.getHours()),
         model,
         secrets,
@@ -455,7 +499,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       });
     } catch (error) {
       logger.warn(`子任务 #${task.id} 的结果没转告成，先报一声：${errorText(error)}`);
-      return announceLine(task, now);
+      return announceLine(task, now, approving.length > 0);
     }
   }
 
@@ -481,6 +525,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         state.lastTalk = clock();
       }
       if (config.tasks.enabled && relayQueue.size > 0) await relayTasks(now);
+      if (approvalQueue.size > 0) await relayApprovals(now);
       if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
@@ -564,6 +609,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     talk,
     relayTask(id) {
       relayQueue.add(id);
+    },
+    relayApproval(id) {
+      approvalQueue.add(id);
     },
     petWhisper,
     tick,

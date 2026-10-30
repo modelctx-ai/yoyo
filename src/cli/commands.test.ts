@@ -11,6 +11,7 @@ import { resolvePaths, type Paths } from '../app/paths.ts';
 import type { UpdateSystem } from '../app/update.ts';
 import { createYoyoContext, taskSession } from '../brain/context.ts';
 import { openMemoryStore } from '../brain/memory.ts';
+import { requestApproval } from '../features/approvals/approvals.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { askTask } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
@@ -442,6 +443,69 @@ describe('commands', () => {
     await assert.rejects(run('task', 'answer', '1', '蓝'), /没有在等回答/);
   });
 
+  test('approval：list 等批准的在前，show 看完整参数，approve、deny 只能点一次；批准的人是命令行', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('approval', 'list'), ['还没有批准请求']);
+    const repos = env.repos();
+    const write = requestApproval(
+      repos,
+      {
+        tool: 'write',
+        summary: '写 notes/周报.md（新建，2 行，11 B）',
+        input: { path: 'notes/周报.md', content: '# 周报\nA\n' },
+        task: null,
+      },
+      NOW,
+    );
+    const bash = requestApproval(
+      repos,
+      { tool: 'bash', summary: '跑命令：python plot.py', input: { command: 'python plot.py' }, task: 3 },
+      NOW,
+    );
+    requestApproval(
+      repos,
+      { tool: 'edit', summary: '改 a.md（换 1 处）', input: { path: 'a.md', old: 'x', new: 'y' }, task: null },
+      NOW,
+    );
+    assert.deepEqual(await run('approval', 'list'), [
+      '#3\t等批准\tedit\t主线程\t改 a.md（换 1 处）',
+      '#2\t等批准\tbash\t子任务 #3\t跑命令：python plot.py',
+      '#1\t等批准\twrite\t主线程\t写 notes/周报.md（新建，2 行，11 B）',
+    ]);
+    assert.equal(
+      (await run('approval', 'show', '#1'))[0],
+      '#1 写 notes/周报.md（新建，2 行，11 B）（等批准，write，主线程）\n\n参数：\npath：notes/周报.md\ncontent：\n# 周报\nA\n',
+    );
+    assert.deepEqual(await run('approval', 'approve', String(write.id)), [
+      '批准了 #1「写 notes/周报.md（新建，2 行，11 B）」，常驻进程在跑就会照做',
+    ]);
+    assert.deepEqual(await run('approval', 'deny', String(bash.id)), ['拒绝了 #2「跑命令：python plot.py」']);
+    await assert.rejects(run('approval', 'deny', '1'), /已经「批准了」，不能再改/);
+    await assert.rejects(run('approval', 'approve', '2'), /已经「拒绝了」，不能再改/);
+    await assert.rejects(run('approval', 'approve', '9'), /没有批准请求 #9/);
+    await assert.rejects(run('approval', 'approve'), /要给批准请求的编号/);
+    assert.deepEqual(await run('approval', 'list', '--state', 'denied'), [
+      '#2\t拒绝了\tbash\t子任务 #3\t跑命令：python plot.py',
+    ]);
+    await assert.rejects(
+      run('approval', 'list', '--state', 'x'),
+      /没有「x」这种状态，有：pending、approved、denied、expired/,
+    );
+    assert.deepEqual(
+      repos.activity
+        .list(10)
+        .filter((e) => e.type.startsWith('approval-'))
+        .map((e) => [e.type, e.id, e['via'] ?? null]),
+      [
+        ['approval-ask', 1, null],
+        ['approval-ask', 2, null],
+        ['approval-ask', 3, null],
+        ['approval-approve', 1, 'cli'],
+        ['approval-deny', 2, 'cli'],
+      ],
+    );
+  });
+
   test('task list --state 只列这几种状态；写错的说清楚有哪些', async () => {
     const { run, env } = cli();
     for (const title of ['一', '二', '三']) await run('task', 'add', '--title', title, '--goal', '做');
@@ -559,6 +623,7 @@ describe('commands', () => {
         'context tail',
         'memory core,facts,history,rules',
         'task list,show,log,agents',
+        'approval list,show',
         'artifact list,show',
         'search all',
         'log tail',
