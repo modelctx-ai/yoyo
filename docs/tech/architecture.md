@@ -99,9 +99,10 @@ flowchart TB
 | `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现 |
-| `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台一件件做，结果写回主线程，见[子任务](tasks.md)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
+| `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台同时做几件，结果写回主线程，见[子任务](tasks.md)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
-| `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
+| `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`、给 agent 的那部分）、`commands.ts`（领域表）、`search.ts`（`yoyo search`）、`main.ts`，见[命令原则](cli-principles.md) |
+| `src/app/cli.ts` | agent 的 `yoyo` 工具怎么跑命令行：另起 Node 进程、`YOYO_AGENT=1`、超时和输出上限 |
 | `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
 | `src/app/update.ts` | yoyo.app 的自我更新：从 GitHub Release 取最新版本、下载校验 dmg、取出新的 app 交给 `swap.sh`，见[发版](release.md#app-内更新) |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
@@ -135,7 +136,7 @@ flowchart LR
   harness -. "读视图" .-> store
 ```
 
-`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，从 yoyo.app 里跑时打开 app 的窗口，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`，再让子任务的 `TaskRunner` 开始一件件做（`tasks.enabled` 打开时）。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
+`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，从 yoyo.app 里跑时打开 app 的窗口，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`，再让子任务的 `TaskRunner` 开始做（`tasks.enabled` 打开时，同时最多 `tasks.concurrency` 件）。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
 
 1. 粘贴板有变化就记一条（`clipboard.enabled`）。
 2. 导演并进桌宠的对话记忆。
