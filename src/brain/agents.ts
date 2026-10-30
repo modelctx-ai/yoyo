@@ -65,13 +65,13 @@ export function whisperAgent(tone: Tone, model: ModelRef, options: AgentOptions 
 export function replyAgent(
   tone: Tone,
   model: ModelRef,
-  options: AgentOptions & { readonly tools?: boolean } = {},
+  options: AgentOptions & { readonly tools?: boolean | readonly string[] } = {},
 ): AgentSpec {
   return {
     ...REPLY_AGENT,
     model,
     instructions: replyInstructions(tone),
-    ...(options.tools ? { tools: true, maxSteps: REPLY_TOOL_STEPS } : {}),
+    ...(options.tools ? { tools: options.tools, maxSteps: REPLY_TOOL_STEPS } : {}),
     ...(options.sources ? { context: { facts: { ...REPLY_AGENT.context.facts, sources: options.sources } } } : {}),
   };
 }

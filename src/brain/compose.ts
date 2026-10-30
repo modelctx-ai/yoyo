@@ -102,13 +102,13 @@ export function whisperRequest(context: Context, options: ComposeOptions): RunRe
 
 export interface ReplyOptions extends ComposeOptions {
   readonly searchText?: string;
-  /** 打开时模型可以调用工具。 */
-  readonly tools?: boolean;
+  /** 打开时模型可以调用工具；给名字清单就只给这几个。 */
+  readonly tools?: boolean | readonly string[];
 }
 
 function replyRequestAgent(options: ReplyOptions) {
   return replyAgent(options.tone, options.model, {
-    tools: options.tools === true,
+    tools: options.tools ?? false,
     ...(options.sources ? { sources: options.sources } : {}),
   });
 }

@@ -40,6 +40,7 @@ import {
   memeDue,
   memeIdle,
   nextAfterSpeak,
+  relayTools,
   whisperIntervalMs,
   whisperStep,
   type ScheduleState,
@@ -477,6 +478,12 @@ describe('orchestrator 跑模型', () => {
     await orchestrator.tick();
     assert.equal(calls.filter((call) => call.startsWith('speak:')).length, 2, '转告过的不再说');
     await orchestrator.close();
+  });
+
+  test('转告那一轮：工具照给，读写文件的不给；没开工具就都不给', () => {
+    assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'yoyo']), ['web_search', 'yoyo']);
+    assert.equal(relayTools(false, ['web_search', 'read']), false);
+    assert.equal(relayTools(true, undefined), true);
   });
 
   test('子任务结束：没配模型就报一声固定的；tasks.notify 关着只记下不说；上次没转告的开始时补上', async () => {

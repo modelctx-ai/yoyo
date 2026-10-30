@@ -388,6 +388,8 @@ describe('brain/compose 一轮的请求', () => {
     assert.deepEqual(replyRun.agent.context, { facts: { placement: 'instructions' } });
     assert.equal(replyRun.prompt, '搜索结果：\n晴');
     assert.equal(replyRun.record, false);
+    // 给名字清单就只给这几个（转告那一轮去掉读写文件的）
+    assert.deepEqual(replyRequest(context, { tone: 'warm', model, tools: ['web_search'] }).agent.tools, ['web_search']);
   });
 });
 

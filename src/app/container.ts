@@ -42,6 +42,7 @@ import {
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
+import { addFileTools, createFileAccess } from '../brain/files.ts';
 import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
 import type {
@@ -205,10 +206,14 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
 
   // agent 的 yoyo 工具：另起进程跑命令行，只开 agent 那部分
   const cli = overrides.cli ?? createCliRunner(paths);
+  // 读写文件：工作区能读能写，别处按 files.readable、files.denyRead
+  const fileAccess = config.llm.tools ? createFileAccess({ config: config.files, paths }) : null;
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
-    tools = createYoyoTools({ repos, search, cli, tasks: config.tasks.enabled, agents });
+    const local = createYoyoTools({ repos, search, cli, tasks: config.tasks.enabled, agents });
+    if (fileAccess) addFileTools(local, { access: fileAccess, repos, allow: config.files });
+    tools = local;
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
     });
@@ -288,6 +293,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       model,
       memory,
       ...(factSources ? { factSources } : {}),
+      ...(tools ? { toolNames: () => tools.list().map((definition) => definition.name) } : {}),
       ...(overrides.resume?.schedule ? { state: overrides.resume.schedule } : {}),
     }),
   );
@@ -297,7 +303,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let tasks: TaskRunner | null = null;
   if (config.tasks.enabled) {
     const worker = createYoyoTools({ repos, search, cli });
-    addTaskWorkerTools(worker, { repos, files: artifactFiles });
+    if (fileAccess) addFileTools(worker, { access: fileAccess, repos, allow: config.files });
+    addTaskWorkerTools(worker, { repos, files: artifactFiles, ...(fileAccess ? { access: fileAccess } : {}) });
     const shared = new Set(executors.map((executor) => executor.name));
     for (const definition of tools?.list() ?? []) {
       if (shared.has(definition.executor)) worker.add(definition, { replace: true });
