@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { errorText } from '../app/log.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
+import { DEFAULT_AGENT, agentMenu, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
 import {
   CRITERIA_MAX,
   TaskError,
@@ -63,7 +64,13 @@ function guarded<T>(work: () => T): T | string {
  * 回复时可以交给模型的本地工具。只有 `llm.tools` 打开时才用。
  * `tasks` 打开时加上主线程管子任务的几个（开、列、看、取消）；子 agent 用的是另一份注册表，没有这几个。
  */
-export function createYoyoTools(deps: YoyoToolDeps & { readonly tasks?: boolean }): LocalToolRegistry {
+export function createYoyoTools(
+  deps: YoyoToolDeps & {
+    readonly tasks?: boolean;
+    /** 能派的子 agent 类型；不给就只有内置的。 */
+    readonly agents?: readonly AgentProfile[];
+  },
+): LocalToolRegistry {
   const { repos, search } = deps;
   const now = deps.now ?? (() => new Date());
   const registry = createToolRegistry();
@@ -155,18 +162,25 @@ export function createYoyoTools(deps: YoyoToolDeps & { readonly tasks?: boolean 
     }),
   );
 
-  if (deps.tasks) addTaskTools(registry, repos, now);
+  if (deps.tasks) addTaskTools(registry, repos, now, deps.agents ?? mergeAgents([]));
   return registry;
 }
 
 /** 主线程管子任务：派出去、看进度、看结果、取消。子任务由常驻进程在后台做，做完结果会回到主线程。 */
-function addTaskTools(registry: LocalToolRegistry, repos: Repos, now: () => Date): void {
+function addTaskTools(
+  registry: LocalToolRegistry,
+  repos: Repos,
+  now: () => Date,
+  agents: readonly AgentProfile[],
+): void {
+  const names = agents.map((profile) => profile.name);
   registry.addTool(
     'task_create',
     tool({
       description:
         '派一个子任务给后台的子 agent 去做：要花时间、要好几步、要查资料或整理东西的事。马上返回编号，不等做完；' +
-        '做完了结果会回到这里。主人只是聊天、一两句能答的不要派。',
+        '做完了结果会回到这里。主人只是聊天、一两句能答的不要派。\n按事情挑一种子 agent：\n' +
+        agentMenu(agents),
       inputSchema: z.object({
         title: z.string().describe('一句话标题，像待办事项，例如「整理本周周报」'),
         goal: z.string().describe('要做成什么样：背景、范围、要交回什么。写清楚，子 agent 只看得到这段'),
@@ -174,11 +188,15 @@ function addTaskTools(registry: LocalToolRegistry, repos: Repos, now: () => Date
           .array(z.string())
           .max(CRITERIA_MAX)
           .describe('验收标准，一条一句、能检查的，例如「列出每个项目本周的进展」'),
+        agent: z
+          .string()
+          .optional()
+          .describe(`哪种子 agent 来做：${names.join('、')}；不写是 ${DEFAULT_AGENT}`),
       }),
       execute: async (input) =>
         guarded(() => {
-          const task = createAgentTask(repos, { ...input, origin: 'main' }, now());
-          return `开了子任务 #${task.id}「${task.title}」，排队等着做`;
+          const task = createAgentTask(repos, { ...input, origin: 'main' }, now(), names);
+          return `开了子任务 #${task.id}「${task.title}」，交给 ${task.agent}，排队等着做`;
         }),
     }),
   );

@@ -338,6 +338,30 @@ describe('openDatabase', () => {
     again.close();
   });
 
+  test('先发的那版子任务表没有 agent 列：打开时补上，以前的子任务都算 general', () => {
+    const file = join(tempDir(), 'yoyo.db');
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE agent_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, goal TEXT NOT NULL, criteria TEXT NOT NULL,
+  state TEXT NOT NULL, todos TEXT NOT NULL DEFAULT '[]', result TEXT, checks TEXT NOT NULL DEFAULT '[]', error TEXT,
+  origin TEXT NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, updated_at INTEGER NOT NULL,
+  announced_at INTEGER)`);
+    old
+      .prepare(
+        'INSERT INTO agent_tasks (title, goal, criteria, state, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run('周报', '目标', '[]', 'done', 'main', 1, 1);
+    old.close();
+    const repos = createRepos(openDatabase(file));
+    assert.equal(repos.agentTasks.get(1)?.agent, 'general');
+    assert.equal(
+      repos.agentTasks.create({ title: '查', goal: '查', criteria: [], agent: 'research', origin: 'cli' }, 2).agent,
+      'research',
+    );
+    // 再开一次不会重复加
+    assert.doesNotThrow(() => createRepos(openDatabase(file)));
+  });
+
   test('旧版建的库（带着有数据的 context_items）直接能用，那张表原样不动', () => {
     const dir = tempDir();
     const file = join(dir, 'yoyo.db');

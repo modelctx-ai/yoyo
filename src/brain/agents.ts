@@ -1,4 +1,6 @@
-import type { AgentSpec, CallSettings, ModelRef } from '@modelctx-ai/ctx';
+import type { AgentSpec, CallSettings, ModelRef, ToolSelection } from '@modelctx-ai/ctx';
+
+import type { AgentProfile } from '../features/tasks/agents.ts';
 
 import type { Tone } from '../kernel/types.ts';
 import { TASK_INSTRUCTIONS, replyInstructions, whisperInstructions } from './prompts.ts';
@@ -74,11 +76,23 @@ export function replyAgent(
   };
 }
 
-export function taskAgent(model: ModelRef, options: AgentOptions = {}): AgentSpec {
+export interface TaskAgentOptions extends AgentOptions {
+  /** 这种子 agent 能用的工具：名字清单，或者全部（true）。 */
+  readonly tools?: ToolSelection;
+}
+
+/** 子 agent：做事的协议在前，这种类型自己的指令接在后面，工具按类型的清单挑。 */
+export function taskAgent(
+  model: ModelRef,
+  profile: Pick<AgentProfile, 'name' | 'instructions'>,
+  options: TaskAgentOptions = {},
+): AgentSpec {
   return {
     ...TASK_AGENT,
     model,
-    instructions: TASK_INSTRUCTIONS,
+    name: `task:${profile.name}`,
+    instructions: `${TASK_INSTRUCTIONS}\n\n你是「${profile.name}」子 agent。\n${profile.instructions}`,
+    ...(options.tools !== undefined ? { tools: options.tools } : {}),
     ...(options.sources ? { context: { facts: { ...TASK_AGENT.context.facts, sources: options.sources } } } : {}),
   };
 }

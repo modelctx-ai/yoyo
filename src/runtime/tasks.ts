@@ -6,12 +6,13 @@
  */
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { eventEntry, type Context, type LanguageModel, type Orchestrator } from '@modelctx-ai/ctx';
+import { eventEntry, type AgentSpec, type Context, type LanguageModel, type Orchestrator } from '@modelctx-ai/ctx';
 
 import { errorText } from '../app/log.ts';
 import { taskAgent } from '../brain/agents.ts';
 import { run } from '../brain/compose.ts';
 import { TASK_EVENT, taskSession } from '../brain/context.ts';
+import { agentTools, mergeAgents, type AgentProfile } from '../features/tasks/agents.ts';
 import { continuePrompt, failTask, resultNote, taskBrief } from '../features/tasks/tasks.ts';
 import type { AgentTask } from '../kernel/types.ts';
 import type { Logger, Repos } from '../ports/index.ts';
@@ -33,6 +34,12 @@ export interface TaskRunnerDeps {
   readonly onFinished?: (task: AgentTask) => void;
   /** 子 agent 收哪些事实来源；不给就全部。 */
   readonly sources?: readonly string[];
+  /** 有哪些子 agent 类型；不给就只有内置的。 */
+  readonly agents?: readonly AgentProfile[];
+  /** 子 agent 那份注册表里有哪些工具，按类型的清单挑。 */
+  readonly toolNames?: () => readonly string[];
+  /** 类型写了 `model` 时用的模型（服务商和密钥照 `llm`）；不给就都用 `model`。 */
+  readonly modelFor?: (id: string) => LanguageModel | null;
   /** 报错里要抹掉的密钥。 */
   readonly secrets?: readonly string[];
   readonly now?: () => number;
@@ -50,6 +57,7 @@ export interface TaskRunner {
 
 export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
   const { repos, logger, runs, model, main } = deps;
+  const profiles = deps.agents ?? mergeAgents([]);
   const clock = deps.now ?? (() => Date.now());
   const pollMs = deps.pollMs ?? TASK_POLL_MS;
   const stopping = new AbortController();
@@ -82,8 +90,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       if (repos.agentTasks.get(task.id)?.state === 'cancelled') controller.abort();
     }, pollMs);
     watch.unref();
-    const agent = taskAgent(model, deps.sources ? { sources: deps.sources } : {});
     try {
+      const agent = agentFor(task, model);
       for (let round = 1; round <= MAX_ROUNDS; round += 1) {
         const current = repos.agentTasks.get(task.id);
         if (!current || current.state !== 'running') break;
@@ -117,6 +125,19 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     deps.onFinished?.(final);
     logger.info(`子任务 #${final.id} ${final.state === 'done' ? '做完了' : `停在「${final.state}」`}`);
     return final;
+  }
+
+  /** 按子任务的类型配子 agent：指令、工具清单、模型。没有这种类型就报错，记成没做成。 */
+  function agentFor(task: AgentTask, fallback: LanguageModel): AgentSpec {
+    const profile = profiles.find((item) => item.name === task.agent);
+    if (!profile) throw new Error(`没有「${task.agent}」这种子 agent，有：${profiles.map((p) => p.name).join('、')}`);
+    const chosen = profile.model ? deps.modelFor?.(profile.model) : null;
+    if (profile.model && !chosen)
+      logger.warn(`子 agent ${profile.name} 的模型 ${profile.model} 建不起来，先用 llm.model`);
+    return taskAgent(chosen ?? fallback, profile, {
+      tools: agentTools(profile, deps.toolNames?.() ?? []),
+      ...(deps.sources ? { sources: deps.sources } : {}),
+    });
   }
 
   function isCancelled(id: number): boolean {

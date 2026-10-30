@@ -7,6 +7,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { createTaskContext, mainProjection, sessionFor, taskSession } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import { addTaskWorkerTools, createYoyoTools } from '../brain/tools.ts';
+import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
 import { cancelAgentTask, createAgentTask } from '../features/tasks/tasks.ts';
 import type { Repos } from '../ports/index.ts';
 import { MAX_ROUNDS, createTaskRunner } from './tasks.ts';
@@ -149,6 +150,66 @@ describe('子任务的跑法', () => {
     const { messages } = await main.view();
     assert.match(JSON.stringify(messages), /系统消息：子任务 #1/);
     assert.equal(await runner.runNext(), null, '没有排队的了');
+  });
+
+  test('按子任务的类型配子 agent：指令接在协议后面，只给清单里的工具加任务工具，类型写了 model 就换模型', async () => {
+    const prompts: unknown[] = [];
+    const offered: string[][] = [];
+    const spy = (name: string) =>
+      new MockLanguageModelV4({
+        modelId: name,
+        doGenerate: async (options) => {
+          prompts.push(options.prompt);
+          offered.push((options.tools ?? []).map((item) => item.name));
+          return text('交不了');
+        },
+      });
+    const repos = memoryRepos({ now: () => new Date(T0) });
+    const main = createContext({ store: createMemoryStore(), session: sessionFor('main'), projection: mainProjection });
+    const worker = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(worker, { repos, now: () => new Date(T0) });
+    const harness = createYoyoHarness(createTaskContext(main, { tools: worker }));
+    const runs = createOrchestrator({ harness, store: main.store, owner: 'yoyo-tasks' });
+    const asked: string[] = [];
+    const agents = mergeAgents([
+      parseAgentFile(
+        '---\nname: scheduler\ndescription: 排日程\ntools: list_alarms, add_*\nmodel: small\n---\n只管日程。',
+        'scheduler',
+        's.md',
+      ),
+    ]);
+    const runner = createTaskRunner({
+      repos,
+      logger: memoryLogger(),
+      runs,
+      model: spy('default'),
+      main,
+      now: () => T0,
+      pollMs: 5,
+      agents,
+      toolNames: () => worker.list().map((definition) => definition.name),
+      modelFor: (id) => {
+        asked.push(id);
+        return spy(id);
+      },
+    });
+    createAgentTask(repos, { title: '排周会', goal: '每周一 10 点', agent: 'scheduler', origin: 'main' }, new Date(T0));
+    await runner.runNext();
+    assert.deepEqual(asked, ['small']);
+    assert.match(JSON.stringify(prompts[0]), /先用 task_plan.*你是「scheduler」子 agent。\\n只管日程。/);
+    assert.deepEqual(offered[0]?.toSorted(), [
+      'add_alarm',
+      'list_alarms',
+      'task_fail',
+      'task_finish',
+      'task_plan',
+      'task_todo',
+    ]);
+
+    createAgentTask(repos, { title: '写', goal: '写', agent: 'ghost', origin: 'cli' }, new Date(T0));
+    const failed = await runner.runNext();
+    assert.equal(failed?.state, 'failed');
+    assert.match(failed?.error ?? '', /没有「ghost」这种子 agent，有：general、research、scheduler、writer/);
   });
 
   test('一轮停下了还没交：带着 todo 的现状催它接着做', async () => {

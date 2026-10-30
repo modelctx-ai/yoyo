@@ -22,6 +22,7 @@ import {
   type AppOverrides,
 } from '../app/container.ts';
 import { consoleLogger } from '../app/log.ts';
+import { loadAgentProfiles } from '../app/agents.ts';
 import type { Paths } from '../app/paths.ts';
 import {
   checkUpdate,
@@ -36,6 +37,7 @@ import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
+import type { AgentProfile } from '../features/tasks/agents.ts';
 import { TaskError, cancelAgentTask, createAgentTask, taskDetail, taskRow } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { InboxRequest } from '../kernel/types.ts';
@@ -121,6 +123,10 @@ const STEP_LABELS: Readonly<Record<TaskStep['kind'], string>> = {
   call: '调用',
   result: '结果',
 };
+
+function agentProfiles(env: CommandEnv): AgentProfile[] {
+  return loadAgentProfiles(env.paths.agentsDir, env.logger);
+}
 
 function taskId(args: readonly string[]): number {
   const id = Number(args[0]);
@@ -589,17 +595,32 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'add',
           summary: '自己派一个子任务（平时由 yoyo 派）',
-          flags: ['title', 'goal', 'criteria'],
+          flags: ['title', 'goal', 'criteria', 'agent'],
           run(flags) {
             const criteria = (flagText(flags, 'criteria') ?? '').split(/[;；\n]/);
-            const task = guard(() =>
-              createAgentTask(
-                env.repos(),
-                { title: flagText(flags, 'title'), goal: flagText(flags, 'goal'), criteria, origin: 'cli' },
-                env.now(),
-              ),
-            );
-            env.out(`开了子任务 #${task.id}，常驻进程在跑就会去做`);
+            const names = agentProfiles(env).map((profile) => profile.name);
+            const input = {
+              title: flagText(flags, 'title'),
+              goal: flagText(flags, 'goal'),
+              criteria,
+              agent: flagText(flags, 'agent'),
+              origin: 'cli',
+            };
+            const task = guard(() => createAgentTask(env.repos(), input, env.now(), names));
+            env.out(`开了子任务 #${task.id}，交给 ${task.agent}，常驻进程在跑就会去做`);
+          },
+        },
+        {
+          name: 'agents',
+          summary: '有哪些子 agent 类型：内置的，加上 ~/.yoyo/agents/*.md',
+          run() {
+            for (const profile of agentProfiles(env)) {
+              const tools = profile.tools ? profile.tools.join(', ') || '只有任务工具' : '全部工具';
+              const from = profile.source === 'builtin' ? '内置' : profile.source;
+              env.out(
+                `${profile.name}\t${profile.description}\t${tools}${profile.model ? `\t${profile.model}` : ''}\t${from}`,
+              );
+            }
           },
         },
         {

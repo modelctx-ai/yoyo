@@ -63,6 +63,7 @@ import { createTaskRunner, type TaskRunner } from '../runtime/tasks.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
+import { loadAgentProfiles } from './agents.ts';
 import { speechReady, type AnysearchConfig, type Config } from './config.ts';
 import { consoleLogger, errorText } from './log.ts';
 import type { Paths } from './paths.ts';
@@ -191,10 +192,13 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       : null,
   );
 
+  // 子 agent 的类型：内置的加上 ~/.yoyo/agents/*.md
+  const agents = config.tasks.enabled ? loadAgentProfiles(paths.agentsDir, logger) : [];
+
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
-    tools = createYoyoTools({ repos, search, tasks: config.tasks.enabled });
+    tools = createYoyoTools({ repos, search, tasks: config.tasks.enabled, agents });
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
     });
@@ -304,6 +308,10 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       main: context,
       // 结果写回主会话以后，叫醒主线程转告主人
       onFinished: (task) => orchestrator.relayTask(task.id),
+      agents,
+      toolNames: () => worker.list().map((definition) => definition.name),
+      // 类型写了 model：服务商、地址和密钥照 llm，只换模型名
+      modelFor: (id) => createLanguageModel({ ...config.llm, model: id }),
       ...(factSources ? { sources: factSources.reply } : {}),
       secrets: [config.llm.apiKey].filter(Boolean),
     });
