@@ -23,6 +23,7 @@ status: stable
 | `pet.log`                     | 安装包开的桌宠的输出，每次开桌宠重写                                                                 |
 | `app.log`、`app.log.1`        | yoyo.app 起的常驻进程的输出；过了 5 MB 打开时挪成 `app.log.1`                                        |
 | `app.pid`                     | yoyo.app 开着时的进程号，更新时等它退出                                                              |
+| `agents/`                     | 自己加的子 agent 类型，一个 `.md` 一种，见[日常使用](usage.md#子任务)                                  |
 | `updates/`                    | 更新时下载、取出的新版和换版本的记录 `swap.log`，下次更新时清掉                                      |
 | `inbox.jsonl`、`director.pid` | 命令和菜单交给常驻进程的请求；常驻进程的 pid                                                         |
 
