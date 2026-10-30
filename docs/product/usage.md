@@ -43,6 +43,17 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 
 同时做两件（`tasks.concurrency` 可以改），多的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
 
+# 让 yoyo 读写文件
+
+回复时用工具（`llm.tools`）打开以后，yoyo 能读文件、写文件、改文件：「把我工作区里的会议记录整理一下」「帮我在 notes 里记一笔」。
+
+* 它只能写在工作区里，缺省是 `~/.yoyo/workspace`，可以用 `files.workspace` 换地方。
+* 想让它读别的地方（例如文稿），加进 `files.readable`，只读不写；不想让它看的，加进 `files.denyRead`。
+* 配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到。
+* 它主动转告子任务结果的那一句不会动文件；写和改都记在工作台的轨迹里。
+
+不想要哪个，把 `files.read`、`files.write`、`files.edit` 设成 `deny`。
+
 # 按键
 
 Control+Option+Y：马上听一句。需要系统允许辅助功能。

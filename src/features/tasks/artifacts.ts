@@ -62,6 +62,7 @@ export function artifactName(raw: unknown): string {
 export interface DeliverInput {
   readonly id: number;
   readonly name: unknown;
+  /** 文字，或者已经读出来的字节（从工作区里交文件时）。 */
   readonly content: unknown;
   /** `utf8`（缺省）或 `base64`（图片之类）。 */
   readonly encoding?: 'utf8' | 'base64';
@@ -71,8 +72,16 @@ export interface DeliverInput {
 export function deliverArtifact(repos: ArtifactRepos, files: ArtifactFiles, input: DeliverInput, now: Date): Artifact {
   const task = runningTask(repos, input.id);
   const name = artifactName(input.name);
-  if (typeof input.content !== 'string') throw new TaskError('内容要是一段文字；图片之类用 base64，encoding 写 base64');
-  const bytes = input.encoding === 'base64' ? Buffer.from(input.content, 'base64') : Buffer.from(input.content, 'utf8');
+  const { content } = input;
+  if (typeof content !== 'string' && !(content instanceof Uint8Array)) {
+    throw new TaskError('内容要是一段文字；图片之类用 base64，encoding 写 base64');
+  }
+  const bytes =
+    content instanceof Uint8Array
+      ? Buffer.from(content)
+      : input.encoding === 'base64'
+        ? Buffer.from(content, 'base64')
+        : Buffer.from(content, 'utf8');
   if (bytes.length === 0) throw new TaskError('内容不能空着');
   if (bytes.length > ARTIFACT_MAX) throw new TaskError(`太大了：${sizeText(bytes.length)}，单个最多 5 MB`);
   const existing = repos.artifacts.list({ task: task.id, limit: ARTIFACTS_PER_TASK + 1 });

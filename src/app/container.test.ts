@@ -135,6 +135,21 @@ describe('container', () => {
     await app.close();
   });
 
+  test('读写文件：llm.tools 打开才有，按 files 的开关挑；工作区建在数据目录下', async () => {
+    const paths = tempPaths();
+    const app = await createApp(
+      parseConfig({ stage: 'console', llm: { ...LLM, tools: true }, files: { edit: 'deny' } }),
+      paths,
+      { logger: memoryLogger() },
+    );
+    assert.deepEqual(
+      ['read', 'write', 'edit'].map((name) => app.tools?.has(name)),
+      [true, true, false],
+    );
+    assert.ok(existsSync(paths.workspaceDir));
+    await app.close();
+  });
+
   test('recall 工具：只在记忆打开、llm.tools 打开时注册，只交给回复，调用走记忆这个执行环境', async () => {
     const off = await createApp(parseConfig({ stage: 'console', llm: { ...LLM, tools: true } }), tempPaths(), {
       logger: memoryLogger(),

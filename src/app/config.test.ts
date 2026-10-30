@@ -151,6 +151,16 @@ describe('config', () => {
     }
   });
 
+  test('读写文件：工作区缺省、三个工具都给；写错的按缺省', () => {
+    const defaults = { workspace: '', readable: [], denyRead: [], read: 'allow', write: 'allow', edit: 'allow' };
+    assert.deepEqual(parseConfig({}).files, defaults);
+    assert.deepEqual(parseConfig({ files: 'x' }).files, defaults);
+    assert.deepEqual(
+      parseConfig({ files: { workspace: '~/work', readable: ['~/Documents', 3], write: 'deny', edit: 'ask' } }).files,
+      { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny' },
+    );
+  });
+
   test('整段写成 null 或者不是对象，当没写', () => {
     const config = parseConfig({ ...FIRST, llm: null, listen: null, speech: null, context: 'x', mcpServers: null });
     assert.equal(config.llm.apiKey, '');
