@@ -6,6 +6,7 @@ import type { McpServerConfig } from '@modelctx-ai/ctx-mcp';
 
 import type { SandboxConfig } from '../app/config.ts';
 import { inside } from '../features/files/access.ts';
+import { real } from './files.ts';
 
 /**
  * 把 stdio 的 MCP 服务器放进沙箱程序里启动（缺省 srt，`@anthropic-ai/sandbox-runtime`）。
@@ -191,7 +192,8 @@ export function bashSandboxSettings(policy: Json, scope: BashScope): Json {
   const network = isRecord(base['network']) ? base['network'] : {};
   const filesystem = isRecord(base['filesystem']) ? base['filesystem'] : {};
   const own = [scope.dataDir, scope.configFile, ...(scope.policyFile ? [scope.policyFile] : [])]
-    .map((path) => resolve(path))
+    // 工作区是解析过符号链接的真实路径，这几个也先解析再比（macOS 的 /var 是 /private/var 的链接）
+    .map((path) => real(resolve(path)))
     .filter((path) => path !== scope.workspace && inside(path, scope.workspace));
   return {
     ...base,

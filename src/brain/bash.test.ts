@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'vite-plus/test';
 
@@ -247,7 +247,10 @@ describe('prepareBash：沙箱设置和有没有这个工具', () => {
     const { settings } = calls()[0]!;
     assert.deepEqual(settings.network, { allowedDomains: [], deniedDomains: [] });
     assert.deepEqual(settings.filesystem.allowWrite[0], realpathSync(home));
-    assert.deepEqual(settings.filesystem.denyWrite, [resolve(paths.dataDir), resolve(paths.configFile)]);
+    assert.deepEqual(settings.filesystem.denyWrite, [
+      realpathSync(paths.dataDir),
+      join(realpathSync(dirname(paths.configFile)), basename(paths.configFile)),
+    ]);
   });
 
   test('sandbox.policy 里和范围无关的字段留着，给 MCP 放行的域名和可写目录不借给 bash', async () => {
