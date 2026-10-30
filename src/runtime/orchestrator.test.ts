@@ -480,8 +480,8 @@ describe('orchestrator 跑模型', () => {
     await orchestrator.close();
   });
 
-  test('转告那一轮：工具照给，读写文件的不给；没开工具就都不给', () => {
-    assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'yoyo']), ['web_search', 'yoyo']);
+  test('转告那一轮：工具照给，读写文件和跑命令的不给；没开工具就都不给', () => {
+    assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'bash', 'yoyo']), ['web_search', 'yoyo']);
     assert.equal(relayTools(false, ['web_search', 'read']), false);
     assert.equal(relayTools(true, undefined), true);
   });

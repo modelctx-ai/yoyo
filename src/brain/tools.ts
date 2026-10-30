@@ -351,7 +351,7 @@ export function addTaskWorkerTools(
     tool({
       description:
         '交一个文件给主人：整理好的 Markdown、CSV 表格、JSON、图片。存进这个子任务自己的交付物里，工作台能看能下载。' +
-        '写出内容交用 content；已经在工作区里的文件（例如用 write 写好的）用 path 交，不用再抄一遍。' +
+        '写出内容交用 content；已经在工作区里的文件（例如用 write 写好的，或者用 bash 跑脚本生成的）用 path 交，不用再抄一遍。' +
         `文件名只写名字（例如「周报.md」「对比.csv」），同名的会换成新的；单个最多 5 MB，一个子任务最多 ${ARTIFACTS_PER_TASK} 个。` +
         '结果里照样写结论，并说交了哪些文件。',
       inputSchema: z.object({

@@ -88,6 +88,17 @@ describe('子 agent 类型', () => {
     assert.equal(agentTools(BUILTIN_AGENTS[0]!, available), true);
   });
 
+  test('bash 只有 general 有：research、writer 的清单里没有，要用自己在 tools 里写', () => {
+    const available = ['read', 'write', 'edit', 'bash', 'recall', 'yoyo'];
+    assert.equal(agentTools(BUILTIN_AGENTS[0]!, available), true);
+    for (const name of ['research', 'writer']) {
+      const profile = BUILTIN_AGENTS.find((item) => item.name === name)!;
+      assert.ok(!(agentTools(profile, available) as string[]).includes('bash'), name);
+    }
+    const custom = parseAgentFile(REVIEWER.replace('[web_search, "github__*"]', 'read, bash'), 'x', 'x.md');
+    assert.ok((agentTools(custom, available) as string[]).includes('bash'));
+  });
+
   test('给主线程看的清单：名字和什么时候用', () => {
     assert.match(agentMenu(BUILTIN_AGENTS), /^general：什么都能做.*\nresearch：上网查.*\nwriter：把给的材料/);
   });

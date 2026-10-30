@@ -42,6 +42,7 @@ import {
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
+import { addBashTool, prepareBash } from '../brain/bash.ts';
 import { addFileTools, createFileAccess } from '../brain/files.ts';
 import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
@@ -208,11 +209,16 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   const cli = overrides.cli ?? createCliRunner(paths);
   // 读写文件：工作区能读能写，别处按 files.readable、files.denyRead
   const fileAccess = config.llm.tools ? createFileAccess({ config: config.files, paths }) : null;
+  // 跑命令：沙箱程序找得到才有 bash，找不到记一行，不退回不加沙箱的跑法
+  const bash = fileAccess
+    ? prepareBash({ files: config.files, sandbox: config.sandbox, paths, access: fileAccess, logger })
+    : null;
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
     const local = createYoyoTools({ repos, search, cli, tasks: config.tasks.enabled, agents });
     if (fileAccess) addFileTools(local, { access: fileAccess, repos, allow: config.files });
+    if (fileAccess && bash) addBashTool(local, { access: fileAccess, repos, sandbox: bash, config: config.files });
     tools = local;
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
@@ -304,6 +310,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   if (config.tasks.enabled) {
     const worker = createYoyoTools({ repos, search, cli });
     if (fileAccess) addFileTools(worker, { access: fileAccess, repos, allow: config.files });
+    if (fileAccess && bash) addBashTool(worker, { access: fileAccess, repos, sandbox: bash, config: config.files });
     addTaskWorkerTools(worker, { repos, files: artifactFiles, ...(fileAccess ? { access: fileAccess } : {}) });
     const shared = new Set(executors.map((executor) => executor.name));
     for (const definition of tools?.list() ?? []) {

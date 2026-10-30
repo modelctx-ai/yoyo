@@ -151,14 +151,36 @@ describe('config', () => {
     }
   });
 
-  test('读写文件：工作区缺省、三个工具都给；写错的按缺省', () => {
-    const defaults = { workspace: '', readable: [], denyRead: [], read: 'allow', write: 'allow', edit: 'allow' };
+  test('读写文件：工作区缺省、四个工具都给、bash 网络全关；写错的按缺省', () => {
+    const defaults = {
+      workspace: '',
+      readable: [],
+      denyRead: [],
+      read: 'allow',
+      write: 'allow',
+      edit: 'allow',
+      bash: 'allow',
+      bashNetwork: [],
+      bashTimeout: 120,
+      bashMaxTimeout: 600,
+    };
     assert.deepEqual(parseConfig({}).files, defaults);
     assert.deepEqual(parseConfig({ files: 'x' }).files, defaults);
     assert.deepEqual(
       parseConfig({ files: { workspace: '~/work', readable: ['~/Documents', 3], write: 'deny', edit: 'ask' } }).files,
       { ...defaults, workspace: '~/work', readable: ['~/Documents', '3'], write: 'deny' },
     );
+    assert.deepEqual(
+      parseConfig({
+        files: { bash: 'deny', bashNetwork: ['pypi.org', 7, null], bashTimeout: '30', bashMaxTimeout: 900 },
+      }).files,
+      { ...defaults, bash: 'deny', bashNetwork: ['pypi.org', '7'], bashTimeout: 30, bashMaxTimeout: 900 },
+    );
+    for (const bashTimeout of [0, -1, 5000, 'long', '']) {
+      assert.equal(parseConfig({ files: { bashTimeout } }).files.bashTimeout, 120, String(bashTimeout));
+    }
+    assert.equal(parseConfig({ files: { bash: 'ask', bashNetwork: 'pypi.org' } }).files.bash, 'allow');
+    assert.deepEqual(parseConfig({ files: { bashNetwork: 'pypi.org' } }).files.bashNetwork, []);
   });
 
   test('整段写成 null 或者不是对象，当没写', () => {
