@@ -59,7 +59,8 @@
   },
   "tasks": {
     "enabled": true,
-    "notify": true
+    "notify": true,
+    "concurrency": 2
   },
   "context": {
     "keep": 40

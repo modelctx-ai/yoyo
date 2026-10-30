@@ -220,7 +220,7 @@ function todoLines(todos: readonly Todo[]): string[] {
   );
 }
 
-/** 一个子任务的全部：命令行的 `task show` 和主线程的 `task_show` 工具都用它。 */
+/** 一个子任务的全部：命令行的 `task show` 用它，主线程经 `yoyo` 工具看到的也是这段。 */
 export function taskDetail(task: AgentTask): string {
   const parts = [`#${task.id} ${task.title}（${STATE_LABELS[task.state]}，${task.agent}）`, '', `目标：${task.goal}`];
   if (task.criteria.length > 0) parts.push('', '验收标准：', ...task.criteria.map((c, i) => `${i + 1}. ${c}`));

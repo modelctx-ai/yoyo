@@ -161,6 +161,19 @@ describe('schedule', () => {
     );
   });
 
+  test('一模一样的已经有了就交回那条，不重复加；差一点的照加', () => {
+    const { repos, events } = memoryRepos();
+    const first = addSchedule(repos, { title: '开周会', time: '10:00', repeat: 'weekly', weekday: 1 });
+    assert.equal(addSchedule(repos, { title: ' 开周会', time: '10:00', repeat: 'weekly', weekday: 1 }), first);
+    assert.equal(events.length, 1, '没加就不记');
+    assert.notEqual(addSchedule(repos, { title: '开周会', time: '10:00', repeat: 'weekly', weekday: 2 }).id, first.id);
+    assert.notEqual(
+      addSchedule(repos, { title: '开周会', time: '10:00', repeat: 'weekly', weekday: 1, kind: 'task' }).id,
+      first.id,
+    );
+    assert.equal(repos.schedule.list().length, 3);
+  });
+
   test('删掉日程记一条 schedule-remove；没有这条就是 null', () => {
     const { repos, events } = memoryRepos();
     const alarm = addSchedule(repos, { title: '喝水', time: '15:30', repeat: 'daily' });

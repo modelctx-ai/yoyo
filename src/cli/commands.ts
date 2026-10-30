@@ -38,15 +38,23 @@ import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
 import type { AgentProfile } from '../features/tasks/agents.ts';
-import { TaskError, cancelAgentTask, createAgentTask, taskDetail, taskRow } from '../features/tasks/tasks.ts';
+import {
+  STATE_LABELS,
+  TaskError,
+  cancelAgentTask,
+  createAgentTask,
+  taskDetail,
+  taskRow,
+} from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
-import type { InboxRequest } from '../kernel/types.ts';
+import type { AgentTaskState, InboxRequest } from '../kernel/types.ts';
 import type { Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
 import { compactContext } from '../runtime/compact.ts';
 import { directorAlive, enqueue } from '../runtime/inbox.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { flagText, type Domain } from './registry.ts';
+import { searchKinds, searchRows, searchTerms } from './search.ts';
 
 /** 命令用到的东西都按需才做：只读写本地库的命令不读配置，也不碰桌宠和语音。 */
 export interface CommandEnv {
@@ -126,6 +134,15 @@ const STEP_LABELS: Readonly<Record<TaskStep['kind'], string>> = {
 
 function agentProfiles(env: CommandEnv): AgentProfile[] {
   return loadAgentProfiles(env.paths.agentsDir, env.logger);
+}
+
+/** `--state` 写的状态，逗号分开；写错报出能写哪些。 */
+function taskStates(value: string): AgentTaskState[] {
+  const all = Object.keys(STATE_LABELS) as AgentTaskState[];
+  const picked = value.split(',').map((item) => item.trim());
+  const wrong = picked.filter((item) => !(all as string[]).includes(item));
+  if (wrong.length > 0) throw new Error(`没有「${wrong.join('、')}」这种状态，有：${all.join('、')}`);
+  return picked as AgentTaskState[];
 }
 
 function taskId(args: readonly string[]): number {
@@ -235,6 +252,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'list',
           summary: '列出日程',
+          agent: true,
           run() {
             const items = env.repos().schedule.list();
             if (items.length === 0) return env.out('还没有日程');
@@ -273,6 +291,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'list',
           summary: '列出联系人',
+          agent: true,
           run() {
             const items = env.repos().contacts.list();
             if (items.length === 0) return env.out('还没有联系人');
@@ -351,6 +370,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'tail',
           summary: '最后几条原文',
+          agent: true,
           async run() {
             const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
             // entries 按写入顺序返回；导入的桌宠对话 at 在过去，展示前按 (at, seq) 排回它们的位置
@@ -385,6 +405,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'core',
           summary: '画像和它的更新时间',
+          agent: true,
           async run() {
             const core = await openMemoryStore(env.db()).core.get();
             if (!core?.text.trim()) return env.out('还没有画像');
@@ -395,6 +416,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'facts',
           summary: '仍然成立的事实',
+          agent: true,
           flags: ['topic'],
           async run(flags) {
             const topic = flagText(flags, 'topic');
@@ -406,6 +428,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'history',
           summary: '一条事实的来源原文、取代了谁、被谁取代',
+          agent: true,
           usage: '<id>',
           async run(_flags, args) {
             const [id] = args;
@@ -437,6 +460,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'rules',
           summary: '夜里从教训里归纳出的程序',
+          agent: true,
           async run() {
             const rules = await openMemoryStore(env.db()).procedures.list({ active: true });
             if (rules.length === 0) return env.out('还没有程序');
@@ -555,20 +579,25 @@ export function buildDomains(env: CommandEnv): Domain[] {
       aliases: ['tasks'],
       summary: '子任务：yoyo 派给后台子 agent 的事',
       detail:
-        '平时只和 yoyo 说，要花时间、要好几步的事它派成子任务在后台做：先拆 todo、边做边标，验收标准逐条对上再把结果交回 yoyo。常驻进程在跑才会做，一次做一件。',
+        '平时只和 yoyo 说，要花时间、要好几步的事它派成子任务在后台做：先拆 todo、边做边标，验收标准逐条对上再把结果交回 yoyo。常驻进程在跑才会做，同时做几件看 tasks.concurrency（缺省 2），多的排队。',
       verbs: [
         {
           name: 'list',
           summary: '最近的子任务：编号、状态、todo 进度、标题',
-          run() {
-            const tasks = env.repos().agentTasks.list({ limit: 20 });
-            if (tasks.length === 0) return env.out('还没有子任务');
+          agent: true,
+          flags: ['state'],
+          run(flags) {
+            const state = flagText(flags, 'state');
+            const states = state ? taskStates(state) : undefined;
+            const tasks = env.repos().agentTasks.list({ limit: 20, ...(states ? { states } : {}) });
+            if (tasks.length === 0) return env.out(state ? `没有「${state}」的子任务` : '还没有子任务');
             for (const task of tasks) env.out(taskRow(task));
           },
         },
         {
           name: 'show',
           summary: '一个子任务的全部：目标、验收标准、todo、结果',
+          agent: true,
           usage: '<编号>',
           run(_flags, args) {
             const task = env.repos().agentTasks.get(taskId(args));
@@ -579,6 +608,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'log',
           summary: '子 agent 一步步做了什么：收到的话、调的工具、工具回的',
+          agent: true,
           usage: '<编号>',
           async run(_flags, args) {
             const id = taskId(args);
@@ -613,6 +643,7 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'agents',
           summary: '有哪些子 agent 类型：内置的，加上 ~/.yoyo/agents/*.md',
+          agent: true,
           run() {
             for (const profile of agentProfiles(env)) {
               const tools = profile.tools ? profile.tools.join(', ') || '只有任务工具' : '全部工具';
@@ -695,12 +726,55 @@ export function buildDomains(env: CommandEnv): Domain[] {
       ],
     },
     {
+      name: 'search',
+      summary: '在对话、子任务、记住的事、日程、联系人里找',
+      detail:
+        '几个词都要有，不分大小写；每类最多 --limit 条（缺省 8），新的在前。--in 只找哪几类：chat、tasks、facts、alarms、contacts，逗号分开。',
+      fallback: 'all',
+      verbs: [
+        {
+          name: 'all',
+          summary: '找一个词：yoyo search 周报',
+          usage: '<词>...',
+          flags: ['in', 'limit'],
+          agent: true,
+          async run(flags, args) {
+            const terms = searchTerms(args);
+            if (terms.length === 0) return env.out('要给词：yoyo search 周报');
+            const kinds = new Set(searchKinds(flagText(flags, 'in')));
+            const limit = Math.max(1, Math.floor(Number(flagText(flags, 'limit')) || 8));
+            const repos = env.repos();
+            const rows = searchRows(
+              {
+                ...(kinds.has('chat')
+                  ? {
+                      entries: await (
+                        await createYoyoContext({ db: env.db(), petId: env.settings().pet.id })
+                      ).entries({ last: 2000 }),
+                    }
+                  : {}),
+                ...(kinds.has('tasks') ? { tasks: repos.agentTasks.list({ limit: 500 }) } : {}),
+                ...(kinds.has('facts') ? { facts: await allFacts(openMemoryStore(env.db()), { open: true }) } : {}),
+                ...(kinds.has('alarms') ? { schedule: repos.schedule.list() } : {}),
+                ...(kinds.has('contacts') ? { contacts: repos.contacts.list() } : {}),
+              },
+              terms,
+              limit,
+            );
+            if (rows.length === 0) return env.out(`没找到「${terms.join(' ')}」`);
+            for (const row of rows) env.out(row);
+          },
+        },
+      ],
+    },
+    {
       name: 'log',
       summary: '最近做过的事',
       verbs: [
         {
           name: 'tail',
           summary: '最后 20 条记录',
+          agent: true,
           run() {
             const events = env.repos().activity.list(20);
             if (events.length === 0) return env.out('还没有记录');

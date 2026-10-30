@@ -137,13 +137,18 @@ describe('config', () => {
     assert.equal(parseConfig({ web: null }).web.enabled, true);
   });
 
-  test('子任务：缺省打开、做完说一声；写错按缺省', () => {
-    assert.deepEqual(parseConfig({}).tasks, { enabled: true, notify: true });
-    assert.deepEqual(parseConfig({ tasks: { enabled: 'false', notify: false } }).tasks, {
+  test('子任务：缺省打开、做完说一声、同时做两件；写错按缺省', () => {
+    const defaults = { enabled: true, notify: true, concurrency: 2 };
+    assert.deepEqual(parseConfig({}).tasks, defaults);
+    assert.deepEqual(parseConfig({ tasks: { enabled: 'false', notify: false, concurrency: '4' } }).tasks, {
       enabled: false,
       notify: false,
+      concurrency: 4,
     });
-    assert.deepEqual(parseConfig({ tasks: 'x' }).tasks, { enabled: true, notify: true });
+    assert.deepEqual(parseConfig({ tasks: 'x' }).tasks, defaults);
+    for (const concurrency of [0, 9, 1.5, 'many']) {
+      assert.equal(parseConfig({ tasks: { concurrency } }).tasks.concurrency, 2, String(concurrency));
+    }
   });
 
   test('整段写成 null 或者不是对象，当没写', () => {

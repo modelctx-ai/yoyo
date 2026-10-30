@@ -1,6 +1,8 @@
 /**
  * 命令从这张表长出来。顶层只列领域，细项要再问一层。
  * 找命令用 find，看用法用 inspect。不要在顶层把所有参数倒出来。
+ * 人和 agent 用的是同一张表：标了 `agent` 的动作，yoyo 自己的 agent（经 `yoyo` 工具）和别的 agent 都能调，
+ * 见 `agentDomains`。
  */
 
 /** `--key value` 记成字符串，后面没有值的 `--key` 记成 true。 */
@@ -12,6 +14,8 @@ export interface Verb {
   readonly flags?: readonly string[];
   /** 位置参数的写法，只给 inspect 看，例如 `<id>`。 */
   readonly usage?: string;
+  /** agent 也能调：只读，不改东西、不碰桌宠和网络之外的设备、不打出密钥。 */
+  readonly agent?: boolean;
   /** `args` 是动作后面的位置参数，例如 `yoyo memory forget <id>` 里的 id。 */
   run(flags: Flags, args: readonly string[]): void | Promise<void>;
 }
@@ -22,6 +26,20 @@ export interface Domain {
   readonly summary: string;
   readonly detail?: string;
   readonly verbs: readonly Verb[];
+  /** 领域后面那个词不是动作时，当成这个动作的参数，例如 `yoyo search 周报` 就是 `yoyo search all 周报`。 */
+  readonly fallback?: string;
+}
+
+/** agent 能看到、能调的那部分：只留标了 `agent` 的动作，一个都没有的领域整个不列。 */
+export function agentDomains(domains: readonly Domain[]): Domain[] {
+  const visible: Domain[] = [];
+  for (const { fallback, ...domain } of domains) {
+    const verbs = domain.verbs.filter((verb) => verb.agent);
+    if (verbs.length === 0) continue;
+    const keep = fallback && verbs.some((verb) => verb.name === fallback);
+    visible.push({ ...domain, verbs, ...(keep ? { fallback } : {}) });
+  }
+  return visible;
 }
 
 export type DispatchResult =
@@ -135,6 +153,8 @@ export function dispatch(domains: readonly Domain[], argv: readonly string[]): D
     return { kind: 'text', text: domainText(domain) };
   }
   const verb = domain.verbs.find((item) => item.name === verbName);
-  if (!verb) return { kind: 'text', text: domainText(domain) };
-  return { kind: 'run', domain, verb, flags, args: position.slice(2) };
+  if (verb) return { kind: 'run', domain, verb, flags, args: position.slice(2) };
+  const fallback = domain.verbs.find((item) => item.name === domain.fallback);
+  if (fallback) return { kind: 'run', domain, verb: fallback, flags, args: position.slice(1) };
+  return { kind: 'text', text: domainText(domain) };
 }

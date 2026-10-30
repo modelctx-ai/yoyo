@@ -42,7 +42,7 @@ import {
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
-import { addTaskWorkerTools, createYoyoTools } from '../brain/tools.ts';
+import { addTaskWorkerTools, createYoyoTools, type CliRun } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
 import type {
   AudioPlayer,
@@ -64,6 +64,7 @@ import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
 import { loadAgentProfiles } from './agents.ts';
+import { createCliRunner } from './cli.ts';
 import { speechReady, type AnysearchConfig, type Config } from './config.ts';
 import { consoleLogger, errorText } from './log.ts';
 import type { Paths } from './paths.ts';
@@ -116,6 +117,8 @@ export interface AppOverrides extends Partial<AppServices> {
   readonly platform?: NodeJS.Platform;
   /** 换配置重建应用时接着上一个的，见 `Resume`。 */
   readonly resume?: Resume;
+  /** 测试用：agent 的 `yoyo` 工具怎么跑命令行。 */
+  readonly cli?: CliRun;
 }
 
 /** 换配置重建应用时从上一个接过来的：碎碎念的排期（不然一换就马上说一句），管理页的端口和令牌（开着的页面接着能用）。 */
@@ -195,10 +198,12 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   // 子 agent 的类型：内置的加上 ~/.yoyo/agents/*.md
   const agents = config.tasks.enabled ? loadAgentProfiles(paths.agentsDir, logger) : [];
 
+  // agent 的 yoyo 工具：另起进程跑命令行，只开 agent 那部分
+  const cli = overrides.cli ?? createCliRunner(paths);
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
-    tools = createYoyoTools({ repos, search, tasks: config.tasks.enabled, agents });
+    tools = createYoyoTools({ repos, search, cli, tasks: config.tasks.enabled, agents });
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
     });
@@ -286,7 +291,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   // 另一个上下文和 harness（同一个存储），和自己的编排器（`record: true`，所以配 owner、开始前 recover）
   let tasks: TaskRunner | null = null;
   if (config.tasks.enabled) {
-    const worker = createYoyoTools({ repos, search });
+    const worker = createYoyoTools({ repos, search, cli });
     addTaskWorkerTools(worker, { repos });
     const shared = new Set(executors.map((executor) => executor.name));
     for (const definition of tools?.list() ?? []) {
@@ -306,6 +311,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       runs: createOrchestrator({ harness: taskHarness, store: context.store, owner: 'yoyo-tasks', logger }),
       model,
       main: context,
+      concurrency: config.tasks.concurrency,
       // 结果写回主会话以后，叫醒主线程转告主人
       onFinished: (task) => orchestrator.relayTask(task.id),
       agents,
