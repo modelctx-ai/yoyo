@@ -57,6 +57,9 @@
     "enabled": true,
     "port": 0
   },
+  "app": {
+    "launchAtLogin": false
+  },
   "tasks": {
     "enabled": true,
     "notify": true,

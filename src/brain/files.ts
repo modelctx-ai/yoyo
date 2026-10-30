@@ -48,7 +48,7 @@ export interface FileAccess {
 }
 
 /** 解析符号链接：存在的最长前缀换成真实路径，后面还不存在的部分原样接上。 */
-function real(path: string): string {
+export function real(path: string): string {
   const rest: string[] = [];
   let current = path;
   for (;;) {

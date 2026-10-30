@@ -11,7 +11,7 @@ status: stable
 |          | 安装包                              | 从源码                                                        |
 | -------- | ----------------------------------- | ------------------------------------------------------------- |
 | 适合     | 只想用                              | 要改 yoyo                                                     |
-| 系统     | macOS，Apple 芯片                   | macOS。别的系统只能用[控制台模式](#不接桌宠试一试)            |
+| 系统     | macOS，Apple 芯片或 Intel           | macOS。别的系统只能用[控制台模式](#不接桌宠试一试)            |
 | 另外要装 | 不用                                | Node ≥22.18、pnpm 10、ctx；听写还要 `ffmpeg` 和 `whisper-cli` |
 | 配置在   | `~/.yoyo/config.json`               | yoyo 目录的 `config.json`                                     |
 | 命令     | 打开 yoyo.app；终端里 `yoyo <领域>` | `pnpm start`、`pnpm yoyo <领域>`                              |
@@ -23,7 +23,7 @@ status: stable
 
 包里带着 yoyo、桌宠 dsh-pet（独立模式和它用的 Electron）、Node、录音的 ffmpeg、听写的 whisper-cli 和模型、按键助手。不用克隆仓库，也不用装 Node、pnpm 或 Homebrew。
 
-1. 到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载 `yoyo-<版本>-macos-arm64.dmg`，打开，把 yoyo 拖进「应用程序」。
+1. 到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载自己 Mac 对应的 dmg，打开，把 yoyo 拖进「应用程序」。Apple 芯片（M1 及以后）下 `yoyo-<版本>-macos-arm64.dmg`，Intel 芯片下 `yoyo-<版本>-macos-x86_64.dmg`；不确定就点左上角苹果菜单「关于本机」，看「芯片」还是「处理器」。下错了打不开，换一个就行。
 2. 打开 yoyo。它没经过 Apple 公证，第一次会被系统拦下：到「系统设置 → 隐私与安全性」，在最下面点「仍要打开」，以后不再问。
 3. 第一次打开会把示例配置放到 `~/.yoyo/config.json`，然后提示没跑起来。点「打开配置」，填上 `speech.apiKey` 和 `speech.referenceId`。想让模型现写，再填 `llm` 的 `baseUrl`、`apiKey`、`model`。
 4. 存好，再打开 yoyo：桌宠出来、开口说话，yoyo 的窗口里是[工作台](usage.md#工作台)。
@@ -32,14 +32,23 @@ status: stable
 * 第一次听你说话时，系统会问 yoyo 能不能用麦克风；第一次按 Control+Option+Y 时，要在「辅助功能」里允许 yoyo。
 * 桌宠已经开着（例如你自己用独立模式开的）就直接用，退出时也不关它。yoyo 开的桌宠，输出记在 `~/.yoyo/pet.log`；yoyo 自己的记在 `~/.yoyo/app.log`，菜单「yoyo → 打开日志」能看。
 * 终端里已经在跑 `yoyo start`，再打开 yoyo 就只显示工作台，不另起一份。
+* Intel Mac 上听写用 CPU，说完一句到出字会比 Apple 芯片慢一点。
+
+## 开机自启
+
+想让 yoyo 在你登录 Mac 时自己打开：菜单「yoyo → 开机时打开」勾上，或者工作台「设置」里打开「登录时打开 yoyo」，也可以在 `config.json` 里写 `"app": { "launchAtLogin": true }`，三处是同一项，改完几秒内生效。
+
+* 要 macOS 13 以上，yoyo 放在「应用程序」里。
+* 登录项是系统管的：以后想关，在菜单里取消勾选就行，也可以到「系统设置 → 通用 → 登录项」里关。在系统设置里手动关掉以后，yoyo 不会再自己打开它，要重新打开请在那里允许。
+* 不是从 yoyo.app 跑的（从源码运行、终端里 `yoyo start`）没有这一项的效果，开关只是改了配置。
 
 ## 更新
 
-yoyo 开着时，每 6 小时到 Releases 看一次有没有新版本，有就问你要不要更新；菜单「yoyo → 检查更新…」随时能看。点「更新并重开」，yoyo 下载新的 dmg、校验，退出后换上新版再自己打开。配置和数据在 `~/.yoyo`，不受影响。
+yoyo 开着时，每 6 小时到 Releases 看一次有没有新版本，有就问你要不要更新；菜单「yoyo → 检查更新…」随时能看。问你的对话框里能看到这一版的更新说明（Release 页上写的，长的可以滚动）。点「更新并重开」，yoyo 下载自己架构的新 dmg，窗口里有进度条和百分比，校验通过后退出，换上新版再自己打开。配置和数据在 `~/.yoyo`，不受影响。
 
 * yoyo 没经过公证，换上新版以后系统可能要你重新允许麦克风和辅助功能。
 * 「应用程序」改不了（例如当前用户不是管理员）就更新不了。到 Releases 下载 dmg，手动拖进去替换。
-* 终端里也能更新：`yoyo update check` 看有没有，`yoyo update install` 换上。
+* 终端里也能更新：`yoyo update check` 看有没有，`yoyo update install` 换上，下载时每涨 5% 打一行进度。
 
 ## 在终端里用
 
@@ -57,6 +66,7 @@ sudo ln -sf /Applications/yoyo.app/Contents/Resources/yoyo /usr/local/bin/yoyo
 | `yoyo bake`           | 把固定台词预先合成好，之后开口更快                                          |
 | `yoyo pet`            | 只开桌宠；`yoyo pet --check` 看桌宠的环境                                   |
 | `yoyo update check`   | 看有没有新版本；`yoyo update install` 换上                                  |
+| `yoyo app login`      | 看或改登录时自动打开：`yoyo app login on`、`off`                            |
 | `yoyo <领域> [动作]`  | 命令行，见[日常使用](usage.md)                                              |
 
 # 从源码运行

@@ -21,7 +21,7 @@ import {
   type App,
   type AppOverrides,
 } from '../app/container.ts';
-import { consoleLogger } from '../app/log.ts';
+import { consoleLogger, errorText } from '../app/log.ts';
 import { loadAgentProfiles } from '../app/agents.ts';
 import type { Paths } from '../app/paths.ts';
 import {
@@ -29,6 +29,7 @@ import {
   createUpdateSystem,
   installUpdate,
   installedVersion,
+  stepProgress,
   UPDATE_REPO,
   type UpdateSystem,
 } from '../app/update.ts';
@@ -63,6 +64,7 @@ import { directorAlive, enqueue } from '../runtime/inbox.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
+import { saveSwitches } from '../web/settings.ts';
 import { flagText, type Domain } from './registry.ts';
 import { searchKinds, searchRows, searchTerms } from './search.ts';
 
@@ -207,6 +209,45 @@ function guard<T>(work: () => T): T {
 
 function updateRepo(): string {
   return process.env['YOYO_UPDATE_REPO'] || UPDATE_REPO;
+}
+
+function megabytes(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)}`;
+}
+
+/** 终端里的一行下载进度；不知道总大小就只说下了多少。 */
+function downloadLine(done: number, total: number): string {
+  if (total <= 0) return `已下载 ${megabytes(done)} MB`;
+  return `下载 ${Math.min(100, Math.floor((done / total) * 100))}%（${megabytes(done)}/${megabytes(total)} MB）`;
+}
+
+/**
+ * `yoyo update install --json`：一行一个 JSON 事件，给 app 外壳读。
+ * `{"type":"step","text":…}` 做到哪一步；`{"type":"progress","done":…,"total":…}` 下载进度（字节，每 1% 一条，总大小不知道时 total 是 0）；
+ * 最后是 `{"type":"done","updated":…,"message":…}` 或 `{"type":"error","message":…}`（出错时命令也以非 0 退出）。
+ */
+async function installJson(env: CommandEnv): Promise<void> {
+  const emit = (event: Record<string, unknown>) => env.out(JSON.stringify(event));
+  try {
+    const system = env.updater();
+    const check = await checkUpdate(env.installed(), system, updateRepo());
+    if (!check.available) return emit({ type: 'done', updated: false, message: check.message });
+    const { relaunch } = await installUpdate({
+      check,
+      paths: env.paths,
+      system,
+      out: (text) => emit({ type: 'step', text }),
+      progress: stepProgress(1, (done, total) => emit({ type: 'progress', done, total })),
+    });
+    emit({
+      type: 'done',
+      updated: true,
+      message: relaunch ? `换上 ${check.latest} 后重开 yoyo` : `${check.latest} 装好了`,
+    });
+  } catch (error) {
+    emit({ type: 'error', message: errorText(error) });
+    throw error;
+  }
 }
 
 function oneLine(text: string, max: number): string {
@@ -910,8 +951,8 @@ export function buildDomains(env: CommandEnv): Domain[] {
           async run(flags) {
             const check = await checkUpdate(env.installed(), env.updater(), updateRepo());
             if (flags['json'] === true) {
-              const { current, latest, available, page, message } = check;
-              return env.out(JSON.stringify({ current, latest, available, page, message }));
+              const { current, latest, available, page, body, message } = check;
+              return env.out(JSON.stringify({ current, latest, available, page, body, message }));
             }
             env.out(check.message);
             if (check.available) env.out('yoyo update install 换上新版');
@@ -920,12 +961,46 @@ export function buildDomains(env: CommandEnv): Domain[] {
         {
           name: 'install',
           summary: '下载新版本，换上以后重开 yoyo.app',
-          async run() {
+          flags: ['json'],
+          async run(flags) {
+            if (flags['json'] === true) return installJson(env);
             const system = env.updater();
             const check = await checkUpdate(env.installed(), system, updateRepo());
             if (!check.available) return env.out(check.message);
-            const { relaunch } = await installUpdate({ check, paths: env.paths, system, out: (text) => env.out(text) });
+            const { relaunch } = await installUpdate({
+              check,
+              paths: env.paths,
+              system,
+              out: (text) => env.out(text),
+              // 终端里每 5% 一行
+              progress: stepProgress(5, (done, total) => {
+                if (done > 0) env.out(downloadLine(done, total));
+              }),
+            });
             env.out(relaunch ? `换上 ${check.latest} 后重开 yoyo` : `${check.latest} 装好了`);
+          },
+        },
+      ],
+    },
+    {
+      name: 'app',
+      summary: 'yoyo.app 自己的设置',
+      detail:
+        '只有从 yoyo.app 跑才管用，从源码跑的没有 app 外壳。login 看或改 config.json 的 app.launchAtLogin：开了，登录 Mac 时 yoyo.app 自己打开（macOS 13 以上）；改完 app 几秒内跟上，和工作台设置页、app 菜单里的「开机时打开」是同一项。',
+      verbs: [
+        {
+          name: 'login',
+          summary: '看或改登录时自动打开 yoyo.app',
+          usage: '[on|off]',
+          run(_flags, args) {
+            const want = args[0];
+            if (want === undefined) {
+              return env.out(env.settings().app.launchAtLogin ? '登录时自动打开：开着' : '登录时自动打开：关着');
+            }
+            if (want !== 'on' && want !== 'off') throw new Error('要写 on 或 off：yoyo app login on');
+            saveSwitches(env.paths.configFile, { 'app.launchAtLogin': want === 'on' });
+            env.out(want === 'on' ? '登录时会自动打开 yoyo' : '登录时不再自动打开 yoyo');
+            if (!env.paths.appBundle) env.out('注意：现在不是从 yoyo.app 跑的，这一项只在 yoyo.app 里管用');
           },
         },
       ],

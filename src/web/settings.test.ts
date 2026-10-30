@@ -54,6 +54,7 @@ describe('管理页改配置', () => {
     assert.equal(settings.switches['weather.enabled'], true);
     assert.equal(settings.switches['memory.enabled'], false);
     assert.equal(settings.switches['speech.autoplay'], true);
+    assert.equal(settings.switches['app.launchAtLogin'], false);
   });
 
   test('存整份：没动的密钥还是原来的，改了的存上，认不得的键留着；权限照旧', () => {
@@ -96,9 +97,11 @@ describe('管理页改配置', () => {
 
   test('只改开关：别的原样留着；不认得的开关、不是 true/false 都不收', () => {
     const file = configFile();
-    saveSwitches(file, { 'weather.enabled': false, 'memory.enabled': true });
-    const saved = read(file) as typeof RAW & { weather: unknown; memory: unknown };
+    saveSwitches(file, { 'weather.enabled': false, 'memory.enabled': true, 'app.launchAtLogin': true });
+    const saved = read(file) as typeof RAW & { weather: unknown; memory: unknown; app: unknown };
     assert.deepEqual(saved.weather, { enabled: false });
+    assert.deepEqual(saved.app, { launchAtLogin: true });
+    assert.equal(readSettings(file).switches['app.launchAtLogin'], true);
     assert.deepEqual(saved.memory, { enabled: true });
     assert.equal(saved.llm.apiKey, 'sk-real');
     assert.throws(() => saveSwitches(file, { 'web.enabled': false }), { message: 'web.enabled 不是能直接点的开关' });

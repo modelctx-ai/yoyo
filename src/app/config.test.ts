@@ -138,6 +138,15 @@ describe('config', () => {
     assert.equal(parseConfig({ web: null }).web.enabled, true);
   });
 
+  test('app：开机自启缺省关；写错按缺省，写成字符串也认', () => {
+    assert.deepEqual(parseConfig({}).app, { launchAtLogin: false });
+    assert.equal(parseConfig({ app: { launchAtLogin: true } }).app.launchAtLogin, true);
+    assert.equal(parseConfig({ app: { launchAtLogin: 'true' } }).app.launchAtLogin, true);
+    assert.equal(parseConfig({ app: { launchAtLogin: 1 } }).app.launchAtLogin, false);
+    assert.equal(parseConfig({ app: null }).app.launchAtLogin, false);
+    assert.equal(parseConfig({ app: 'on' }).app.launchAtLogin, false);
+  });
+
   test('子任务：缺省打开、做完说一声、同时做两件、等回答 24 小时；写错按缺省', () => {
     const defaults = { enabled: true, notify: true, concurrency: 2, answerTimeout: 24 };
     assert.deepEqual(parseConfig({}).tasks, defaults);
