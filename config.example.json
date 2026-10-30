@@ -57,6 +57,10 @@
     "enabled": true,
     "port": 0
   },
+  "tasks": {
+    "enabled": true,
+    "notify": true
+  },
   "context": {
     "keep": 40
   },

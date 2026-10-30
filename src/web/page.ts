@@ -46,6 +46,35 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .session { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 9px 10px; cursor: pointer; text-align: left; }
 .session.active { background: var(--hover); }
 .hint { color: var(--muted); font-size: 13px; padding: 4px 10px; }
+.hint[hidden] { display: none; }
+.session .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session .meta { flex: none; color: var(--muted); font-size: 12px; }
+.dot.run { background: var(--accent); } .dot.fail { background: var(--danger); }
+.task-card { cursor: pointer; }
+.task-card:hover { border-color: var(--accent); }
+.task-card .sub { white-space: pre-wrap; max-height: 3.2em; overflow: hidden; }
+.task-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.task-head .side { flex: 1; }
+.badge { font-size: 12px; border-radius: 999px; padding: 2px 10px; background: var(--bubble); color: var(--muted); }
+.badge.running { background: var(--accent-soft); color: var(--accent); }
+.badge.done { color: var(--ok); } .badge.failed { color: var(--danger); }
+.bar-track { height: 6px; border-radius: 3px; background: var(--bubble); overflow: hidden; margin: 6px 0 14px; }
+.bar-track > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.panel .text { white-space: pre-wrap; word-break: break-word; padding: 4px 0 12px; }
+.todo { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); align-items: flex-start; }
+.todo:first-of-type { border-top: 0; }
+.todo .mark { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--muted); margin-top: 3px; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; }
+.todo.done .mark { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.todo.in_progress .mark { border-color: var(--accent); }
+.todo.in_progress .mark::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+.todo.done .main, .todo.skipped .main { color: var(--muted); }
+.todo.skipped .main { text-decoration: line-through; }
+.todo .note { color: var(--muted); font-size: 13px; }
+.step { display: flex; gap: 10px; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
+.step .k { flex: none; width: 170px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step .t { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.step.call .t, .step.result .t { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+details.steps > summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
 .status { margin-top: auto; padding: 12px 8px 4px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .status .item { display: flex; align-items: center; gap: 8px; color: var(--muted); min-width: 0; }
 .status .item span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -148,6 +177,7 @@ const ICONS: Readonly<Record<string, string>> = {
     '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  task: '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3.5 6 1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
 };
 
 function icon(name: string): string {
@@ -263,6 +293,13 @@ var DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 
 var thread = { signature: "", pending: false, query: "" };
 var VIA = { "dsh-pet": "桌宠对话" };
+var TASK_STATES = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "取消了" };
+var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
+var openTask = 0;
+
+function stateDot(state) {
+  return state === "running" ? "run" : state === "done" ? "ok" : state === "failed" ? "fail" : "";
+}
 
 function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
 
@@ -295,11 +332,31 @@ function alarmCard(event) {
   ]);
 }
 
+/** 子任务的卡片：派出去的那一刻、做完写回来的那一刻；点开看详情 */
+function taskCard(id, title, sub, text) {
+  return h("div", { class: "alarm-card task-card", "data-text": text, role: "button", tabindex: "0", onclick: function () { if (id) openTaskView(id); } }, [
+    h("div", { class: "icon" }, [iconNode("task")]),
+    h("div", {}, [h("div", { class: "title", text: title }), h("div", { class: "sub", text: sub })]),
+  ]);
+}
+
+function taskResultCard(item) {
+  var lines = item.text.split("\n");
+  // 卡片里只放纯文字：去掉加粗的星号
+  var sub = lines.slice(1).join("\n").replace(/^结果：\n?/, "").replace(/\*\*/g, "");
+  return taskCard(item.task, lines[0], sub, item.text);
+}
+
+function taskAddedCard(event) {
+  var who = event.origin === "main" ? "yoyo 派了子任务" : "派了子任务";
+  return taskCard(event.id, who + " #" + event.id + "「" + (event.title || "") + "」", "在后台做，做完结果会回到这里", event.title || "");
+}
+
 /** 对话和新加的日程按时间排在一起，隔了一刻钟以上就插一行时间 */
 function renderThread(items, events, force) {
   var merged = items.map(function (item) { return { at: item.at, item: item }; });
   events.forEach(function (event) {
-    if (event.type === "schedule-add") merged.push({ at: Date.parse(event.at), event: event });
+    if (event.type === "schedule-add" || event.type === "task-add") merged.push({ at: Date.parse(event.at), event: event });
   });
   merged.sort(function (a, b) { return a.at - b.at; });
   var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0);
@@ -312,7 +369,8 @@ function renderThread(items, events, force) {
   merged.forEach(function (entry) {
     if (entry.at - last > 15 * 60000) nodes.push(h("div", { class: "when", text: when(entry.at) }));
     last = entry.at;
-    nodes.push(entry.item ? message(entry.item) : alarmCard(entry.event));
+    if (entry.item) nodes.push(entry.item.kind === "task" ? taskResultCard(entry.item) : message(entry.item));
+    else nodes.push(entry.event.type === "task-add" ? taskAddedCard(entry.event) : alarmCard(entry.event));
   });
   var inner = $("#thread-inner");
   fill(inner, nodes, "还没聊过。在下面打一句话，或者右键桌宠的「对话」。");
@@ -421,7 +479,11 @@ var configVersion = "";
 var configDirty = false;
 
 var views = {
-  chat: { title: "yoyo", load: function () { return Promise.all([loadThread(false), loadStatus()]); } },
+  chat: { title: "yoyo", load: function () { return Promise.all([loadThread(false), loadStatus(), loadTasks()]); } },
+  task: { title: "子任务", load: function () {
+    if (!openTask) return Promise.resolve();
+    return Promise.all([api("GET", "/api/tasks/" + openTask).then(renderTask), loadTasks()]);
+  } },
   memory: { title: "心迹", load: function () {
     return api("GET", "/api/memory").then(function (m) {
       $("#core-text").value = m.core ? m.core.text : "";
@@ -503,6 +565,77 @@ var views = {
   } },
 };
 
+function loadTasks() {
+  return api("GET", "/api/tasks").then(function (tasks) {
+    fill($("#task-list"), tasks.map(function (task) {
+      var active = current === "task" && openTask === task.id;
+      var count = task.progress.total ? task.progress.done + "/" + task.progress.total : TASK_STATES[task.state];
+      return h("button", { class: "session" + (active ? " active" : ""), type: "button", title: TASK_STATES[task.state], onclick: function () { openTaskView(task.id); } }, [
+        h("span", { class: "dot " + stateDot(task.state) }),
+        h("span", { class: "name", text: task.title }),
+        h("span", { class: "meta", text: count }),
+      ]);
+    }), "");
+    $("#task-empty").hidden = tasks.length > 0;
+  });
+}
+
+function section(title, children) {
+  return h("div", { class: "panel" }, [h("h2", { text: title })].concat(children));
+}
+
+function renderTask(task) {
+  $("#title").textContent = "#" + task.id + " " + task.title;
+  var open = task.state === "queued" || task.state === "running";
+  var nodes = [];
+  var cancel = open ? h("button", { class: "plain", type: "button", text: "取消", onclick: confirmThen("取消子任务 #" + task.id + "？", function () {
+    api("POST", "/api/tasks/" + task.id + "/cancel", {}).then(function () { toast("取消了"); views.task.load(); loadTasks(); }, fail);
+  }) }) : null;
+  var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
+  nodes.push(h("div", { class: "task-head" }, [
+    h("span", { class: "badge " + task.state, text: TASK_STATES[task.state] }),
+    h("span", { class: "side", text: (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "") }),
+    cancel,
+  ]));
+  if (task.progress.total) {
+    var fillBar = h("span");
+    fillBar.style.width = Math.round((task.progress.done / task.progress.total) * 100) + "%";
+    nodes.push(h("div", { class: "bar-track", title: task.progress.done + "/" + task.progress.total }, [fillBar]));
+  }
+  nodes.push(section("目标", [h("div", { class: "text", text: task.goal })]));
+  if (task.criteria.length) {
+    nodes.push(section("验收标准", task.criteria.map(function (criterion) {
+      var check = task.checks.filter(function (c) { return c.criterion === criterion; })[0];
+      var mark = check ? (check.met ? "✓" : "✗") : "";
+      return h("div", { class: "todo" + (check && check.met ? " done" : "") }, [
+        h("span", { class: "mark", text: mark }),
+        h("div", { class: "main" }, [document.createTextNode(criterion), check ? h("div", { class: "note", text: check.evidence }) : null]),
+      ]);
+    })));
+  }
+  nodes.push(section("todo" + (task.progress.total ? "（" + task.progress.done + "/" + task.progress.total + "）" : ""), task.todos.length ? task.todos.map(function (todo, i) {
+    return h("div", { class: "todo " + todo.state }, [
+      h("span", { class: "mark", text: TODO_MARKS[todo.state] }),
+      h("div", { class: "main" }, [document.createTextNode((i + 1) + ". " + todo.text), todo.note ? h("div", { class: "note", text: todo.note }) : null]),
+    ]);
+  }) : [h("div", { class: "empty", text: task.state === "queued" ? "还在排队，开始做时会先拆 todo" : "还没拆" })]));
+  if (task.result) nodes.push(section("结果", [h("div", { class: "text" }, rich(task.result))]));
+  if (task.error) nodes.push(section("没做成", [h("div", { class: "text", text: task.error })]));
+  var steps = task.steps.map(function (step) {
+    var labels = { input: "收到", say: "说", call: "调用 " + (step.name || ""), result: "结果 " + (step.name || "") };
+    return h("div", { class: "step " + step.kind }, [h("div", { class: "k", text: clock(step.at) + " " + labels[step.kind] }), h("div", { class: "t", text: step.text })]);
+  });
+  var details = h("details", { class: "steps" }, [h("summary", { text: "过程（" + task.steps.length + " 步）" })].concat(steps));
+  if (open) details.open = true;
+  if (steps.length) nodes.push(h("div", { class: "panel" }, [details]));
+  fill($("#task-page"), nodes, "");
+}
+
+function openTaskView(id) {
+  openTask = id;
+  show("task");
+}
+
 var current = "chat";
 
 function show(name) {
@@ -514,10 +647,11 @@ function show(name) {
   document.querySelectorAll("main .view").forEach(function (section) {
     section.classList.toggle("active", section.id === name);
   });
-  $("#chat-list").hidden = name !== "chat";
+  $("#chat-list").hidden = name !== "chat" && name !== "task";
+  $("#main-session").classList.toggle("active", name === "chat");
   $("#search").hidden = name !== "chat";
   $("#title").textContent = views[name].title;
-  try { sessionStorage.setItem("yoyo-view", name); } catch (e) {}
+  try { sessionStorage.setItem("yoyo-view", name === "task" ? "chat" : name); } catch (e) {}
   views[name].load().catch(fail);
   if (name === "chat") setTimeout(function () { $("#say").focus(); }, 0);
 }
@@ -592,9 +726,12 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   // 桌宠那边的对话、碎碎念会自己进来：开着对话页时隔几秒看一眼
   setInterval(function () {
-    if (document.hidden || current !== "chat") return;
-    loadThread(false).catch(function () {});
+    if (document.hidden) return;
+    if (current === "chat") loadThread(false).catch(function () {});
+    if (current === "task") views.task.load().catch(function () {});
+    if (current === "chat" || current === "task") loadTasks().catch(function () {});
   }, 4000);
+  $("#main-session").addEventListener("click", function () { show("chat"); });
   setInterval(function () {
     if (document.hidden || current !== "chat") return;
     loadStatus().catch(function () {});
@@ -611,7 +748,7 @@ function railButton(view: string, name: string, label: string): string {
 
 const BODY = String.raw`
 <div id="locked">从桌宠右键的「管理」或 <code>yoyo web open</code> 打开这一页。</div>
-<div id="icons" hidden><span data-icon="alarm">${icon('alarm')}</span></div>
+<div id="icons" hidden><span data-icon="alarm">${icon('alarm')}</span><span data-icon="task">${icon('task')}</span></div>
 <div class="app" id="app">
   <nav class="rail">
     <div class="brand" title="yoyo"><span class="ring"></span></div>
@@ -626,9 +763,10 @@ const BODY = String.raw`
   <aside class="list" id="chat-list">
     <div class="list-head">聊天列表</div>
     <div class="group">主聊天</div>
-    <button class="session active" type="button"><span class="ring sm"></span><span>yoyo</span></button>
-    <div class="group">子聊天</div>
-    <div class="hint">还没有。以后派给 yoyo 的任务各开一个子聊天。</div>
+    <button class="session active" id="main-session" type="button"><span class="ring sm"></span><span class="name">yoyo</span></button>
+    <div class="group">子任务</div>
+    <div id="task-list"></div>
+    <div class="hint" id="task-empty">还没有。要花时间的事跟 yoyo 说，它会派出去在后台做。</div>
     <div class="status" id="status"></div>
     <div class="quick">
       <button class="plain small" id="do-whisper" type="button">说一句</button>
@@ -685,6 +823,7 @@ const BODY = String.raw`
         <div id="alarm-list"></div>
       </div>
     </div></section>
+    <section class="view scroll" id="task"><div class="page" id="task-page"></div></section>
     <section class="view scroll" id="activity"><div class="page"><div class="panel" id="activity-list"></div></div></section>
     <section class="view scroll" id="contacts"><div class="page">
       <div class="panel">

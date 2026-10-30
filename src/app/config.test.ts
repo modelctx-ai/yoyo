@@ -137,6 +137,15 @@ describe('config', () => {
     assert.equal(parseConfig({ web: null }).web.enabled, true);
   });
 
+  test('子任务：缺省打开、做完说一声；写错按缺省', () => {
+    assert.deepEqual(parseConfig({}).tasks, { enabled: true, notify: true });
+    assert.deepEqual(parseConfig({ tasks: { enabled: 'false', notify: false } }).tasks, {
+      enabled: false,
+      notify: false,
+    });
+    assert.deepEqual(parseConfig({ tasks: 'x' }).tasks, { enabled: true, notify: true });
+  });
+
   test('整段写成 null 或者不是对象，当没写', () => {
     const config = parseConfig({ ...FIRST, llm: null, listen: null, speech: null, context: 'x', mcpServers: null });
     assert.equal(config.llm.apiKey, '');

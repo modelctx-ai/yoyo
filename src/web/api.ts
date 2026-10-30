@@ -6,6 +6,9 @@ import { compareEntries, textOf, type Context, type Entry, type MemoryStore } fr
 
 import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
+import { TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
+import { TaskError, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
+import type { AgentTask } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
 import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
@@ -18,7 +21,8 @@ export interface WebDeps {
   readonly config: Config;
   readonly paths: Pick<Paths, 'inboxFile' | 'configFile'>;
   readonly repos: Repos;
-  readonly context: Pick<Context, 'entries'>;
+  /** 主线程的上下文；`store` 用来读子任务各自的会话。 */
+  readonly context: Pick<Context, 'entries' | 'store'>;
   readonly memory: MemoryStore;
   readonly host: Pick<PetHost, 'name' | 'workStatus'>;
   /** 编排器的排期：下一句碎碎念、最近一次说话。常驻进程里才有。 */
@@ -48,6 +52,14 @@ const ok = (body: unknown): ApiResult => ({ status: 200, body });
 const CORE_MAX = 4000;
 /** 工作台里一句话最长多少字。 */
 const TALK_MAX = 4000;
+/** 子任务的过程最多给最近这么多步。 */
+const STEPS_MAX = 300;
+
+/** 列表里的一项：不带目标和结果全文。 */
+function taskSummary(task: AgentTask): unknown {
+  const { id, title, state, origin, createdAt, finishedAt } = task;
+  return { id, title, state, origin, createdAt, finishedAt, progress: progress(task) };
+}
 
 function field(body: unknown, name: string): unknown {
   return typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[name] : undefined;
@@ -75,6 +87,9 @@ export interface ContextItem {
   readonly text: string;
   /** 从哪来的：`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音和自己说的。 */
   readonly via?: string;
+  /** `task` 那条是哪个子任务、结束时的状态。 */
+  readonly task?: number;
+  readonly state?: string;
 }
 
 /** 上下文的一条，给页面看：消息按角色，碎碎念、摘要单列。别的条目不列。 */
@@ -88,6 +103,16 @@ export function contextItem(entry: Entry): ContextItem | null {
     return { at: entry.at, kind: 'whisper', text: entry.text };
   }
   if (entry.type === 'summary') return { at: entry.at, kind: 'summary', text: entry.text };
+  if (entry.type === 'event' && entry.kind === TASK_EVENT && entry.text) {
+    const meta = entry.meta ?? {};
+    return {
+      at: entry.at,
+      kind: 'task',
+      text: entry.text,
+      ...(typeof meta['id'] === 'number' ? { task: meta['id'] } : {}),
+      ...(typeof meta['state'] === 'string' ? { state: meta['state'] } : {}),
+    };
+  }
   return null;
 }
 
@@ -221,6 +246,13 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     }
   }
 
+  async function taskView(taskId: number): Promise<unknown> {
+    const task = Number.isInteger(taskId) ? repos.agentTasks.get(taskId) : null;
+    if (!task) throw new RequestError(`没有子任务 #${taskId}`, 404);
+    const steps = taskSteps(await deps.context.store.list(taskSession(task.id)));
+    return { ...task, progress: progress(task), steps: steps.slice(-STEPS_MAX) };
+  }
+
   function newContact(body: unknown): unknown {
     try {
       return addContact(repos, { name: text(body, 'name'), yoyo: text(body, 'yoyo'), note: text(body, 'note') }, now());
@@ -274,6 +306,16 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         return ok({ saved: true });
       }
       if (route === 'POST /api/chat') return ok(await talk(body));
+      if (route === 'GET /api/tasks') return ok(repos.agentTasks.list({ limit: 50 }).map(taskSummary));
+      if (method === 'GET' && parts.length === 3 && parts[1] === 'tasks') return ok(await taskView(Number(id)));
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'cancel') {
+        try {
+          return ok(taskSummary(cancelAgentTask(repos, Number(parts[2]), now())));
+        } catch (error) {
+          if (error instanceof TaskError) throw new RequestError(error.message, 409);
+          throw error;
+        }
+      }
       if (route === 'POST /api/actions/whisper' || route === 'POST /api/actions/listen') {
         // 和右键菜单一样交给常驻进程的收件箱，下一拍做
         enqueue(deps.paths.inboxFile, id === 'listen' ? 'listen' : 'whisper');

@@ -31,11 +31,12 @@ import {
   UPDATE_REPO,
   type UpdateSystem,
 } from '../app/update.ts';
-import { createYoyoContext } from '../brain/context.ts';
+import { createYoyoContext, taskSession, taskSteps, type TaskStep } from '../brain/context.ts';
 import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule } from '../features/alarms/schedule.ts';
 import { addContact } from '../features/contacts/contacts.ts';
+import { TaskError, cancelAgentTask, createAgentTask, taskDetail, taskRow } from '../features/tasks/tasks.ts';
 import { localDateKey } from '../kernel/time.ts';
 import type { InboxRequest } from '../kernel/types.ts';
 import type { Clipboard, Logger, PetHost, Repos, UrlOpener } from '../ports/index.ts';
@@ -112,6 +113,29 @@ function manager(env: CommandEnv): { readonly url: string } | { readonly problem
   const url = env.repos().kv.get('web-url');
   if (!url || !directorAlive(env.paths.pidFile)) return { problem: '常驻进程没在跑，管理页跟着它开' };
   return { url };
+}
+
+const STEP_LABELS: Readonly<Record<TaskStep['kind'], string>> = {
+  input: '收到',
+  say: '说',
+  call: '调用',
+  result: '结果',
+};
+
+function taskId(args: readonly string[]): number {
+  const id = Number(args[0]);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('要给子任务编号，例如 yoyo task show 3');
+  return id;
+}
+
+/** 规则不让做的事报成一句话。 */
+function guard<T>(work: () => T): T {
+  try {
+    return work();
+  } catch (error) {
+    if (error instanceof TaskError) throw new Error(error.message, { cause: error });
+    throw error;
+  }
 }
 
 function updateRepo(): string {
@@ -519,6 +543,75 @@ export function buildDomains(env: CommandEnv): Domain[] {
       summary: '马上说一句碎碎念',
       detail: '右键 yoyo 分组里的「碎碎念」也是这一条。宠物自带的那一项到不了这里。',
       verbs: [{ name: 'now', summary: '现在就说一句', run: () => handoff(env, 'whisper') }],
+    },
+    {
+      name: 'task',
+      aliases: ['tasks'],
+      summary: '子任务：yoyo 派给后台子 agent 的事',
+      detail:
+        '平时只和 yoyo 说，要花时间、要好几步的事它派成子任务在后台做：先拆 todo、边做边标，验收标准逐条对上再把结果交回 yoyo。常驻进程在跑才会做，一次做一件。',
+      verbs: [
+        {
+          name: 'list',
+          summary: '最近的子任务：编号、状态、todo 进度、标题',
+          run() {
+            const tasks = env.repos().agentTasks.list({ limit: 20 });
+            if (tasks.length === 0) return env.out('还没有子任务');
+            for (const task of tasks) env.out(taskRow(task));
+          },
+        },
+        {
+          name: 'show',
+          summary: '一个子任务的全部：目标、验收标准、todo、结果',
+          usage: '<编号>',
+          run(_flags, args) {
+            const task = env.repos().agentTasks.get(taskId(args));
+            if (!task) throw new Error(`没有子任务 #${args[0]}`);
+            env.out(taskDetail(task));
+          },
+        },
+        {
+          name: 'log',
+          summary: '子 agent 一步步做了什么：收到的话、调的工具、工具回的',
+          usage: '<编号>',
+          async run(_flags, args) {
+            const id = taskId(args);
+            if (!env.repos().agentTasks.get(id)) throw new Error(`没有子任务 #${id}`);
+            const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+            const steps = taskSteps(await context.store.list(taskSession(id)));
+            if (steps.length === 0) return env.out('还没开始做');
+            for (const step of steps) {
+              const label = step.name ? `${STEP_LABELS[step.kind]} ${step.name}` : STEP_LABELS[step.kind];
+              env.out(`${new Date(step.at).toISOString()}\t${label}\t${oneLine(step.text, 120)}`);
+            }
+          },
+        },
+        {
+          name: 'add',
+          summary: '自己派一个子任务（平时由 yoyo 派）',
+          flags: ['title', 'goal', 'criteria'],
+          run(flags) {
+            const criteria = (flagText(flags, 'criteria') ?? '').split(/[;；\n]/);
+            const task = guard(() =>
+              createAgentTask(
+                env.repos(),
+                { title: flagText(flags, 'title'), goal: flagText(flags, 'goal'), criteria, origin: 'cli' },
+                env.now(),
+              ),
+            );
+            env.out(`开了子任务 #${task.id}，常驻进程在跑就会去做`);
+          },
+        },
+        {
+          name: 'cancel',
+          summary: '取消还在排队或在做的子任务',
+          usage: '<编号>',
+          run(_flags, args) {
+            const task = guard(() => cancelAgentTask(env.repos(), taskId(args), env.now()));
+            env.out(`取消了子任务 #${task.id}`);
+          },
+        },
+      ],
     },
     {
       name: 'web',
