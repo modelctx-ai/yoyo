@@ -54,5 +54,6 @@ pnpm start
 |                                               | [管理页](docs/tech/web.md)                    |
 |                                               | [工作台](docs/tech/workbench.md)              |
 |                                               | [子任务](docs/tech/tasks.md)                  |
+|                                               | [读写文件](docs/tech/files.md)                |
 
 图标素材的许可见 [assets/NOTICE](assets/NOTICE)。
