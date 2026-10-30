@@ -647,7 +647,9 @@ var views = {
 
 function loadTasks() {
   return api("GET", "/api/tasks").then(function (tasks) {
-    fill($("#task-list"), tasks.map(function (task) {
+    // 在做的几个排在最前，其余照旧新的在前
+    var listed = tasks.filter(function (task) { return task.state === "running"; }).concat(tasks.filter(function (task) { return task.state !== "running"; }));
+    fill($("#task-list"), listed.map(function (task) {
       var active = current === "task" && openTask === task.id;
       var count = task.progress.total ? task.progress.done + "/" + task.progress.total : TASK_STATES[task.state];
       var bar = null;
@@ -668,7 +670,7 @@ function loadTasks() {
     $("#task-empty").hidden = tasks.length > 0;
     var running = tasks.filter(function (task) { return task.state === "running"; }).length;
     var queued = tasks.filter(function (task) { return task.state === "queued"; }).length;
-    $("#task-count").textContent = running ? running + " 件在做" : queued ? queued + " 件排队" : "";
+    $("#task-count").textContent = [running ? running + " 件在做" : "", queued ? queued + " 件排队" : ""].filter(Boolean).join(" · ");
   });
 }
 

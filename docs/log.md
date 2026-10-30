@@ -2,6 +2,8 @@
 
 ## 2026-10-30
 
+* **更新** [子任务](tech/tasks.md)改成几件一起跑：「怎么跑」写明同时做 `tasks.concurrency` 件、空位马上补、各自取消、退出时在做的都放回排队、共享数据（同时写不会写坏，一模一样的日程不重复加）；工具表的 `task_list`、`task_show` 换成 `yoyo` 工具；命令行表加 `--state`；工作台侧栏、「和 Claude Code 的对应」跟上，「还没做」去掉一次一件。配置的开关表和选项表加 `tasks.concurrency`，日常使用、架构跟上。
+* **更新** [命令原则](tech/cli-principles.md)加第 10、11 条和「给 agent 用」一节：命令行是 yoyo 对外的能力层，标了 `agent` 的只读动作经 `YOYO_AGENT=1` 给 agent，yoyo 自己的 agent 经 `yoyo` 工具另起进程调；给 agent 的命令表，新加的 `yoyo search`。架构的目录表加 `cli/search.ts`、`app/cli.ts`，发版的启动脚本加 `YOYO_CLI`，日常使用的常用命令加 `search`。
 * **更新** [子任务](tech/tasks.md)加「子 agent 类型」一节：内置 `general`、`research`、`writer` 各自什么时候用、给哪些工具；`~/.yoyo/agents/*.md` 的写法（照 Claude Code 的 `.claude/agents/*.md`：name、description、tools 支持 `*`、model，正文是指令）、覆盖和写错时怎样；子任务记下类型、旧库补列。工具表、命令行表、「和 Claude Code 的对应」跟上。日常使用、数据跟上。
 * **更新** [子任务](tech/tasks.md)照 Claude Code 的后台子 agent 改「回到主线程」：结果写进主会话以后叫醒主线程，把 `<task-notification>` 交给回复的 agent 跑一轮，转告由桌宠说出来，模型出错才说固定的一句；上次没转告完的开始时补上。规则加「同一时间只有一项在做」。新加「和 Claude Code 的对应」一节。配置、日常使用、架构跟上。
 * **更新** 工作台换成 yoyo 自己的外观：[工作台](tech/workbench.md)写明头像、主色、一列侧栏和设计稿在哪，对话、侧栏的子任务、记忆三条按新样子改写；管理页的「页面」写明头像怎么内联。

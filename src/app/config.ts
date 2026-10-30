@@ -140,6 +140,8 @@ const tasks = z.looseObject({
   enabled: flag(true),
   /** 做完或没做成时桌宠说一声。 */
   notify: flag(true),
+  /** 同时做几件，1 到 8；多的排队。 */
+  concurrency: z.coerce.number().int().min(1).max(8).catch(2).default(2),
 });
 
 const context = z.looseObject({

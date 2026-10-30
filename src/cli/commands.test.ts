@@ -23,7 +23,7 @@ import {
   type MemoryLogger,
 } from '../runtime/testing.ts';
 import { buildDomains, createCommandEnv, type CommandEnv } from './commands.ts';
-import { dispatch } from './registry.ts';
+import { agentDomains, dispatch } from './registry.ts';
 
 const NOW = new Date(2026, 9, 24, 15, 0, 0);
 
@@ -421,6 +421,96 @@ describe('commands', () => {
     await assert.rejects(run('task', 'cancel', '1'), /已经「取消了」/);
     await assert.rejects(run('task', 'show', 'x'), /要给子任务编号/);
     await assert.rejects(run('task', 'add', '--title', '没目标'), /目标不能空着/);
+  });
+
+  test('task list --state 只列这几种状态；写错的说清楚有哪些', async () => {
+    const { run, env } = cli();
+    for (const title of ['一', '二', '三']) await run('task', 'add', '--title', title, '--goal', '做');
+    env.repos().agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    env.repos().agentTasks.update(2, { state: 'running' }, NOW.getTime());
+    assert.deepEqual(await run('task', 'list', '--state', 'running'), ['#2\t在做\t-\t二', '#1\t在做\t-\t一']);
+    assert.deepEqual(await run('task', 'list', '--state', 'queued,running'), [
+      '#3\t排队\t-\t三',
+      '#2\t在做\t-\t二',
+      '#1\t在做\t-\t一',
+    ]);
+    assert.deepEqual(await run('task', 'list', '--state', 'done'), ['没有「done」的子任务']);
+    await assert.rejects(run('task', 'list', '--state', 'busy'), /没有「busy」这种状态，有：queued、running/);
+  });
+
+  test('search：对话、子任务、记住的事、日程、联系人一起找，几个词都要有；--in 只找哪几类', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('search'), ['yoyo search <动作>\n\nall        找一个词：yoyo search 周报']);
+    assert.deepEqual(await run('search', '周报'), ['没找到「周报」']);
+    const context = await createYoyoContext({ db: env.db(), petId: env.settings().pet.id });
+    await context.append(
+      userEntry('帮我整理本周周报', { at: NOW.getTime() - 60_000 }),
+      assistantEntry('好，周报交给子任务', { at: NOW.getTime() }),
+      userEntry('今天天气怎么样', { at: NOW.getTime() }),
+    );
+    await run('task', 'add', '--title', '整理本周周报', '--goal', '三个项目');
+    await run('task', 'add', '--title', '订机票', '--goal', '周报写完以后订');
+    await run('alarm', 'add', '--title', '写周报', '--time', '17:00', '--repeat', 'weekly', '--weekday', '5');
+    await run('contact', 'add', '--name', '小王', '--yoyo', 'yoyo://wang@example', '--note', '周报找他');
+    await openMemoryStore(env.db()).facts.add({
+      subject: 'user',
+      topic: 'work',
+      confidence: 0.9,
+      salience: 0.8,
+      text: '主人每周五交周报',
+      validFrom: NOW.getTime(),
+      sources: [{ session: 'pet:main', from: 1, upTo: 1 }],
+    });
+    const rows = await run('search', '周报');
+    assert.deepEqual(
+      rows.map((row) => row.split('\t')[0]),
+      [
+        '对话',
+        '对话',
+        '子任务',
+        '子任务',
+        '事实',
+        '日程',
+        '联系人',
+        '',
+        '下一步：yoyo task show <编号>    yoyo memory history <id>',
+      ],
+    );
+    assert.match(rows[0]!, /^对话\t\d{4}-\d{2}-\d{2} \d{2}:\d{2}\tyoyo\t好，周报交给子任务$/);
+    assert.match(rows[1]!, /\t主人\t帮我整理本周周报$/);
+    assert.equal(rows[2], '子任务\t#2\t排队\tgeneral\t订机票：周报写完以后订');
+    assert.equal(rows[3], '子任务\t#1\t排队\tgeneral\t整理本周周报');
+    assert.match(rows[4]!, /^事实\t\S+\twork\t主人每周五交周报$/);
+    assert.match(rows[5]!, /^日程\ts_\w+\t每周 17:00\talarm\t写周报$/);
+    assert.equal(rows[6], '联系人\t小王\tyoyo://wang@example\t周报找他');
+
+    assert.deepEqual(await run('search', '本周', '周报', '--in', 'tasks'), [
+      '子任务\t#1\t排队\tgeneral\t整理本周周报',
+      '',
+      '下一步：yoyo task show <编号>',
+    ]);
+    assert.deepEqual(await run('search', 'all', '周报', '--in', 'chat', '--limit', '1'), [
+      rows[0],
+      '对话\t还有 1 条，加 --limit 看更多',
+    ]);
+  });
+
+  test('agent 那部分：只读的查询，不含改东西、碰桌宠和网络的', () => {
+    const { env } = cli();
+    assert.deepEqual(
+      agentDomains(buildDomains(env)).map(
+        (domain) => `${domain.name} ${domain.verbs.map((verb) => verb.name).join(',')}`,
+      ),
+      [
+        'alarm list',
+        'contact list',
+        'context tail',
+        'memory core,facts,history,rules',
+        'task list,show,log,agents',
+        'search all',
+        'log tail',
+      ],
+    );
   });
 
   test('task agents 列出类型；task add --agent 挑一种，~/.yoyo/agents 里加的也认', async () => {

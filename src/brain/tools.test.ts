@@ -18,7 +18,7 @@ import { recordUser, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
 import { mergeAgents, parseAgentFile } from '../features/tasks/agents.ts';
 import { createRepos } from '../storage/repos.ts';
-import { addTaskWorkerTools, createYoyoTools } from './tools.ts';
+import { addTaskWorkerTools, createYoyoTools, splitCommand } from './tools.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
@@ -171,7 +171,37 @@ describe('brain/tools', () => {
     assert.equal(await run(tools, 'weather_forecast'), '天气没查到：天气接口 500');
   });
 
-  test('子任务：主线程能派、列、看、取消；子 agent 那份没有派的，只有拆 todo、标状态、交结果、交不了', async () => {
+  test('yoyo 工具：一行命令拆成参数交给命令行，输出原样交回；跑不成说一句', async () => {
+    const calls: (readonly string[])[] = [];
+    const tools = createYoyoTools({
+      repos: memoryRepos(),
+      search: null,
+      cli: async (argv) => {
+        calls.push(argv);
+        if (argv[0] === 'boom') throw new Error('命令跑太久，停下了');
+        return argv[0] === 'quiet' ? '' : '#1\t在做\t1/2\t整理周报';
+      },
+    });
+    assert.equal(await run(tools, 'yoyo', { command: 'task list --state running' }), '#1\t在做\t1/2\t整理周报');
+    assert.equal(await run(tools, 'yoyo', { command: 'quiet' }), '（没有输出）');
+    assert.equal(await run(tools, 'yoyo', { command: 'boom' }), '命令没跑成：命令跑太久，停下了');
+    assert.deepEqual(calls[0], ['task', 'list', '--state', 'running']);
+    assert.equal(
+      createYoyoTools({ repos: memoryRepos(), search: null })
+        .list()
+        .some((info) => info.name === 'yoyo'),
+      false,
+    );
+  });
+
+  test('拆命令：引号里的算一个，开头的 yoyo 去掉', () => {
+    assert.deepEqual(splitCommand('yoyo search "本周 周报" --in tasks'), ['search', '本周 周报', '--in', 'tasks']);
+    assert.deepEqual(splitCommand('  task  show 3 '), ['task', 'show', '3']);
+    assert.deepEqual(splitCommand("search '周报'"), ['search', '周报']);
+    assert.deepEqual(splitCommand(''), []);
+  });
+
+  test('子任务：主线程能派、取消（看用 yoyo 命令行）；子 agent 那份没有派的，只有拆 todo、标状态、交结果、交不了', async () => {
     const repos = memoryRepos();
     const main = createYoyoTools({ repos, search: null, tasks: true, now: () => NOW });
     assert.deepEqual(
@@ -179,7 +209,7 @@ describe('brain/tools', () => {
         .list()
         .map((info) => info.name)
         .filter((name) => name.startsWith('task_')),
-      ['task_create', 'task_list', 'task_show', 'task_cancel'],
+      ['task_create', 'task_cancel'],
     );
     const worker = createYoyoTools({ repos, search: null });
     addTaskWorkerTools(worker, { repos, now: () => NOW });
@@ -196,9 +226,6 @@ describe('brain/tools', () => {
       '开了子任务 #1「整理周报」，交给 general，排队等着做',
     );
     assert.equal(await run(main, 'task_create', { title: ' ', goal: 'x', criteria: [] }), '标题不能空着');
-    assert.equal(await run(main, 'task_list'), '#1\t排队\t-\t整理周报');
-    assert.match(String(await run(main, 'task_show', { id: 1 })), /^#1 整理周报（排队，general）/);
-    assert.equal(await run(main, 'task_show', { id: 9 }), '没有子任务 #9');
     assert.equal(repos.agentTasks.get(1)?.origin, 'main');
 
     // 子 agent 的工具只对在做的任务有效，规则不让做的原样交回去

@@ -69,7 +69,7 @@ interface Rig {
   readonly finished: Promise<boolean>[];
 }
 
-function rig(model: MockLanguageModelV4 | null): Rig {
+function rig(model: MockLanguageModelV4 | null, concurrency?: number): Rig {
   const repos = memoryRepos({ now: () => new Date(T0) });
   const logger = memoryLogger();
   const main = createContext({ store: createMemoryStore(), session: sessionFor('main'), projection: mainProjection });
@@ -86,6 +86,7 @@ function rig(model: MockLanguageModelV4 | null): Rig {
     main,
     now: () => T0,
     pollMs: 5,
+    ...(concurrency ? { concurrency } : {}),
     // 叫一声的那一刻，结果已经在主会话里了
     onFinished: (task) => {
       finished.push(
@@ -107,6 +108,35 @@ function brief(repos: Repos) {
 }
 
 const CHECKS = [{ criterion: '三个项目都有', met: true, evidence: 'A、B、C 各一段' }];
+
+async function until(done: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 400 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(done(), what);
+}
+
+/**
+ * 几个子任务一起跑时用的模型：认出是哪个子任务，等放行了才交结果；`broken` 里的一开始就出错。
+ * 交了以后（会话里有工具结果了）说一句就停。
+ */
+function gated(broken: readonly number[] = []) {
+  const started: number[] = [];
+  const gates = new Map<number, () => void>();
+  const model = new MockLanguageModelV4({
+    doGenerate: async (options) => {
+      const id = Number(/子任务 #(\d+)/.exec(JSON.stringify(options.prompt))?.[1]);
+      if (options.prompt.some((message) => message.role === 'tool')) return text('交好了');
+      started.push(id);
+      if (broken.includes(id)) throw new Error('connect ECONNREFUSED');
+      await new Promise<void>((resolve, reject) => {
+        gates.set(id, resolve);
+        options.abortSignal?.addEventListener('abort', () => reject(options.abortSignal?.reason));
+      });
+      return call('task_finish', { id, result: `#${id} 做好了`, checks: CHECKS });
+    },
+  });
+  const release = (id: number): void => gates.get(id)?.();
+  return { model, started, release, waiting: (id: number) => gates.has(id) };
+}
 
 describe('子任务的跑法', () => {
   test('拆 todo、边做边标、对完验收交结果；记在自己的会话里，结果写回主线程', async () => {
@@ -292,6 +322,79 @@ describe('子任务的跑法', () => {
     await runner.close();
     assert.equal(repos.agentTasks.get(1)?.state, 'queued');
     assert.deepEqual(await main.entries(), [], '没结束就不写回主线程');
+  });
+
+  test('同时跑到上限，多的排队按编号先后；做完一件马上补位', async () => {
+    const { model, started, release, waiting } = gated();
+    const { repos, runner } = rig(model, 2);
+    for (let i = 0; i < 3; i += 1) brief(repos);
+    const controller = new AbortController();
+    runner.start(controller.signal);
+    await until(() => waiting(1) && waiting(2), '前两个一起开始');
+    assert.deepEqual(started, [1, 2]);
+    assert.deepEqual(runner.active(), [1, 2]);
+    assert.equal(repos.agentTasks.get(3)?.state, 'queued', '第三个排队');
+
+    release(2);
+    await until(() => waiting(3), '第二个做完，第三个补上');
+    assert.equal(repos.agentTasks.get(2)?.state, 'done');
+    assert.equal(repos.agentTasks.get(1)?.state, 'running');
+    assert.deepEqual(runner.active(), [1, 3]);
+
+    release(1);
+    release(3);
+    await until(() => runner.active().length === 0, '都做完');
+    assert.deepEqual(
+      repos.agentTasks.list().map((task) => [task.id, task.state, task.result]),
+      [
+        [3, 'done', '#3 做好了'],
+        [2, 'done', '#2 做好了'],
+        [1, 'done', '#1 做好了'],
+      ],
+    );
+    controller.abort();
+    await runner.close();
+  });
+
+  test('一个取消、一个出错，不碍着一起跑的那个', async () => {
+    const { model, release, waiting } = gated([2]);
+    const { repos, main, runner } = rig(model, 3);
+    for (let i = 0; i < 3; i += 1) brief(repos);
+    const controller = new AbortController();
+    runner.start(controller.signal);
+    await until(() => waiting(1) && waiting(3) && repos.agentTasks.get(2)?.state === 'failed', '都开始了，#2 出错');
+    cancelAgentTask(repos, 1, new Date(T0));
+    await until(() => !runner.active().includes(1), '#1 停下');
+    assert.equal(repos.agentTasks.get(3)?.state, 'running', '#3 还在做');
+    release(3);
+    await until(() => runner.active().length === 0, '#3 做完');
+    assert.deepEqual(
+      [1, 2, 3].map((id) => repos.agentTasks.get(id)?.state),
+      ['cancelled', 'failed', 'done'],
+    );
+    const notes = (await main.entries()).map((entry) => Number(entry.type === 'event' ? entry.meta?.['id'] : 0));
+    assert.deepEqual(
+      notes.toSorted((a, b) => a - b),
+      [1, 2, 3],
+      '三个都写回主线程',
+    );
+    controller.abort();
+    await runner.close();
+  });
+
+  test('常驻进程要停：在做的都放回排队', async () => {
+    const { model, waiting } = gated();
+    const { repos, main, runner } = rig(model, 2);
+    for (let i = 0; i < 3; i += 1) brief(repos);
+    runner.start(new AbortController().signal);
+    await until(() => waiting(1) && waiting(2), '前两个在做');
+    await runner.close();
+    assert.deepEqual(
+      [1, 2, 3].map((id) => repos.agentTasks.get(id)?.state),
+      ['queued', 'queued', 'queued'],
+    );
+    assert.deepEqual(runner.active(), []);
+    assert.deepEqual(await main.entries(), []);
   });
 
   test('没配模型：排队的不做，记一行', async () => {

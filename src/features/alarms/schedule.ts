@@ -42,7 +42,7 @@ function repeatOf(value: string | null | undefined): Repeat | null {
   throw new Error('重复只能是 daily、weekdays 或 weekly');
 }
 
-/** 校验后写进库，并记一条 'schedule-add'。`_now` 和 addContact 同形，日程本身不记创建时间。 */
+/** 校验后写进库，并记一条 'schedule-add'；一模一样的已经有了就交回那条，不重复加。`_now` 和 addContact 同形，日程本身不记创建时间。 */
 export function addSchedule(
   repos: Pick<Repos, 'schedule' | 'activity'>,
   input: ScheduleInput,
@@ -59,14 +59,30 @@ export function addSchedule(
   }
   const date = repeat ? null : (input.date ?? '');
   if (date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('一次性日程要有日期 YYYY-MM-DD');
+  const kind = input.kind === 'task' ? 'task' : 'alarm';
+  const weekdayOf = repeat === 'weekly' ? (weekday ?? null) : null;
+  // 同一条已经有了（例如两个子任务同时加）：不重复加，交回原来那条
+  const same = repos.schedule
+    .list()
+    .find(
+      (entry) =>
+        entry.enabled &&
+        entry.title === title &&
+        entry.kind === kind &&
+        entry.time === time &&
+        entry.date === date &&
+        entry.repeat === repeat &&
+        entry.weekday === weekdayOf,
+    );
+  if (same) return same;
   const item: ScheduleItem = {
     id: `s_${randomUUID().slice(0, 8)}`,
     title,
-    kind: input.kind === 'task' ? 'task' : 'alarm',
+    kind,
     time,
     date,
     repeat,
-    weekday: repeat === 'weekly' ? (weekday ?? null) : null,
+    weekday: weekdayOf,
     enabled: true,
     lastFired: null,
   };

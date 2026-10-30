@@ -21,6 +21,8 @@ export YOYO_HOTKEY="${YOYO_HOTKEY:-$lib/bin/yoyo-hotkey}"
 export DSH_PET_ELECTRON_PATH="${DSH_PET_ELECTRON_PATH:-$lib/electron/Electron.app/Contents/MacOS/Electron}"
 # 桌宠经 yoyo 的 pet 入口开：先按配置排好右键菜单，再交给包里打过补丁的 dsh-pet
 export YOYO_PET_ENTRY="${YOYO_PET_ENTRY:-$lib/dsh-pet/lib/standalone.js}"
+# agent 的 yoyo 工具用包里的 Node 跑这个命令行
+export YOYO_CLI="${YOYO_CLI:-$lib/yoyo/cli.mjs}"
 # 录音的 ffmpeg、听写的 whisper-cli，以及 MCP 服务器和搜索脚本用的 node、npx，都先找包里的
 export PATH="$lib/node/bin:$lib/bin:$PATH"
 # 在 yoyo.app 里：管理页在 app 的窗口里打开，yoyo update 知道换哪个 app

@@ -25,6 +25,8 @@ export interface Paths {
   readonly appPidFile: string;
   /** 主人自己加的子 agent 类型，一个 `.md` 一种。 */
   readonly agentsDir: string;
+  /** 命令行的入口，agent 的 `yoyo` 工具用 Node 跑它。安装包里由启动脚本给 `YOYO_CLI`。 */
+  readonly cliEntry: string;
 }
 
 export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
@@ -46,5 +48,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     appBundle: env['YOYO_APP'] || null,
     appPidFile: join(dataDir, 'app.pid'),
     agentsDir: join(dataDir, 'agents'),
+    cliEntry: env['YOYO_CLI'] || join(root, 'src', 'cli', 'main.ts'),
   };
 }

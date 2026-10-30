@@ -119,6 +119,7 @@ whisper-cli 和 ffmpeg 编一次要几分钟，按 `tools.sh` 的内容缓存：
 | `YOYO_HOTKEY`           | `lib/bin/yoyo-hotkey`                                | 用包里编好的按键助手，使用者不用装 Xcode 命令行工具                                       |
 | `DSH_PET_ELECTRON_PATH` | `lib/electron/Electron.app/…/Electron`               | 桌宠用包里的 Electron，不再第一次运行时去下载                                             |
 | `YOYO_PET_ENTRY`        | `lib/dsh-pet/lib/standalone.js`                      | 桌宠经 `lib/yoyo/pet.mjs` 开：先按 `pet.menu` 设好右键菜单，再加载包里的 dsh-pet          |
+| `YOYO_CLI`              | `lib/yoyo/cli.mjs`                                   | agent 的 `yoyo` 工具用包里的 Node 跑这个命令行，见[命令原则](cli-principles.md#给-agent-用) |
 | `PATH`                  | 前面加上 `lib/node/bin`、`lib/bin`                   | 录音、听写找到包里的 ffmpeg、whisper-cli；MCP 服务器和搜索脚本的 `node`、`npx` 也用包里的 |
 | `YOYO_APP`              | 包在 `*.app/Contents/Resources` 里时是这个 app       | 右键「管理」、`yoyo web open` 打开 app 的窗口；`yoyo update` 知道换哪个 app               |
 
@@ -129,7 +130,7 @@ whisper-cli 和 ffmpeg 编一次要几分钟，按 `tools.sh` 的内容缓存：
 * 别的都交给命令行；不带参数先打一段启动脚本自己的用法，再打命令行的领域列表。
 * 从浏览器下载的 dmg 里拖出来的文件带 `com.apple.quarantine`。包里自己编的程序没公证，从终端第一次运行会被系统拦下。脚本发现 Node 带着这个属性，就把 `Resources` 里的清掉。只清自己这个目录；扩展属性不在签名里，清了签名照样对得上。
 
-yoyo 这边为安装包改的：`YOYO_HOTKEY` 给了编好的按键助手就直接用，不再编译；`YOYO_PET_ENTRY` 指出 dsh-pet 的入口，不给就用依赖里的；`YOYO_APP` 在时打开管理页改成打开 app。[^paths] [^pet]
+yoyo 这边为安装包改的：`YOYO_HOTKEY` 给了编好的按键助手就直接用，不再编译；`YOYO_PET_ENTRY` 指出 dsh-pet 的入口，不给就用依赖里的；`YOYO_APP` 在时打开管理页改成打开 app；`YOYO_CLI` 指出命令行的入口，不给就用源码里的 `src/cli/main.ts`。[^paths] [^pet]
 
 # app 外壳
 

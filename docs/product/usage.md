@@ -39,7 +39,7 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 
 派的时候 yoyo 会按事情挑一种子 agent：`general` 什么都能做，`research` 上网查、结论带出处，`writer` 把给的材料整理成周报和清单。想加自己的，在 `~/.yoyo/agents/` 里放一个 `.md`，写法和 Claude Code 的子 agent 一样，见[子任务](../tech/tasks.md#子-agent-类型)。
 
-一次做一件，其余的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
+同时做两件（`tasks.concurrency` 可以改），多的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
 
 # 按键
 
@@ -66,6 +66,7 @@ pnpm yoyo listen         # 马上听一句
 pnpm yoyo clip history   # yoyo 运行期间复制过的内容
 pnpm yoyo context tail   # 最近的对话记忆
 pnpm yoyo log tail       # 最近 20 件做过的事
+pnpm yoyo search 周报    # 在对话、子任务、记住的事、日程、联系人里找
 pnpm yoyo memory core    # 记忆里的画像
 pnpm yoyo chat sync      # 右键对话没接上时重接
 pnpm yoyo web open       # 打开工作台
@@ -114,6 +115,7 @@ pnpm yoyo memory consolidate          # 现在整理一次
 
 ```sh
 pnpm yoyo task list            # 最近的子任务：编号、状态、todo 进度
+pnpm yoyo task list --state running   # 正在做的几件
 pnpm yoyo task show 3          # 目标、验收标准、todo、结果
 pnpm yoyo task log 3           # 它一步步做了什么
 pnpm yoyo task agents          # 有哪些子 agent 类型

@@ -13,17 +13,23 @@ import {
   failTask,
   finishTask,
   planTodos,
-  taskDetail,
-  taskRow,
   updateTodo,
 } from '../features/tasks/tasks.ts';
 import { ensurePlace, fetchUpcoming, weatherReport } from '../features/weather/weather.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import type { Repos, WebSearch } from '../ports/index.ts';
 
+/** 跑一条 yoyo 命令行（只开 agent 那部分），交回它打出的文字。 */
+export type CliRun = (argv: readonly string[]) => Promise<string>;
+
+/** agent 调 yoyo 命令行的那个工具名，子 agent 类型的工具清单里也写这个。 */
+export const CLI_TOOL = 'yoyo';
+
 export interface YoyoToolDeps {
   readonly repos: Repos;
   readonly search: WebSearch | null;
+  /** 给了就加 `yoyo` 工具：用命令行查 yoyo 自己的数据。 */
+  readonly cli?: CliRun;
   /** 天气用。 */
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
@@ -162,11 +168,47 @@ export function createYoyoTools(
     }),
   );
 
+  if (deps.cli) addCliTool(registry, deps.cli);
   if (deps.tasks) addTaskTools(registry, repos, now, deps.agents ?? mergeAgents([]));
   return registry;
 }
 
-/** 主线程管子任务：派出去、看进度、看结果、取消。子任务由常驻进程在后台做，做完结果会回到主线程。 */
+/** 把一行命令拆成参数：空白分开，单双引号里的算一个；开头的 `yoyo` 去掉。 */
+export function splitCommand(command: string): string[] {
+  const parts: string[] = [];
+  for (const match of command.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g))
+    parts.push(match[1] ?? match[2] ?? match[3] ?? '');
+  return parts[0] === 'yoyo' ? parts.slice(1) : parts;
+}
+
+/**
+ * `yoyo` 工具：agent 用 yoyo 自己的命令行查东西，和主人在终端里敲的是同一套命令，只开标了 agent 的那部分（只读）。
+ * 命令行分层给出：先看领域，再看动作，`inspect` 才给参数，所以说明里不列全部命令。
+ */
+function addCliTool(registry: LocalToolRegistry, cli: CliRun): void {
+  registry.addTool(
+    CLI_TOOL,
+    tool({
+      description:
+        '用 yoyo 自己的命令行查 yoyo 的数据：子任务、日程、联系人、记住的事、对话历史。只读。\n' +
+        'command 写 yoyo 后面的部分，例如 "task list"、"task list --state running"、"task show 3"、"search 周报"。' +
+        '不知道有什么就先跑空的 ""，再 "task" 看动作，"inspect task" 看参数。',
+      inputSchema: z.object({ command: z.string().describe('yoyo 后面的部分，例如 "task show 3"') }),
+      execute: async ({ command }) => {
+        try {
+          return (await cli(splitCommand(command))) || '（没有输出）';
+        } catch (error) {
+          return `命令没跑成：${errorText(error)}`;
+        }
+      },
+    }),
+  );
+}
+
+/**
+ * 主线程管子任务：派出去、取消。看进度和结果用 `yoyo` 工具（`yoyo task list`、`yoyo task show <编号>`）。
+ * 子任务由常驻进程在后台做，做完结果会回到主线程。
+ */
 function addTaskTools(
   registry: LocalToolRegistry,
   repos: Repos,
@@ -198,27 +240,6 @@ function addTaskTools(
           const task = createAgentTask(repos, { ...input, origin: 'main' }, now(), names);
           return `开了子任务 #${task.id}「${task.title}」，交给 ${task.agent}，排队等着做`;
         }),
-    }),
-  );
-
-  registry.addTool(
-    'task_list',
-    tool({
-      description: '列出最近的子任务：编号、状态、todo 进度、标题。',
-      inputSchema: z.object({}),
-      execute: async () => repos.agentTasks.list({ limit: 20 }).map(taskRow).join('\n') || '还没有子任务',
-    }),
-  );
-
-  registry.addTool(
-    'task_show',
-    tool({
-      description: '看一个子任务的全部：目标、验收标准、todo 和各自的状态、验收结果、交回的结果或没做成的原因。',
-      inputSchema: z.object({ id: z.number().int().describe('子任务编号') }),
-      execute: async ({ id }) => {
-        const task = repos.agentTasks.get(id);
-        return task ? taskDetail(task) : `没有子任务 #${id}`;
-      },
     }),
   );
 

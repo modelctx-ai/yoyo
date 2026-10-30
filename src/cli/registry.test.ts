@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vite-plus/test';
 
-import { dispatch, findDomains, inspectText, parseArgs, type Domain } from './registry.ts';
+import { agentDomains, dispatch, findDomains, inspectText, parseArgs, type Domain } from './registry.ts';
 
 const noop = (): void => {};
 
@@ -11,7 +11,7 @@ const domains: Domain[] = [
     summary: '闹钟和周期性日程',
     detail: '到点后 15 分钟内说一次。',
     verbs: [
-      { name: 'list', summary: '列出日程', run: noop },
+      { name: 'list', summary: '列出日程', agent: true, run: noop },
       { name: 'add', summary: '新增', flags: ['title', 'time', 'repeat', 'date', 'kind'], run: noop },
     ],
   },
@@ -34,6 +34,12 @@ const domains: Domain[] = [
     name: 'listen',
     summary: '马上听一句语音',
     verbs: [{ name: 'now', summary: '现在就开始听', run: noop }],
+  },
+  {
+    name: 'search',
+    summary: '在 yoyo 的数据里找',
+    fallback: 'all',
+    verbs: [{ name: 'all', summary: '哪儿都找', usage: '<词>', agent: true, run: noop }],
   },
 ];
 
@@ -79,6 +85,7 @@ describe('cli', () => {
         'clip       粘贴板和复制历史',
         'contact    yoyo 联系人',
         'listen     马上听一句语音',
+        'search     在 yoyo 的数据里找',
         '',
         '下一步：yoyo <领域>    yoyo find <词>    yoyo inspect <领域>',
       ].join('\n'),
@@ -133,6 +140,34 @@ describe('cli', () => {
     const plain = dispatch(domains, ['alarm', 'list']);
     assert.deepEqual(plain.kind === 'run' && plain.args, []);
     assert.match(inspectText(memory), /forget +删一条\n +<id> --force/);
+  });
+
+  test('领域后面不是动作的词交给 fallback 动作：yoyo search 周报 就是 yoyo search all 周报', () => {
+    for (const argv of [
+      ['search', '周报', '本周'],
+      ['search', 'all', '周报', '本周'],
+    ]) {
+      const run = dispatch(domains, [...argv, '--limit', '3']);
+      assert.equal(run.kind === 'run' && run.verb.name, 'all');
+      assert.deepEqual(run.kind === 'run' && run.args, ['周报', '本周']);
+    }
+    assert.match(text(dispatch(domains, ['search'])), /^yoyo search <动作>/);
+  });
+
+  test('agent 只看得到、只调得了标了 agent 的动作', () => {
+    const visible = agentDomains(domains);
+    assert.deepEqual(
+      visible.map((domain) => [domain.name, domain.verbs.map((verb) => verb.name)]),
+      [
+        ['alarm', ['list']],
+        ['search', ['all']],
+      ],
+    );
+    assert.equal(text(dispatch(visible, [])).includes('clip'), false);
+    assert.match(text(dispatch(visible, ['alarm', 'add'])), /^yoyo alarm <动作>\n\nlist/);
+    assert.match(text(dispatch(visible, ['listen'])), /^没有 listen/);
+    assert.match(text(dispatch(visible, ['inspect', 'alarm'])), /list +列出日程$/m);
+    assert.equal(dispatch(visible, ['search', '周报']).kind, 'run');
   });
 
   test('--key 后面没有值就记成 true', () => {
