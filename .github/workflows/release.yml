@@ -1,6 +1,7 @@
 name: Release
 
-# 推 v* tag 时打 macOS 安装包，挂到这个 tag 的 Release（没有就建一个）。
+# 推 v* tag 时打 macOS 的 yoyo.app，做成拖动安装的 dmg，挂到这个 tag 的 Release（没有就建一个）。
+# 装好的 app 从 Release 的最新版本检查更新，下的也是这个 dmg。
 # 也能在 Actions 页手动跑：只打包、上传成构建产物，不碰 Release。
 on:
   push:
@@ -89,7 +90,7 @@ jobs:
         with:
           name: ${{ steps.package.outputs.name }}
           path: |
-            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.dmg }}
             ${{ steps.package.outputs.sha }}
           retention-days: 7
           if-no-files-found: error
@@ -102,4 +103,4 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
           fi
-          gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.zip }}" "${{ steps.package.outputs.sha }}" --clobber
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.dmg }}" "${{ steps.package.outputs.sha }}" --clobber

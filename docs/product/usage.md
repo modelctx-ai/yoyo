@@ -12,15 +12,15 @@ yoyo 的几项放在桌宠右键菜单的第一层：
 
 * **碎碎念**：马上说一句。
 * **听一句**：马上听你说话。
-* **管理**：用浏览器打开[管理页](#管理页)。
+* **管理**：打开[管理页](#管理页)。用 yoyo.app 时在它的窗口里，从源码运行时用浏览器。
 
 桌宠自带的「打开网站」「查看余额」和它自己的「碎碎念」缺省藏起来，「对话」「回到初始位置」「显示位置」「重载配置」「动作」照旧。要藏哪些、放不放第一层，见[配置](configuration.md#右键菜单)。右键「对话」接的是 yoyo 的记忆，见[功能介绍](overview.md#右键对话)。
 
-自己另外开的桌宠（不是 `./yoyo start`、`./yoyo pet` 或 `pnpm pet` 开的）菜单照旧，yoyo 的两项在「更多」里。
+自己另外开的桌宠（不是 yoyo.app、`yoyo start`、`yoyo pet` 或 `pnpm pet` 开的）菜单照旧，yoyo 的两项在「更多」里。
 
 # 管理页
 
-一个只在这台电脑上能打开的网页，从右键「管理」或命令行 `yoyo web open` 打开：
+一个只在这台电脑上能打开的网页，从右键「管理」或命令行 `yoyo web open` 打开。用 yoyo.app 时它就是 app 的窗口，点 Dock 上的 yoyo 也能打开：
 
 * **概览**：桌宠连没连上、用的模型、右键对话接没接上、记住了几件事、下一句碎碎念几点说；「说一句」「听一句」。
 * **对话**：最近聊过的和说过的碎碎念。
@@ -37,7 +37,7 @@ Control+Option+Y：马上听一句。需要系统允许辅助功能。
 
 # 命令行
 
-用安装包时，下面的 `pnpm yoyo` 都换成包目录里的 `./yoyo`。
+用安装包时，下面的 `pnpm yoyo` 都换成 `yoyo`（app 里的命令行，见[在终端里用](getting-started.md#在终端里用)）。
 
 `pnpm yoyo` 只列出有哪些领域。跟上领域名看它有哪些动作，`inspect` 看参数，`find` 按关键词找。
 
@@ -58,7 +58,7 @@ pnpm yoyo context tail   # 最近的对话记忆
 pnpm yoyo log tail       # 最近 20 件做过的事
 pnpm yoyo memory core    # 记忆里的画像
 pnpm yoyo chat sync      # 右键对话没接上时重接
-pnpm yoyo web open       # 用浏览器打开管理页
+pnpm yoyo web open       # 打开管理页
 ```
 
 完整的列表以 `pnpm yoyo` 的输出为准。`pnpm yoyo` 也可以写成 `node bin/yoyo.js`。常驻进程开着时，`whisper` 和 `listen` 交给它去做，不会另开一个去抢桌宠。

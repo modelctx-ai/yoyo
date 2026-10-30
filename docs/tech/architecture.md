@@ -94,7 +94,7 @@ flowchart TB
 | --- | --- |
 | `src/kernel` | 领域类型（`types.ts`）和纯函数：语气、时间、碎碎念让路、气泡时长和记录类型。不做 IO |
 | `src/ports` | 外部能力的接口：`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`、`WebSearch`、`Repos`、`Logger` |
-| `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
+| `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换，`YOYO_APP` 指出所在的 yoyo.app）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问） |
 | `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`harness.ts`（跑一轮的 harness）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
@@ -103,6 +103,7 @@ flowchart TB
 | `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`）、`commands.ts`（领域表）、`main.ts` |
 | `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
+| `src/app/update.ts` | yoyo.app 的自我更新：从 GitHub Release 取最新版本、下载校验 dmg、取出新的 app 交给 `swap.sh`，见[发版](release.md#app-内更新) |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
 | `src/pet.ts` | 桌宠入口：按 `pet.menu` 设好右键菜单的环境变量，再加载 dsh-pet 的独立模式入口 |
@@ -134,7 +135,7 @@ flowchart LR
   harness -. "读视图" .-> store
 ```
 
-`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
+`runDaemon` 在后台接对话渠道（网关只开一次；桌宠还没开、接不上就每 30 秒再接，只记第一次失败），开管理页（`web.enabled` 打开时），挂右键菜单（「管理」用浏览器打开管理页，从 yoyo.app 里跑时打开 app 的窗口，不进收件箱）、调组装根给的 `startHotkey()`、盯气泡变化，然后 `orchestrator.start(signal)`。[^daemon] 编排器每秒一拍，上一拍没走完就跳过：[^orchestrator]
 
 1. 粘贴板有变化就记一条（`clipboard.enabled`）。
 2. 导演并进桌宠的对话记忆。

@@ -21,12 +21,9 @@
 
 ## 快速开始
 
-在 Apple 芯片的 Mac 上，到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载 `yoyo-<版本>-macos-arm64.zip`。包里带着桌宠、Node、录音和听写，不用另外安装。
+在 Apple 芯片的 Mac 上，到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载 `yoyo-<版本>-macos-arm64.dmg`，把 yoyo 拖进「应用程序」。包里带着桌宠、Node、录音和听写，不用另外安装。
 
-```sh
-cd ~/Applications/yoyo   # 解压到的目录
-./yoyo start             # 第一次会生成 ~/.yoyo/config.json，填上 Fish Audio 的 apiKey 和 referenceId 再运行一次
-```
+第一次打开会生成 `~/.yoyo/config.json`，填上 Fish Audio 的 `apiKey` 和 `referenceId` 再打开一次：桌宠出来，yoyo 的窗口里是管理页。有新版本时 yoyo 会问你，点一下就换上。没经过 Apple 公证，第一次打开要在「系统设置 → 隐私与安全性」里点「仍要打开」，见[安装与运行](docs/product/getting-started.md#安装包)。
 
 说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关。
 

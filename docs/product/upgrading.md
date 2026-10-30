@@ -12,9 +12,9 @@ status: stable
 
 1. 停掉常驻进程（`pnpm start`）和自己开的桌宠。
 2. 把 yoyo 目录的 `config.json` 复制成 `~/.yoyo/config.json`。安装包从那里读配置。
-3. 解压安装包，运行 `./yoyo start`。
+3. 下载 dmg，把 yoyo 拖进「应用程序」，打开它。
 
-数据本来就在 `~/.yoyo`，对话记忆、日程、语音缓存都接着用。以前编好的按键助手 `~/.yoyo/bin/yoyo-hotkey` 不再用到，可以删掉。安装包以后换新版本，替换整个目录就行。
+数据本来就在 `~/.yoyo`，对话记忆、日程、语音缓存都接着用。以前编好的按键助手 `~/.yoyo/bin/yoyo-hotkey` 不再用到，可以删掉。安装包以后在 app 里更新，见[更新](getting-started.md#更新)。
 
 # 要做的
 

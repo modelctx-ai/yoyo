@@ -23,6 +23,14 @@ import {
 } from '../app/container.ts';
 import { consoleLogger } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
+import {
+  checkUpdate,
+  createUpdateSystem,
+  installUpdate,
+  installedVersion,
+  UPDATE_REPO,
+  type UpdateSystem,
+} from '../app/update.ts';
 import { createYoyoContext } from '../brain/context.ts';
 import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
@@ -55,6 +63,10 @@ export interface CommandEnv {
   host(): PetHost;
   /** 和导演同一套组装。用完要 close。 */
   app(): Promise<App>;
+  /** 自我更新要碰的网络、命令和进程。 */
+  updater(): UpdateSystem;
+  /** 装着的版本：安装包里 `lib/VERSION` 写的，从源码跑时是 null。 */
+  installed(): string | null;
 }
 
 export interface CommandEnvOptions {
@@ -63,6 +75,10 @@ export interface CommandEnvOptions {
   readonly now?: () => Date;
   /** 测试用：换掉组装里的服务。 */
   readonly overrides?: AppOverrides;
+  /** 测试用：换掉自我更新碰的外部东西。 */
+  readonly updater?: UpdateSystem;
+  /** 测试用：当成装着哪个版本。 */
+  readonly installed?: string | null;
 }
 
 export function createCommandEnv(paths: Paths, options: CommandEnvOptions = {}): CommandEnv {
@@ -84,8 +100,22 @@ export function createCommandEnv(paths: Paths, options: CommandEnvOptions = {}):
     opener: () => overrides.opener ?? createPlatformOpener(),
     host: () => overrides.host ?? createPetHost(env.config(), logger),
     app: () => createApp(env.config(), paths, { logger, db: env.db(), repos: env.repos(), ...overrides }),
+    updater: () => options.updater ?? createUpdateSystem(),
+    installed: () => (options.installed !== undefined ? options.installed : installedVersion(paths.root)),
   };
   return env;
+}
+
+/** 管理页的地址（带令牌）；没开着就说清楚为什么。 */
+function manager(env: CommandEnv): { readonly url: string } | { readonly problem: string } {
+  if (!env.settings().web.enabled) return { problem: 'config.json 的 web.enabled 关着，没有管理页' };
+  const url = env.repos().kv.get('web-url');
+  if (!url || !directorAlive(env.paths.pidFile)) return { problem: '常驻进程没在跑，管理页跟着它开' };
+  return { url };
+}
+
+function updateRepo(): string {
+  return process.env['YOYO_UPDATE_REPO'] || UPDATE_REPO;
 }
 
 function oneLine(text: string, max: number): string {
@@ -494,17 +524,58 @@ export function buildDomains(env: CommandEnv): Domain[] {
       name: 'web',
       summary: '管理页',
       detail:
-        '常驻进程开着一个只听本机的网页：看状态和对话，管记忆、日程和联系人。地址每次启动都换，带着一次性令牌。config.json 的 web.enabled 关掉就不开。',
+        '常驻进程开着一个只听本机的网页：看状态和对话，管记忆、日程和联系人。地址每次启动都换，带着一次性令牌。config.json 的 web.enabled 关掉就不开。从 yoyo.app 里跑时在 app 的窗口里打开。',
       verbs: [
         {
           name: 'open',
-          summary: '用浏览器打开管理页',
+          summary: '打开管理页',
           run() {
-            if (!env.settings().web.enabled) return env.out('config.json 的 web.enabled 关着，没有管理页');
-            const url = env.repos().kv.get('web-url');
-            if (!url || !directorAlive(env.paths.pidFile)) return env.out('常驻进程没在跑，管理页跟着它开');
-            env.opener().open(url);
-            env.out(url);
+            const found = manager(env);
+            if ('problem' in found) return env.out(found.problem);
+            // 从 yoyo.app 里跑时打开 app：它把管理页放在自己的窗口里
+            env.opener().open(env.paths.appBundle ?? found.url);
+            env.out(found.url);
+          },
+        },
+        {
+          name: 'url',
+          summary: '只打出管理页的地址，没开着时报错',
+          run() {
+            const found = manager(env);
+            if ('problem' in found) throw new Error(found.problem);
+            env.out(found.url);
+          },
+        },
+      ],
+    },
+    {
+      name: 'update',
+      summary: '检查和安装新版本',
+      detail: `从 GitHub Release（${UPDATE_REPO}）取最新版本。yoyo.app 能自己换上新版：下载 dmg、校验，等 app 收好常驻进程和桌宠退出后换掉，再重开。从源码跑的用 git pull。`,
+      verbs: [
+        {
+          name: 'check',
+          summary: '看有没有新版本',
+          flags: ['json'],
+          async run(flags) {
+            const check = await checkUpdate(env.installed(), env.updater(), updateRepo());
+            if (flags['json'] === true) {
+              const { current, latest, available, page, message } = check;
+              return env.out(JSON.stringify({ current, latest, available, page, message }));
+            }
+            env.out(check.message);
+            if (check.available) env.out('yoyo update install 换上新版');
+          },
+        },
+        {
+          name: 'install',
+          summary: '下载新版本，换上以后重开 yoyo.app',
+          async run() {
+            const system = env.updater();
+            const check = await checkUpdate(env.installed(), system, updateRepo());
+            if (!check.available) return env.out(check.message);
+            const { relaunch } = await installUpdate({ check, paths: env.paths, system, out: (text) => env.out(text) });
+            env.out(relaunch ? `换上 ${check.latest} 后重开 yoyo` : `${check.latest} 装好了`);
           },
         },
       ],
