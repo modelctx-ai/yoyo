@@ -37,11 +37,13 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 
 子任务做的时候会先拆成一条条 todo，一次做一条，做完马上勾；派的时候 yoyo 会写下验收标准，交结果前逐条对过。想看进度，在工作台的聊天列表里点开它：目标、验收标准、todo、结果，还有它一步步做了什么。在做的能取消。
 
+做到一半，子任务要你拿主意（偏好、取舍、它查不到的信息）时会停下来问你：桌宠会用一两句话说出是哪个子任务在问什么，这时它在工作台里显示「等回答」，不占做事的名额。直接对 yoyo 说答案就行（「封面用蓝色」），yoyo 会把回答交给对的那个子任务，它排队接着做；也可以在工作台的子任务详情里写在回答框里，或者用命令行 `yoyo task answer 3 蓝色`。同时有几个在问时，回答时说清楚是哪个；yoyo 分不清会先问你。等了 24 小时（`tasks.answerTimeout` 可以改，0 是一直等）还没回答，子任务就按没做成结束，yoyo 照常告诉你。等回答的也能取消；关了 yoyo 再开，等着的还在等。
+
 要交文件的（整理好的周报、对比表、图），子任务会把文件交上来，放在子任务详情的「交付物」里：文本和图片点开就能看，浏览器里能下载，yoyo.app 里是「在访达里显示」。文件在 `~/.yoyo/artifacts/<编号>/`，不要了可以删。
 
 派的时候 yoyo 会按事情挑一种子 agent：`general` 什么都能做，`research` 上网查、结论带出处，`writer` 把给的材料整理成周报和清单。只有 `general` 能跑命令。想加自己的，在 `~/.yoyo/agents/` 里放一个 `.md`，写法和 Claude Code 的子 agent 一样，见[子任务](../tech/tasks.md#子-agent-类型)。
 
-同时做两件（`tasks.concurrency` 可以改），多的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说，你问起照样能答。
+同时做两件（`tasks.concurrency` 可以改），多的排队。要回复时用工具（`llm.tools`）打开，yoyo 才能派；`tasks.enabled` 关掉就不做子任务，`tasks.notify` 关掉 yoyo 就不主动说（结果和问题都是），你问起照样能答。
 
 # 让 yoyo 读写文件、跑命令
 
@@ -136,10 +138,11 @@ pnpm yoyo memory consolidate          # 现在整理一次
 ```sh
 pnpm yoyo task list            # 最近的子任务：编号、状态、todo 进度
 pnpm yoyo task list --state running   # 正在做的几件
-pnpm yoyo task show 3          # 目标、验收标准、todo、结果
+pnpm yoyo task show 3          # 目标、验收标准、todo、问题和回答、结果
 pnpm yoyo task log 3           # 它一步步做了什么
 pnpm yoyo task agents          # 有哪些子 agent 类型
 pnpm yoyo task add --title 整理周报 --goal "本周三个项目的进展" --criteria "三个项目都有；每项三行内" --agent writer
+pnpm yoyo task answer 3 蓝色   # 回答在等回答的子任务，它接着做
 pnpm yoyo task cancel 3
 pnpm yoyo artifact list --task 3     # 子任务 3 交的文件
 pnpm yoyo artifact show 5            # 打出文本交付物的内容
