@@ -30,13 +30,16 @@ sources:
   - id: supervisor
     resource: src/app/supervisor.ts
     title: 换配置
+  - id: harness
+    resource: src/brain/harness.ts
+    title: 取文字增量
 ---
 
 # 做什么
 
-主人在命令行里能看的、能改的，管理页都给一份网页，长成一个聊天工作台（布局和后面的打算见[工作台](workbench.md)）：主聊天（最近的对话，能打字和 yoyo 聊）、状态（桌宠连没连上、模型、右键对话、记忆、下一句碎碎念、在忙什么）、心迹（画像能改，事实能忘，规矩能退役）、日程和联系人（加、删）、行为轨迹。还有「说一句」「听一句」，和右键菜单一样交给收件箱。
+主人在命令行里能看的、能改的，管理页都给一份网页，长成一个聊天工作台（布局和后面的打算见[工作台](workbench.md)）：主聊天（最近的对话，能打字和 yoyo 聊，回复边写边显示，往上滚接着加载更早的）、状态（桌宠连没连上、模型、右键对话、记忆、下一句碎碎念、在忙什么）、心迹（画像能改，事实能忘，规矩能退役）、日程和联系人（加、删）、行为轨迹。还有「说一句」「听一句」，和右键菜单一样交给收件箱。
 
-除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，忘掉事实是 `facts.forget`，退役规矩是 `procedures.retire`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
+除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，忘掉事实是 `facts.forget`，退役规矩是 `procedures.retire`，派子任务是 `createAgentTask`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
 
 # 在哪跑
 
@@ -56,7 +59,7 @@ sources:
 | Host 只认 `127.0.0.1:<端口>`、`localhost:<端口>`，别的 403 | DNS rebinding |
 | 带 Origin 的只认自己这两个，`Sec-Fetch-Site: cross-site` 一律 403 | 别的网页跨站请求 |
 | `/api/` 都要 `Authorization: Bearer <令牌>`，常数时间比较；令牌每次启动新生成 | 没打开过页面的人 |
-| 写操作只收 `application/json`，正文最多 64 KiB | 表单跨站提交 |
+| 写操作只收 `application/json`，正文最多 64 KiB（流式聊天的 `POST` 也是） | 表单跨站提交 |
 | 页面带 CSP：脚本和样式只认这次响应的 nonce，`connect-src 'self'`，`frame-ancestors 'none'`；`no-store`、`nosniff`、`no-referrer` | 注入、被嵌进别的页面、令牌随 Referer 带出去 |
 
 令牌放在地址的片段（`#` 后面）里：浏览器不把它发给服务器，也就不进任何日志。页面脚本读出来存进 sessionStorage，再用 `history.replaceState` 从地址栏抹掉。页面本身谁都能取，里面没有数据；没有令牌时只显示一句「从右键「管理」或 `yoyo web open` 打开」。
@@ -68,8 +71,11 @@ sources:
 | 接口 | 做什么 |
 | --- | --- |
 | `GET /api/status` | 舞台、宠物 id、桌宠连没连上和工作状态（经 `workStatus`，控制台舞台是 null）、模型名和是否给工具（不含密钥）、记忆开没开和事实条数、右键对话接没接上（kv 里有没有 `channel-base`）、MCP 服务器名、下一句碎碎念、`lastPace`（这一次间隔是怎么定的：`source` 是 `fixed`、`decided`、`fallback`，加隔多少秒 `sec`、挑的档 `option` 和把握 `confidence`，或退回的原因 `reason`，再加一句短说明 `note`；还没说过是 null）、最近一次说话、日程和联系人条数、等批准的个数（`approvals`）、是不是在 yoyo.app 的窗口里（`app`）、能不能在访达里显示（`reveal`） |
-| `GET /api/context?limit=` | 最近的上下文，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）；子任务写回来的那条是 `kind: 'task'`，带编号 `task` 和状态 `state`；批准请求有了结论写回来的是 `kind: 'approval'`，带编号 `approval` 和状态 `state`。缺省 40 条，最多 200 |
+| `GET /api/context?limit=&before=` | 上下文的一页，按 `(at, seq)` 排好；消息按角色，碎碎念、摘要单列，消息带来源 `via`（`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音）；子任务写回来的那条是 `kind: 'task'`，带编号 `task` 和状态 `state`；批准请求有了结论写回来的是 `kind: 'approval'`，带编号 `approval` 和状态 `state`。每条带日志序号 `seq`。缺省 40 条，最多 200。不给 `before` 是最新的一页；往前翻给 `before=<at>:<seq>`（已经拿到的最早那条的 `at` 和 `seq`），回排在它前面的一页，返回的不满 `limit` 条就是到头了。写错回 400 |
+| `GET /api/agents` | 子 agent 的类型：`[{ name, description }]`（名字、什么时候用），内置的加上 `~/.yoyo/agents/*.md`；子任务没打开（`tasks.enabled` 关着）是空的 |
 | `GET /api/tasks` | 最近 50 个子任务：编号、标题、状态（`queued`、`running`、`waiting` 等回答、`done`、`failed`、`cancelled`）、谁派的、时间、todo 进度 |
+| `POST /api/tasks` | 派一个子任务：`{ title, goal, criteria, agent }`。`criteria` 是字符串数组（给整段文字就按行拆），`agent` 不写是 `general`。规则和类型校验同主线程的 `task_create`（`createAgentTask`，标题最多 60 字、目标最多 4000 字、验收标准最多 8 条、类型要在 `GET /api/agents` 里），来源记 `web`、行为记录记 `task-add`；回这个子任务的概要（状态 `queued`，常驻进程下一拍起来做）。填错的回 400（文案和命令行一样），子任务没打开回 409 |
+| `GET /api/tasks/:id/events` | SSE：一个子任务的过程，详情页用它代替轮询。见下面的「流式回复」。没有这个子任务回 404 |
 | `GET /api/tasks/:id` | 一个子任务的全部，加上 `progress` 和最近 300 步过程（`steps`：收到、说、调用、结果）。等回答的带着 `question`、`askedAt`，答过的带 `answer`、`answeredAt`；带着它要批准的事 `approvals`（概要，同 `GET /api/approvals`）。没有回 404 |
 | `POST /api/tasks/:id/answer` | 回答在等回答的子任务：`{ answer }`，去掉首尾空白，最多 2000 字；回这个子任务的概要（状态回到 `queued`），排队接着做；记 `task-answer`。没给 `answer` 回 400，不在等回答的、回答是空的、没有这个子任务回 409；在等批准的子任务也回 409（不收一句话回答，要批准或拒绝）|
 | `POST /api/tasks/:id/cancel` | 取消（排队、在做、等回答的都行）；已经结束的回 409 |
@@ -82,7 +88,8 @@ sources:
 | `DELETE /api/artifacts/:id` | 删一个交付物，文件和记录一起删；记 `artifact-remove` |
 | `POST /api/artifacts/:id/reveal` | 在访达里选中这个文件（`open -R`）。只有 macOS 上有，别处回 503 |
 | `POST /api/chat` | 工作台聊一句：`{ text }`，去掉首尾空白，最多 4000 字；回 `{ reply }`。问答记进日志、记 `chat-workbench`。常驻进程外回 503，没回上来回 502 和原因 |
-| `GET /api/activity?limit=` | 做过的事，缺省 50 条，最多 500 |
+| `POST /api/chat/stream` | 同上，但回 SSE，边写边给，见下面的「流式回复」。空的、太长的、不在常驻进程里的，开流之前就回上面那样的 JSON 错误 |
+| `GET /api/activity?limit=&types=&before=` | 做过的事，缺省 50 条，最多 500。`types=a,b` 只看这几种，`before=<ISO 时间>` 只看那以前的（条数在筛过的里面数）：对话里穿插的小卡片用它按时间段取 |
 | `GET /api/memory` | 画像、仍然成立的事实（按开始成立的时间）、没退役的规矩 |
 | `PUT /api/memory/core` | 改画像：`{ text }`，去掉首尾空白，最多 4000 字；记 `memory-core-edit` |
 | `DELETE /api/memory/facts/:id` | 真删除一条事实；记 `memory-forget` |
@@ -93,6 +100,22 @@ sources:
 | `GET /api/config` | 打过码的整份原文、各开关的值、指纹、文件路径 |
 | `PUT /api/config` | 存整份：`{ text, version }` |
 | `PATCH /api/config` | 只改开关：`{ switches: { "weather.enabled": false } }` |
+
+# 流式回复
+
+`POST /api/chat/stream` 和 `GET /api/tasks/:id/events` 回 SSE（`text/event-stream`）。认证、Host、Origin、只收 JSON、`no-store`、`nosniff` 和别的接口一样，在开流之前就查完，查不过回普通的 JSON 错误；开了以后每个事件是 `event: <名字>` 加一行 `data: <JSON>`，空行结束，另有 15 秒一次的注释行当心跳。浏览器用 `fetch` 读流：`EventSource` 带不了 `Authorization` 头，令牌又不能放进地址。[^server]
+
+聊天的事件：
+
+| 事件 | 数据 | 什么时候 |
+| --- | --- | --- |
+| `delta` | `{ text }` | 模型吐了一小段（原文，开头结尾的空白还在，几步的文字都会来） |
+| `done` | `{ reply }` | 回完了。`reply` 就是 `talk` 的返回值，去了首尾空白，和记进日志的、`POST /api/chat` 交回的是同一份；页面用它换掉气泡里增量拼出来的 |
+| `error` | `{ error }` | 没回上来，一句中文；不会再有 `done`，问答也没有记进日志 |
+
+增量是从编排器和 harness 之间拿的：编排器只调 `run`，yoyo 在交给它的 harness 外面包一层（`tapDeltas`），这一轮由 `talk` 自己定编号、登记以后，包的那层对它改调 harness 的 `stream`，把 `text.delta` 交出来，`run.ended` 的结果当这一轮的返回；没登记的轮不变。工作台聊天的回复不经 `parseWhisper`（气泡装得下多句，不按念的那一句截），所以 `done` 和日志一致靠的是同一个返回值，不是再解析一遍。浏览器断开不会中止这一轮：它照样跑完、记进日志，刷新就看得到。[^harness]
+
+子任务过程的事件：`task` 是整份详情加交付物（`{ task, artifacts }`，`task` 和 `GET /api/tasks/:id` 一样），一开头先推一份，之后有变化才推；子任务结束（做完、没做成、取消）推完最后一份再推 `end`，服务端关流。没有现成的通知能订，服务端每 1 秒（`pollMs`）看一眼：任务的更新时间、它的会话多没多一条、批准请求的状态、交付物多没多，任何一样变了就推。页面连着时不再自己轮询，断了或没连上就退回每 4 秒轮询，轮询那一拍发现没连着会重连。
 
 # 改配置
 
@@ -118,7 +141,7 @@ sources:
 
 # 页面
 
-一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data: blob:`，`blob:` 给交付物的图片预览）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
+一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；聊天的回复和子任务的过程用 `fetch` 读流，一个事件一个事件地拆；往上翻的消息、小卡片都并进已加载的，重画时按高度差补回滚动位置；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data: blob:`，`blob:` 给交付物的图片预览）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
 
 改页面时注意：脚本放在模板字符串里，不能写反引号和 `${`；CSP 不许写 `style` 属性，样式都放样式表，脚本要改样式就改 class 或 `node.style`。
 
@@ -136,3 +159,4 @@ sources:
 [^commands]: 领域表
 [^settings]: 改配置
 [^supervisor]: 换配置
+[^harness]: 取文字增量
