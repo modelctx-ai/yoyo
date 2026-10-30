@@ -1,8 +1,9 @@
 name: Release
 
 # 推 v* tag 时打 macOS 的 yoyo.app，做成拖动安装的 dmg，挂到这个 tag 的 Release（没有就建一个）。
-# 装好的 app 从 Release 的最新版本检查更新，下的也是这个 dmg。
-# 也能在 Actions 页手动跑：只打包、上传成构建产物，不碰 Release。
+# Apple 芯片（arm64）和 Intel（x86_64）各在自己的 runner 上打一个包；两个都打好才挂到 Release。
+# 装好的 app 从 Release 的最新版本检查更新，按自己的架构挑 dmg 下载。
+# 也能在 Actions 页手动跑：两个架构都只打包、上传成构建产物，不碰 Release。
 on:
   push:
     tags: ['v*']
@@ -21,8 +22,19 @@ concurrency:
 
 jobs:
   macos:
-    # Apple 芯片；要出 Intel 版就加一个 macos-15-intel 的矩阵
-    runs-on: macos-15
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      # 一个架构失败，另一个照样跑完：看得到两边各自的问题
+      fail-fast: false
+      matrix:
+        include:
+          # Apple 芯片
+          - arch: arm64
+            runner: macos-15
+          # Intel：GitHub 提供的 x64 runner
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     defaults:
       run:
@@ -95,12 +107,31 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # 两个架构的包都打好了才挂到 Release：分开挂会抢着建 Release，也可能只发出一个架构
+  publish:
+    name: 挂到 Release
+    needs: macos
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: yoyo-*
+          merge-multiple: true
+          path: release
+
       - name: 挂到 Release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          ls -l release
+          # 缺一个架构就不发：app 内更新看到「没有 x86_64 的安装包」只会让人干等
+          for arch in arm64 x86_64; do
+            ls release/yoyo-*-macos-"$arch".dmg release/yoyo-*-macos-"$arch".dmg.sha256 >/dev/null
+          done
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
           fi
-          gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.dmg }}" "${{ steps.package.outputs.sha }}" --clobber
+          gh release upload "$GITHUB_REF_NAME" release/*.dmg release/*.dmg.sha256 --clobber

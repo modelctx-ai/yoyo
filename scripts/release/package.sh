@@ -1,6 +1,6 @@
 #!/bin/bash
 # 在 macOS 上组装 yoyo.app：yoyo 和桌宠、Node、Electron、ffmpeg、whisper-cli、听写模型、按键助手都在里面，
-# 拖进「应用程序」、填好配置就能用。先冒烟测试，再做成拖动安装的 $OUT_DIR/yoyo-<版本>-macos-<架构>.dmg。
+# 拖进「应用程序」、填好配置就能用。先冒烟测试，再做成拖动安装的 $OUT_DIR/yoyo-<版本>-macos-<架构>.dmg（<架构> 是 uname -m：arm64 或 x86_64）。
 # app 内更新（yoyo update）下载的就是这个 dmg，名字改了要连带改 src/app/update.ts。
 #
 # 桌宠是 npm 上上游发的 dsh-pet，版本和右键菜单的补丁跟 yoyo 的锁文件走（patches/、pnpm-workspace.yaml），不检出它的仓库。
@@ -208,14 +208,8 @@ codesign --verify --verbose "$app"
 echo "== dmg"
 ln -s /Applications "$stage/Applications"
 dmg="$OUT_DIR/$name.dmg"
-# runner 上 hdiutil 偶尔报资源忙，重试几次
-for attempt in 1 2 3; do
-  if hdiutil create -volname "yoyo $VERSION" -srcfolder "$stage" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$dmg"; then
-    break
-  fi
-  [ "$attempt" = 3 ] && exit 1
-  sleep 5
-done
+# 窗口的背景图和图标位置在 dmg.sh 里摆；访达用不了就退回不带布局的 dmg，不让发版失败
+"$here/dmg.sh" "$stage" "yoyo $VERSION" "$dmg"
 # 和 app 内更新一样挂上、看版本和签名
 mount="$work/mount"
 mkdir -p "$mount"

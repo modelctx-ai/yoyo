@@ -36,7 +36,18 @@ export interface ReleaseAsset {
 export interface Release {
   readonly version: string;
   readonly page: string;
+  /** Release 的正文（更新说明），已经截断到 `NOTES_MAX` 个字以内。 */
+  readonly body: string;
   readonly assets: readonly ReleaseAsset[];
+}
+
+/** 更新说明最多留多少字：给人在对话框里看的，太长的到 Release 页上看。 */
+export const NOTES_MAX = 4000;
+
+/** 换行统一成 `\n`、去掉首尾空白；太长就截断，末尾补「…」。 */
+export function trimNotes(text: string, max = NOTES_MAX): string {
+  const clean = text.replaceAll('\r\n', '\n').trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}\n…` : clean;
 }
 
 export interface UpdateCheck {
@@ -47,6 +58,8 @@ export interface UpdateCheck {
   /** 有比装着的新、这台机器能装的版本。 */
   readonly available: boolean;
   readonly page: string | null;
+  /** Release 的正文（更新说明），没有是空串。 */
+  readonly body: string;
   /** 这台机器架构的 dmg。 */
   readonly asset: ReleaseAsset | null;
   /** 和 dmg 同名的 `.sha256`。 */
@@ -164,6 +177,7 @@ export async function latestRelease(system: Pick<UpdateSystem, 'fetch'>, repo = 
   return {
     version: tag.replace(/^v/, ''),
     page: typeof body['html_url'] === 'string' ? body['html_url'] : `https://github.com/${repo}/releases/tag/${tag}`,
+    body: typeof body['body'] === 'string' ? trimNotes(body['body']) : '',
     assets,
   };
 }
@@ -180,6 +194,7 @@ export async function checkUpdate(
       latest: null,
       available: false,
       page: null,
+      body: '',
       asset: null,
       checksum: null,
       message: '还没有发布过的版本',
@@ -188,7 +203,7 @@ export async function checkUpdate(
   const name = dmgName(release.version, system.arch);
   const asset = release.assets.find((item) => item.name === name) ?? null;
   const checksum = release.assets.find((item) => item.name === `${name}.sha256`) ?? null;
-  const base = { current, latest: release.version, page: release.page, checksum };
+  const base = { current, latest: release.version, page: release.page, body: release.body, checksum };
   if (current === null) {
     return { ...base, available: false, asset, message: `最新的是 ${release.version}；从源码跑的用 git pull 更新` };
   }
@@ -217,31 +232,30 @@ async function expectedSha(
   return sha.toLowerCase();
 }
 
-/** 下载到 `file`，边下边算 sha256，对不上就删掉并报错。 */
+/** 下载进度：已经下了多少字节、一共多少（Content-Length，没有就按 Release 里写的大小；都不知道是 0）。 */
+export type DownloadProgress = (done: number, total: number) => void;
+
+/** 下载到 `file`，边下边算 sha256，对不上就删掉并报错。每收到一块、开始时（0）都报一次进度。 */
 export async function download(
   system: Pick<UpdateSystem, 'fetch'>,
   asset: ReleaseAsset,
   sha: string,
   file: string,
-  progress: (percent: number) => void = () => {},
+  progress: DownloadProgress = () => {},
 ): Promise<void> {
   const response = await system.fetch(asset.url, { signal: AbortSignal.timeout(30 * 60_000) });
   if (!response.ok || !response.body) throw new Error(`安装包没下下来：${response.status}`);
-  const total = Number(response.headers.get('content-length')) || asset.size;
+  const total = Number(response.headers.get('content-length')) || asset.size || 0;
   const hash = createHash('sha256');
   const out = createWriteStream(file, { mode: 0o600 });
   let got = 0;
-  let shown = 0;
+  progress(0, total);
   try {
     for await (const chunk of response.body) {
       hash.update(chunk);
       got += chunk.length;
       if (!out.write(chunk)) await once(out, 'drain');
-      const percent = total > 0 ? Math.floor((got / total) * 10) * 10 : 0;
-      if (percent > shown) {
-        shown = percent;
-        progress(percent);
-      }
+      progress(got, total);
     }
   } finally {
     out.end();
@@ -251,6 +265,24 @@ export async function download(
     rmSync(file, { force: true });
     throw new Error('下下来的安装包校验和对不上，没装');
   }
+}
+
+/**
+ * 把每块都报的进度收成稀疏的：每涨 `percent`% 报一次（0 也报一次）；不知道总大小就每下 `unknownBytes` 报一次。
+ * 终端里每 5% 一行、给 app 读的每 1% 一条，不刷屏。
+ */
+export function stepProgress(
+  percent: number,
+  report: DownloadProgress,
+  unknownBytes = 4 * 1024 * 1024,
+): DownloadProgress {
+  let last = -1;
+  return (done, total) => {
+    const step = total > 0 ? Math.floor(((done / total) * 100) / percent) : Math.floor(done / unknownBytes);
+    if (step <= last) return;
+    last = step;
+    report(done, total);
+  };
 }
 
 /** 文件里的进程号还活着就返回它。 */
@@ -268,7 +300,10 @@ export interface InstallOptions {
   readonly check: UpdateCheck;
   readonly paths: Pick<Paths, 'root' | 'dataDir' | 'appBundle' | 'appPidFile'>;
   readonly system: UpdateSystem;
+  /** 一步一步做到哪了（给人看的一句话）。 */
   readonly out: (text: string) => void;
+  /** 下载的进度，每收到一块报一次；要稀疏一点自己用 `stepProgress` 包。 */
+  readonly progress?: DownloadProgress;
 }
 
 /** 装 dmg 里的这个 app。 */
@@ -279,7 +314,7 @@ const APP_IN_DMG = 'yoyo.app';
  * `swap.sh` 等它退了再换、再重开。返回要不要重开。
  */
 export async function installUpdate(options: InstallOptions): Promise<{ readonly relaunch: boolean }> {
-  const { check, paths, system, out } = options;
+  const { check, paths, system, out, progress } = options;
   const app = paths.appBundle;
   if (!app) throw new Error('只有 yoyo.app 能自己更新；从源码跑的用 git pull');
   if (!check.available || !check.asset || !check.latest) throw new Error(check.message);
@@ -297,7 +332,7 @@ export async function installUpdate(options: InstallOptions): Promise<{ readonly
   const sha = await expectedSha(system, check.asset, check.checksum);
   const dmg = join(dir, check.asset.name);
   out(`下载 ${check.asset.name}`);
-  await download(system, check.asset, sha, dmg, (percent) => out(`下载 ${percent}%`));
+  await download(system, check.asset, sha, dmg, progress);
 
   out('取出新的 yoyo.app');
   const mount = join(dir, 'mount');

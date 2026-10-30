@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
@@ -46,14 +47,19 @@ function cli(
     readonly updater?: UpdateSystem;
     readonly installed?: string | null;
     readonly app?: string;
+    /** 当成包在这里（里面有 `lib/swap.sh`）。 */
+    readonly root?: string;
   } = {},
 ): Cli {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-'));
-  const paths = resolvePaths({
-    YOYO_HOME: home,
-    YOYO_CONFIG: join(home, 'config.json'),
-    ...(options.app ? { YOYO_APP: options.app } : {}),
-  });
+  const paths: Paths = {
+    ...resolvePaths({
+      YOYO_HOME: home,
+      YOYO_CONFIG: join(home, 'config.json'),
+      ...(options.app ? { YOYO_APP: options.app } : {}),
+    }),
+    ...(options.root ? { root: options.root } : {}),
+  };
   if (options.config !== undefined) writeFileSync(paths.configFile, JSON.stringify(options.config));
   const lines: string[] = [];
   const logger = memoryLogger();
@@ -402,12 +408,13 @@ describe('commands', () => {
     assert.deepEqual(opened, ['/Applications/yoyo.app']);
   });
 
-  test('update check：从 Release 取最新版本，--json 给 app 读', async () => {
+  test('update check：从 Release 取最新版本，--json 给 app 读，带更新说明', async () => {
     const updater: UpdateSystem = {
       fetch: async () =>
         Response.json({
           tag_name: 'v0.2.0',
           html_url: 'https://github.com/modelctx-ai/yoyo/releases/tag/v0.2.0',
+          body: '## 更新\n* 下载有进度了',
           assets: [{ name: 'yoyo-0.2.0-macos-arm64.dmg', browser_download_url: 'https://x/y.dmg', size: 1 }],
         }),
       run: () => {},
@@ -424,10 +431,123 @@ describe('commands', () => {
       latest: '0.2.0',
       available: true,
       page: 'https://github.com/modelctx-ai/yoyo/releases/tag/v0.2.0',
+      body: '## 更新\n* 下载有进度了',
       message: '0.2.0 可以更新了，现在是 0.1.0',
     });
     await assert.rejects(run('update', 'install'), /只有 yoyo\.app 能自己更新/);
     assert.deepEqual(await cli({ updater, installed: '0.2.0' }).run('update', 'install'), ['已经是最新的 0.2.0']);
+  });
+
+  describe('update install 的进度', () => {
+    const DMG = Buffer.alloc(40 * 1024 * 1024, 1);
+    const name = 'yoyo-0.2.0-macos-arm64.dmg';
+    const sha = createHash('sha256').update(DMG).digest('hex');
+
+    /** 下载分 40 块，每块 1 MB；`ditto` 照着放一个假的 app。 */
+    function installer(options: { readonly broken?: boolean } = {}): {
+      updater: UpdateSystem;
+      app: string;
+      root: string;
+    } {
+      const dir = mkdtempSync(join(tmpdir(), 'yoyo-inst-'));
+      const root = join(dir, 'yoyo.app', 'Contents', 'Resources');
+      mkdirSync(join(root, 'lib'), { recursive: true });
+      writeFileSync(join(root, 'lib', 'VERSION'), '0.1.0\n');
+      writeFileSync(join(root, 'lib', 'swap.sh'), '#!/bin/bash\n');
+      const updater: UpdateSystem = {
+        fetch: async (url) => {
+          if (url.includes('api.github.com')) {
+            return Response.json({
+              tag_name: 'v0.2.0',
+              html_url: 'https://github.com/modelctx-ai/yoyo/releases/tag/v0.2.0',
+              assets: [{ name, browser_download_url: `https://dl/${name}`, size: DMG.length, digest: `sha256:${sha}` }],
+            });
+          }
+          if (options.broken) return new Response('no', { status: 500 });
+          const chunks = Array.from({ length: 40 }, (_, i) => DMG.subarray(i * 1024 * 1024, (i + 1) * 1024 * 1024));
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                for (const chunk of chunks) controller.enqueue(chunk);
+                controller.close();
+              },
+            }),
+            { headers: { 'content-length': String(DMG.length) } },
+          );
+        },
+        run(command, args) {
+          if (command !== 'ditto') return;
+          const lib = join(args[1]!, 'Contents', 'Resources', 'lib');
+          mkdirSync(lib, { recursive: true });
+          writeFileSync(join(lib, 'VERSION'), '0.2.0\n');
+        },
+        spawnDetached: () => {},
+        alive: () => false,
+        kill: () => {},
+        arch: 'arm64',
+      };
+      return { updater, app: join(dir, 'yoyo.app'), root };
+    }
+
+    test('终端里每 5% 一行，不是每一块一行', async () => {
+      const { updater, app, root } = installer();
+      const { run } = cli({ updater, installed: '0.1.0', app, root });
+      const lines = await run('update', 'install');
+      const percents = lines.filter((line) => line.startsWith('下载 ') && line.includes('%'));
+      assert.equal(percents.length, 20);
+      assert.equal(percents[0], '下载 5%（2/40 MB）');
+      assert.equal(percents.at(-1), '下载 100%（40/40 MB）');
+      assert.deepEqual(lines.slice(0, 1), [`下载 ${name}`]);
+      assert.equal(lines.at(-1), '0.2.0 装好了');
+    });
+
+    test('--json：一行一个事件，step、每 1% 一条 progress、最后 done', async () => {
+      const { updater, app, root } = installer();
+      const { run } = cli({ updater, installed: '0.1.0', app, root });
+      const events = (await run('update', 'install', '--json')).map(
+        (line) => JSON.parse(line) as { type: string; done?: number; total?: number; text?: string },
+      );
+      assert.deepEqual(events[0], { type: 'step', text: `下载 ${name}` });
+      const progress = events.filter((event) => event.type === 'progress');
+      assert.deepEqual(progress[0], { type: 'progress', done: 0, total: DMG.length });
+      assert.deepEqual(progress.at(-1), { type: 'progress', done: DMG.length, total: DMG.length });
+      assert.ok(progress.length <= 102 && progress.length >= 40);
+      assert.ok(
+        progress.every((event, i) => i === 0 || event.done! > progress[i - 1]!.done!),
+        '只涨不降',
+      );
+      assert.deepEqual(events.at(-1), { type: 'done', updated: true, message: '0.2.0 装好了' });
+      assert.deepEqual(events.at(-2), { type: 'step', text: '取出新的 yoyo.app' });
+    });
+
+    test('--json：没有新版本给 done；出错先给 error 再以非 0 退出', async () => {
+      const { updater, app, root } = installer();
+      assert.deepEqual(await cli({ updater, installed: '0.2.0', app, root }).run('update', 'install', '--json'), [
+        JSON.stringify({ type: 'done', updated: false, message: '已经是最新的 0.2.0' }),
+      ]);
+      const bad = installer({ broken: true });
+      const failing = cli({ updater: bad.updater, installed: '0.1.0', app: bad.app, root: bad.root });
+      await assert.rejects(failing.run('update', 'install', '--json'), /安装包没下下来：500/);
+      const last = JSON.parse(failing.lines.at(-1)!) as { type: string; message: string };
+      assert.deepEqual(last, { type: 'error', message: '安装包没下下来：500' });
+    });
+  });
+
+  test('app login：看和改登录时自动打开，和设置页是同一项', async () => {
+    const { run, paths } = cli({
+      config: { stage: 'console', app: { keep: 1 } },
+    });
+    assert.deepEqual(await run('app', 'login'), ['登录时自动打开：关着']);
+    assert.deepEqual(await run('app', 'login', 'on'), [
+      '登录时会自动打开 yoyo',
+      '注意：现在不是从 yoyo.app 跑的，这一项只在 yoyo.app 里管用',
+    ]);
+    assert.deepEqual(JSON.parse(readFileSync(paths.configFile, 'utf8')).app, { keep: 1, launchAtLogin: true });
+    const again = cli({ config: { stage: 'console', app: { launchAtLogin: true } }, app: '/Applications/yoyo.app' });
+    assert.deepEqual(await again.run('app', 'login'), ['登录时自动打开：开着']);
+    assert.deepEqual(await again.run('app', 'login', 'off'), ['登录时不再自动打开 yoyo']);
+    assert.deepEqual(JSON.parse(readFileSync(again.paths.configFile, 'utf8')).app, { launchAtLogin: false });
+    await assert.rejects(again.run('app', 'login', 'maybe'), /要写 on 或 off/);
   });
 
   test('task：自己派、列、看、看它一步步做了什么、取消；规则不让做的报一句话', async () => {

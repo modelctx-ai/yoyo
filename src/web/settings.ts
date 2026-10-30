@@ -22,6 +22,7 @@ export const SWITCHES = [
   'llm.tools',
   'memory.enabled',
   'sandbox.enabled',
+  'app.launchAtLogin',
 ] as const;
 
 export type SwitchPath = (typeof SWITCHES)[number];

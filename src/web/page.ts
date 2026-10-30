@@ -776,6 +776,7 @@ var SWITCHES = [
   ["llm.tools", "回复时用工具"],
   ["memory.enabled", "记住主人"],
   ["sandbox.enabled", "MCP 服务器关进沙箱"],
+  ["app.launchAtLogin", "登录时打开 yoyo（只有 yoyo.app 管用，要 macOS 13 以上）"],
 ];
 
 var TRAIL = {

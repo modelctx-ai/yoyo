@@ -303,6 +303,12 @@ const pace = z.looseObject({
   recent: z.coerce.number().int().min(0).max(20).catch(6).default(6),
 });
 
+/** yoyo.app 自己的设置。从源码跑的没有 app 外壳，这里的项没有用。 */
+const app = z.looseObject({
+  /** 登录时自动打开 yoyo.app：外壳用登录项（macOS 13 以上）注册，配置一改就跟上。 */
+  launchAtLogin: flag(false),
+});
+
 export const configSchema = z.looseObject({
   /** `dsh-pet` 驱动桌宠；`console` 只在终端打印，用来在没有桌宠的机器上调试。 */
   stage: z.enum(['dsh-pet', 'console']).catch('dsh-pet').default('dsh-pet'),
@@ -321,6 +327,8 @@ export const configSchema = z.looseObject({
   memes: z.preprocess(objectOrNothing, toggle.prefault({})),
   /** 管理页，见 `web/server.ts`。 */
   web: z.preprocess(objectOrNothing, web.prefault({})),
+  /** yoyo.app 自己的设置，见上。 */
+  app: z.preprocess(objectOrNothing, app.prefault({})),
   /** 每个动作配一段很轻的音效。 */
   sfx: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),

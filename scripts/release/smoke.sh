@@ -35,6 +35,14 @@ for bin in "$app/Contents/MacOS/yoyo" "$lib/bin/"* "$lib/node/bin/node"; do
   fi
 done
 
+echo "-- 都是这台机器的架构"
+# arm64 和 x86_64 各在自己的 runner 上打包：包里的程序架构要和 dmg 的名字一致，不能混进别的架构的
+want_arch="$(uname -m)"
+for bin in "$app/Contents/MacOS/yoyo" "$lib/bin/"* "$lib/node/bin/node" "$lib/electron/Electron.app/Contents/MacOS/Electron"; do
+  [ -L "$bin" ] && continue
+  [ "$(lipo -archs "$bin")" = "$want_arch" ] || fail "$(basename "$bin") 的架构是 $(lipo -archs "$bin")，不是 $want_arch"
+done
+
 echo "-- Node"
 "$lib/node/bin/node" -e '
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -74,6 +82,7 @@ printf '{"stage":"console","weather":{"enabled":false}}\n' >"$YOYO_HOME/config.j
 "$pkg/yoyo" log tail | grep -q . || fail "yoyo log tail 没有记录"
 [ -s "$YOYO_HOME/models/ggml-tiny.bin" ] || fail "听写模型没放进数据目录"
 "$pkg/yoyo" update | grep -q check || fail "没有 yoyo update"
+"$pkg/yoyo" app login | grep -q "登录时自动打开" || fail "没有 yoyo app login"
 
 echo "-- 换版本的脚本"
 for side in old new; do
