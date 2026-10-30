@@ -44,7 +44,7 @@ sources:
 
 * 只听 `127.0.0.1`，端口缺省随机（`web.port` 可以固定）。日志记一行地址，不带令牌。
 * 打开的地址是 `http://127.0.0.1:<端口>/#token=<令牌>`，记进 kv 的 `web-url`。
-* 右键「管理」（`web.enabled` 打开时才挂）由常驻进程用 `UrlOpener` 打开这个地址；命令行的 `yoyo web open` 在常驻进程活着时读 kv 打开，并把地址打印出来。[^commands]
+* 右键「管理」（`web.enabled` 打开时才挂）由常驻进程用 `UrlOpener` 打开这个地址；命令行的 `yoyo web open` 在常驻进程活着时读 kv 打开，并把地址打印出来，`yoyo web url` 只打印，没开着时报错。从 yoyo.app 里跑时（`YOYO_APP`）两处都改成打开 app：app 的外壳用 `yoyo web url` 取地址，放在自己的窗口里，见[发版](release.md#app-外壳)。[^commands]
 
 # 安全
 

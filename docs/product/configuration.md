@@ -9,7 +9,7 @@ status: stable
 
 # 写法
 
-从源码运行时，配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。安装包的配置在 `~/.yoyo/config.json`，`./yoyo` 第一次运行时从包里的示例复制过去；放在数据目录里，换新版本时替换整个程序目录也不会丢。`YOYO_CONFIG` 可以换一个位置。
+从源码运行时，配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。安装包的配置在 `~/.yoyo/config.json`，第一次打开 yoyo 时从包里的示例复制过去；放在数据目录里，换新版本时替换整个 app 也不会丢。菜单「yoyo → 打开配置」能直接打开它。`YOYO_CONFIG` 可以换一个位置。
 
 改了不用重启：常驻进程每秒看一眼 `config.json`，内容变了、读得出来，就在一两秒内换上，正在说的那句说完为止，下一句碎碎念的时间照旧。改坏了（不是 JSON，或者驱动桌宠却把语音删空了）只记一行，接着用原来的，改好了再换。两样要另外动一下：`pet.menu` 要关掉桌宠再开；没固定 `web.port` 时管理页的地址不变，固定成别的端口就换到那个端口。也可以在[管理页](usage.md#管理页)的「设置」里改。
 
@@ -86,7 +86,7 @@ status: stable
 
 # 右键菜单
 
-`./yoyo start`、`./yoyo pet` 和从源码运行时 `pnpm pet` 开的桌宠，右键菜单按 `pet.menu` 排：`top` 打开时「碎碎念」「听一句」放在第一层，`hide` 里列的自带项藏起来。桌宠开的时候读一次，改了要关掉桌宠再开（`./yoyo start` 开的桌宠随 Control+C 一起关）。
+yoyo.app、`yoyo start`、`yoyo pet` 和从源码运行时 `pnpm pet` 开的桌宠，右键菜单按 `pet.menu` 排：`top` 打开时「碎碎念」「听一句」放在第一层，`hide` 里列的自带项藏起来。桌宠开的时候读一次，改了要关掉桌宠再开（`./yoyo start` 开的桌宠随 Control+C 一起关）。
 
 | `hide` 里写    | 藏掉的自带项                                                                     |
 | -------------- | -------------------------------------------------------------------------------- |
@@ -258,4 +258,4 @@ sandbox:
 | `YOYO_CONFIG`      | 配置文件                                                                                                       |
 | `YOYO_PET_RUNTIME` | 桌宠运行状态文件，缺省 `~/.dsh/dsh-pet/standalone-runtime.json`                                                |
 | `YOYO_WHISPER`     | `whisper-cli` 的位置                                                                                           |
-| `YOYO_HOTKEY`      | 编好的按键助手；不设就第一次启动时用 `swiftc` 编到数据目录的 `bin/yoyo-hotkey`。安装包的 `./yoyo` 指向包里带的 |
+| `YOYO_HOTKEY`      | 编好的按键助手；不设就第一次启动时用 `swiftc` 编到数据目录的 `bin/yoyo-hotkey`。安装包的启动脚本指向包里带的 |

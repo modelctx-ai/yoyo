@@ -19,7 +19,10 @@ status: stable
 | `models/`                     | 听写模型，第一次用时下载；安装包从包里复制过来                                                       |
 | `bin/yoyo-hotkey`             | 从源码运行时，第一次启动编译的按键助手；安装包用包里带的                                             |
 | `config.json`                 | 安装包的配置；从源码运行时配置在 yoyo 目录                                                           |
-| `pet.log`                     | 安装包的 `./yoyo start` 开的桌宠的输出，每次开桌宠重写                                               |
+| `pet.log`                     | 安装包开的桌宠的输出，每次开桌宠重写                                                                 |
+| `app.log`、`app.log.1`        | yoyo.app 起的常驻进程的输出；过了 5 MB 打开时挪成 `app.log.1`                                        |
+| `app.pid`                     | yoyo.app 开着时的进程号，更新时等它退出                                                              |
+| `updates/`                    | 更新时下载、取出的新版和换版本的记录 `swap.log`，下次更新时清掉                                      |
 | `inbox.jsonl`、`director.pid` | 命令和菜单交给常驻进程的请求；常驻进程的 pid                                                         |
 
 # 记下什么
