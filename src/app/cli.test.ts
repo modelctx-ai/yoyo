@@ -13,6 +13,7 @@ function home(): NodeJS.ProcessEnv {
 }
 
 describe('agent 跑命令行', () => {
+  // 起五次真的命令行（每次一个 Node 进程）：慢的机器上（例如发版流水线的 Intel runner）5 秒不够
   test('另起进程跑真的命令行，只看得到、只调得了 agent 那部分；报错的话也交回来', async () => {
     const env = home();
     const run = createCliRunner(resolvePaths(env), { env });
@@ -27,7 +28,7 @@ describe('agent 跑命令行', () => {
     assert.match(await run(['task', 'add', '--title', 'x', '--goal', 'y']), /^yoyo task <动作>/, '改东西的动作没有');
     assert.match(await run(['update', 'install']), /^没有 update/);
     assert.equal(await run(['task', 'show', 'x']), '要给子任务编号，例如 yoyo task show 3');
-  });
+  }, 30_000);
 
   test('跑太久就停下', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'yoyo-cli-'));
