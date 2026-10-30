@@ -79,6 +79,12 @@ describe('createRepos', () => {
     repos.schedule.markFired('s_1', '2026-10-23T18:00');
     assert.deepEqual(repos.schedule.list(), [once, weekly, { ...daily, lastFired: '2026-10-23T18:00' }]);
 
+    const moved = { ...weekly, title: '开周会', time: '11:00', enabled: false, lastFired: null };
+    assert.equal(repos.schedule.update(moved), true);
+    assert.equal(repos.schedule.update({ ...moved, id: 's_none' }), false);
+    assert.deepEqual(repos.schedule.list(), [once, moved, { ...daily, lastFired: '2026-10-23T18:00' }]);
+    assert.equal(repos.schedule.update(weekly), true);
+
     assert.equal(repos.schedule.remove('s_3'), true);
     assert.equal(repos.schedule.remove('s_3'), false);
     assert.deepEqual(

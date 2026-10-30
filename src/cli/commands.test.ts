@@ -99,9 +99,43 @@ describe('commands', () => {
       await run('alarm', 'add', '--title', '开会', '--time', '09:30', '--date', '2026-10-26', '--kind', 'task'),
       ['task\t09:30\t开会'],
     );
-    assert.deepEqual(await run('alarm', 'list'), ['task\t09:30\t2026-10-26\t开会', 'alarm\t15:30\tdaily\t喝水']);
+    const rows = await run('alarm', 'list');
+    assert.match(rows[0] ?? '', /^task\t09:30\t2026-10-26\t开会\ts_\w+$/);
+    assert.match(rows[1] ?? '', /^alarm\t15:30\tdaily\t喝水\ts_\w+$/);
     await assert.rejects(run('alarm', 'add', '--time', '15:30', '--repeat', 'daily'), /日程要有标题/);
     await assert.rejects(run('alarm', 'add', '--title', '周会', '--time', '10:00', '--repeat', 'weekly'), /weekday/);
+  });
+
+  test('日程：edit 只改写了的项，pause 和 resume 暂停恢复，list 标出暂停中', async () => {
+    const { run } = cli();
+    await run('alarm', 'add', '--title', '喝水', '--time', '15:30', '--repeat', 'daily');
+    const id = (await run('alarm', 'list'))[0]!.split('\t')[4]!;
+    assert.deepEqual(await run('alarm', 'edit', id, '--title', '喝温水', '--time', '16:00'), ['alarm\t16:00\t喝温水']);
+    assert.deepEqual(await run('alarm', 'edit', id, '--repeat', 'weekly', '--weekday', '5'), ['alarm\t16:00\t喝温水']);
+    assert.deepEqual(await run('alarm', 'edit', id, '--repeat', 'none', '--date', '2026-11-01', '--kind', 'task'), [
+      'task\t16:00\t喝温水',
+    ]);
+    assert.deepEqual(await run('alarm', 'list'), [`task\t16:00\t2026-11-01\t喝温水\t${id}`]);
+
+    assert.deepEqual(await run('alarm', 'pause', id), [`已暂停\t喝温水\t${id}`]);
+    assert.deepEqual(await run('alarm', 'list'), [`task\t16:00\t2026-11-01\t喝温水\t${id}\t暂停中`]);
+    assert.deepEqual(await run('alarm', 'resume', id), [`已恢复\t喝温水\t${id}`]);
+    assert.deepEqual(await run('alarm', 'list'), [`task\t16:00\t2026-11-01\t喝温水\t${id}`]);
+
+    await assert.rejects(run('alarm', 'edit', id, '--time', '3点'), /时间要写成 HH:MM/);
+    await assert.rejects(run('alarm', 'edit', id, '--repeat', 'none', '--date', ''), /一次性日程要有日期/);
+    await assert.rejects(run('alarm', 'edit', 's_nope', '--title', '喝水'), /没有这条日程：s_nope/);
+    await assert.rejects(run('alarm', 'pause', 's_nope'), /没有这条日程：s_nope/);
+    await assert.rejects(run('alarm', 'resume'), /要给日程编号/);
+    const types = (await run('log', 'tail')).map((row) => row.split('\t')[1]);
+    assert.deepEqual(types.slice(-6), [
+      'schedule-add',
+      'schedule-edit',
+      'schedule-edit',
+      'schedule-edit',
+      'schedule-pause',
+      'schedule-resume',
+    ]);
   });
 
   test('联系人：contract 也能用；log tail 记着做过的事', async () => {

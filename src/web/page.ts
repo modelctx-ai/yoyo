@@ -171,6 +171,7 @@ button.primary, button.plain, button.danger { border-radius: 9px; padding: 6px 1
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.plain { background: var(--panel); }
 button.plain.small { padding: 4px 10px; font-size: 13px; flex: 1; }
+button.plain.mini { padding: 2px 10px; font-size: 13px; }
 button.danger { background: none; color: var(--danger); border-color: transparent; padding: 2px 6px; }
 button:disabled { opacity: .5; cursor: default; }
 form.inline { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0; }
@@ -181,6 +182,21 @@ label.row { cursor: pointer; }
 label.row input { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
 form.inline input[name="title"], form.inline input[name="name"], form.inline input[name="yoyo"] { flex: 1 1 160px; }
 
+.row.alarm .main { flex: 1 1 140px; }
+.row.alarm .acts { flex: none; margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.row.alarm.paused .who, .row.alarm.paused .main, .row.alarm.paused .side-note { color: var(--muted); }
+.row.alarm.paused .main { text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.row.alarm.paused .who { opacity: .7; }
+.row.alarm .tag { flex: none; }
+form.inline.editing { border-top: 1px solid var(--line); background: var(--accent-soft); margin: 0 -18px; padding: 12px 18px; }
+form.inline.editing input[name="title"] { flex: 1 1 200px; }
+.setgroup { border-top: 1px solid var(--line); padding: 6px 0 8px; }
+.setgroup:first-of-type { border-top: 0; }
+.setgroup h3 { font-size: 13px; color: var(--muted); letter-spacing: 1px; font-weight: 600; margin: 10px 0 4px; }
+.setfield { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 2px 14px; align-items: center; padding: 6px 0; }
+.setfield .k { font-size: 14px; }
+.setfield input, .setfield select { width: 100%; max-width: 440px; }
+.setfield .note { grid-column: 2; color: var(--muted); font-size: 12px; }
 .taskform { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
 .taskform label { display: flex; flex-direction: column; gap: 6px; }
 .taskform .k { color: var(--muted); font-size: 13px; font-weight: 600; }
@@ -269,6 +285,8 @@ form.inline input[name="title"], form.inline input[name="name"], form.inline inp
   .msg { max-width: 94%; } .event { margin-left: 0; max-width: 100%; }
   .composer .keys { display: none; }
   .row { flex-wrap: wrap; } .row .who { width: auto; }
+  .setfield { grid-template-columns: minmax(0, 1fr); } .setfield .note { grid-column: 1; }
+  .row.alarm .acts { flex-basis: 100%; justify-content: flex-end; }
   .apv-head { flex-wrap: wrap; } .apv-head .side-note { flex-basis: 100%; padding-top: 0; }
 }
 `;
@@ -762,9 +780,9 @@ var SWITCHES = [
 
 var TRAIL = {
   "whisper": "说了一句", "whisper-skip": "这次没说", "chat-voice": "语音对话", "chat-workbench": "工作台对话",
-  "listen-request": "听一句", "search": "搜索", "schedule-add": "加日程", "schedule-remove": "删日程",
+  "listen-request": "听一句", "search": "搜索", "schedule-add": "加日程", "schedule-remove": "删日程", "schedule-edit": "改日程", "schedule-pause": "暂停日程", "schedule-resume": "恢复日程",
   "contact-add": "加联系人", "contact-remove": "删联系人", "memory-forget": "忘掉一件事", "memory-retire": "退役一条规矩",
-  "memory-core-edit": "改画像", "memory-consolidate": "整理记忆", "config-edit": "改配置", "config-switch": "改开关",
+  "memory-core-edit": "改画像", "memory-consolidate": "整理记忆", "config-edit": "改配置", "config-switch": "改开关", "config-fields": "改常用设置",
   "approval-ask": "要你批准", "approval-approve": "批准了", "approval-deny": "拒绝了", "approval-expire": "批准过期", "approval-run": "照做了",
   "task-ask": "子任务提问", "task-answer": "回答了子任务", "delay": "让路", "pace": "定了间隔", "clipboard": "读粘贴板", "tool-call": "用工具", "send": "发消息", "remind": "提醒",
 };
@@ -778,8 +796,175 @@ function paceDetail(item) {
   return "隔 " + gap + "（" + (PACE_WHY[item.reason] || "没判成") + "，按固定间隔）";
 }
 
+// ---- 日程 ----
+function alarmOn(item) {
+  return item.repeat === "weekly" ? DAYS[item.weekday] : (REPEATS[item.repeat] || item.date);
+}
+
+/** 一条日程：时间、内容、什么时候，暂停的灰掉写「暂停中」，右边是编辑、暂停或恢复、删除 */
+function alarmRow(item) {
+  var reload = function () { views.alarms.load().catch(fail); };
+  var edit = h("button", { class: "plain mini", type: "button", text: "编辑" });
+  var pause = h("button", { class: "plain mini", type: "button", text: item.enabled ? "暂停" : "恢复", onclick: function () {
+    pause.disabled = true;
+    api("PATCH", "/api/alarms/" + encodeURIComponent(item.id), { enabled: !item.enabled }).then(function () {
+      toast(item.enabled ? "暂停了，到点不会响" : "恢复了");
+      reload();
+    }, function (error) { pause.disabled = false; fail(error); });
+  } });
+  var remove = h("button", { class: "danger", type: "button", text: "删除", onclick: confirmThen("删掉「" + item.title + "」？", function () {
+    api("DELETE", "/api/alarms/" + encodeURIComponent(item.id)).then(reload, fail);
+  }) });
+  var node = h("div", { class: "row alarm" + (item.enabled ? "" : " paused") }, [
+    h("div", { class: "who", text: item.time }),
+    h("div", { class: "main", text: item.title + (item.kind === "task" ? "（任务）" : "") }),
+    item.enabled ? null : h("span", { class: "tag", text: "暂停中" }),
+    h("div", { class: "side-note", text: alarmOn(item) }),
+    h("div", { class: "acts" }, [edit, pause, remove]),
+  ]);
+  edit.addEventListener("click", function () {
+    var form = alarmEditor(item, function () { form.replaceWith(node); }, reload);
+    node.replaceWith(form);
+    form.querySelector("input").focus();
+  });
+  return node;
+}
+
+function choices(select, pairs, value) {
+  pairs.forEach(function (pair) { select.appendChild(h("option", { value: pair[0], text: pair[1] })); });
+  select.value = value;
+  return select;
+}
+
+/** 就地改一条日程：和上面的添加表单同样几项，保存只交回改的这一条 */
+function alarmEditor(item, cancel, saved) {
+  var title = h("input", { name: "title", value: item.title, required: "", "aria-label": "提醒什么" });
+  var time = h("input", { name: "time", type: "time", value: item.time, required: "", "aria-label": "时间" });
+  var repeat = choices(h("select", { name: "repeat", "aria-label": "重复" }),
+    [["", "一次"], ["daily", "每天"], ["weekdays", "工作日"], ["weekly", "每周"]], item.repeat || "");
+  var date = h("input", { name: "date", type: "date", value: item.date || "", "aria-label": "日期" });
+  var weekday = choices(h("select", { name: "weekday", "aria-label": "星期" }),
+    [[1, "周一"], [2, "周二"], [3, "周三"], [4, "周四"], [5, "周五"], [6, "周六"], [0, "周日"]], item.weekday === null ? 1 : item.weekday);
+  var kind = choices(h("select", { name: "kind", "aria-label": "类型" }), [["alarm", "闹钟"], ["task", "任务"]], item.kind);
+  var save = h("button", { class: "primary", type: "submit", text: "保存" });
+  var form = h("form", { class: "inline editing" }, [
+    title, time, repeat, date, weekday, kind, save,
+    h("button", { class: "plain", type: "button", text: "取消", onclick: cancel }),
+  ]);
+  function sync() {
+    date.hidden = repeat.value !== "";
+    weekday.hidden = repeat.value !== "weekly";
+  }
+  repeat.addEventListener("change", sync);
+  sync();
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var body = { title: title.value, time: time.value, kind: kind.value, repeat: repeat.value || null };
+    body.date = repeat.value ? null : date.value;
+    body.weekday = repeat.value === "weekly" ? Number(weekday.value) : null;
+    save.disabled = true;
+    api("PATCH", "/api/alarms/" + encodeURIComponent(item.id), body).then(function () {
+      toast("改好了");
+      saved();
+    }, function (error) { save.disabled = false; fail(error); });
+  });
+  form.addEventListener("keydown", function (event) { if (event.key === "Escape") cancel(); });
+  return form;
+}
+
+// ---- 设置：常用设置表单 ----
+var TONES = [["", "不指定"], ["lively", "活泼 lively"], ["warm", "温柔 warm"], ["calm", "平静 calm"], ["brisk", "利落 brisk"]];
+
+/** 表单分组。kind：text 文字、secret 密钥（读出来是码，不动就不改）、select 下拉、number 数、list 几档秒数 */
+var FIELD_GROUPS = [
+  { title: "模型", fields: [
+    { path: "llm.provider", label: "协议", kind: "select", options: [["openai-compatible", "openai-compatible"], ["anthropic", "anthropic"]] },
+    { path: "llm.baseUrl", label: "接口地址", kind: "text", placeholder: "https://…/v1", note: "anthropic 可以留空" },
+    { path: "llm.model", label: "模型名", kind: "text", placeholder: "例如 deepseek-chat" },
+    { path: "llm.apiKey", label: "密钥", kind: "secret" },
+  ] },
+  { title: "语音（Fish Audio）", fields: [
+    { path: "speech.apiKey", label: "密钥", kind: "secret" },
+    { path: "speech.referenceId", label: "音色 referenceId", kind: "text" },
+    { path: "speech.model", label: "语音模型", kind: "text" },
+    { path: "speech.tone", label: "对话的语气", kind: "select", options: TONES },
+  ] },
+  { title: "碎碎念", fields: [
+    { path: "intervalSec", label: "固定间隔（秒）", kind: "number", min: 60, max: 86400, note: "最少 60 秒" },
+    { path: "pace.options", label: "几档间隔（秒）", kind: "list", note: "逗号隔开，至少两档；配了决策模型才用，没配按上面的固定间隔" },
+    { path: "pace.recent", label: "给决策模型的最近对话条数", kind: "number", min: 0, max: 20, note: "0 是只给信号，不给原文" },
+  ] },
+];
+
+var fieldsDirty = false;
+/** 当前这份表单：路径 → 读出现在的值、读到时的值 */
+var fieldCtl = {};
+
+function sameValue(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+
+/** 把一个框里的字读成要交回的值；几档里写了不是数的，原样交回让服务端说是哪一项错 */
+function readField(spec, input) {
+  if (spec.kind === "number") return input.value.trim() === "" ? input.value : Number(input.value);
+  if (spec.kind === "list") {
+    var words = input.value.split(/[,，\s]+/).filter(Boolean);
+    var numbers = words.map(Number);
+    return numbers.some(isNaN) ? words : numbers;
+  }
+  return input.value;
+}
+
+function renderFields(values) {
+  fieldCtl = {};
+  var groups = FIELD_GROUPS.map(function (group) {
+    var nodes = group.fields.map(function (spec) {
+      var value = values[spec.path];
+      var input;
+      if (spec.kind === "select") input = choices(h("select", { "aria-label": spec.label }), spec.options, value);
+      else {
+        var type = spec.kind === "secret" ? "password" : spec.kind === "number" ? "number" : "text";
+        input = h("input", { type: type, "aria-label": spec.label, autocomplete: "off", spellcheck: "false",
+          placeholder: spec.kind === "secret" ? "还没填" : (spec.placeholder || ""), min: spec.min, max: spec.max });
+        input.value = spec.kind === "list" ? value.join(", ") : value;
+      }
+      // 密钥框里是码：点进去全选，打字就是换新的，删空是清掉，不动就不会交回去
+      if (spec.kind === "secret") input.addEventListener("focus", function () { input.select(); });
+      fieldCtl[spec.path] = { spec: spec, input: input, was: value };
+      var note = spec.kind === "secret"
+        ? (value ? "已填。要换就输入新的，清空是删掉，不动就不改" : "")
+        : (spec.note || "");
+      return h("label", { class: "setfield" }, [h("span", { class: "k", text: spec.label }), input, note ? h("span", { class: "note", text: note }) : null]);
+    });
+    return h("div", { class: "setgroup" }, [h("h3", { text: group.title })].concat(nodes));
+  });
+  $("#field-groups").replaceChildren.apply($("#field-groups"), groups);
+  fieldsDirty = false;
+}
+
+/** 只交回动过的项，别的不动 */
+function saveFields() {
+  var changes = {};
+  Object.keys(fieldCtl).forEach(function (path) {
+    var ctl = fieldCtl[path];
+    var now = readField(ctl.spec, ctl.input);
+    if (!sameValue(now, ctl.was)) changes[path] = now;
+  });
+  if (Object.keys(changes).length === 0) { toast("没有改动"); return; }
+  var button = $("#fields-save");
+  button.disabled = true;
+  api("PATCH", "/api/config/fields", { fields: changes, version: configVersion }).then(function () {
+    fieldsDirty = false;
+    toast("存好了，一两秒内生效");
+    views.settings.load().catch(fail);
+  }, function (error) {
+    // 在别处改过了：换成最新的，刚才的改动要重新改
+    if (error.status === 409) { fieldsDirty = false; views.settings.load().catch(fail); }
+    fail(error);
+  }).finally(function () { button.disabled = false; });
+}
+
 /** 整份配置：读到时的指纹，和框里改过没有。开关改了以后，框里没动过就跟着刷新。 */
 var configVersion = "";
+var textVersion = "";
 var configDirty = false;
 
 var views = {
@@ -831,15 +1016,9 @@ var views = {
       }), "还没有");
     });
   } },
-  alarms: { title: "日程", sub: "到点由桌宠提醒", load: function () {
+  alarms: { title: "日程", sub: "到点由桌宠提醒；暂停的不响，留着", load: function () {
     return api("GET", "/api/alarms").then(function (items) {
-      fill($("#alarm-list"), items.map(function (item) {
-        var on = item.repeat === "weekly" ? DAYS[item.weekday] : (REPEATS[item.repeat] || item.date);
-        var remove = h("button", { class: "danger", text: "删除", onclick: confirmThen("删掉「" + item.title + "」？", function () {
-          api("DELETE", "/api/alarms/" + encodeURIComponent(item.id)).then(function () { views.alarms.load(); }, fail);
-        }) });
-        return row(item.time, item.title + (item.kind === "task" ? "（任务）" : ""), on, remove);
-      }), "还没有日程");
+      fill($("#alarm-list"), items.map(alarmRow), "还没有日程");
     });
   } },
   activity: { title: "轨迹", sub: "yoyo 做过的事", load: function () {
@@ -887,7 +1066,8 @@ var views = {
         return h("label", { class: "row" }, [h("div", { class: "main", text: pair[1] }), box]);
       }), "");
       configVersion = c.version;
-      if (!configDirty) $("#config-text").value = c.text;
+      if (!fieldsDirty) renderFields(c.fields);
+      if (!configDirty) { $("#config-text").value = c.text; textVersion = c.version; }
       $("#config-file").textContent = c.file;
     });
   } },
@@ -1355,11 +1535,13 @@ document.addEventListener("DOMContentLoaded", function () {
   $("#core-save").addEventListener("click", function () {
     api("PUT", "/api/memory/core", { text: $("#core-text").value }).then(function () { toast("画像存好了"); views.memory.load(); }, fail);
   });
+  $("#field-form").addEventListener("input", function () { fieldsDirty = true; });
+  $("#field-form").addEventListener("submit", function (event) { event.preventDefault(); saveFields(); });
   $("#config-text").addEventListener("input", function () { configDirty = true; });
   $("#config-save").addEventListener("click", function () {
     var button = $("#config-save");
     button.disabled = true;
-    api("PUT", "/api/config", { text: $("#config-text").value, version: configVersion }).then(function () {
+    api("PUT", "/api/config", { text: $("#config-text").value, version: textVersion }).then(function () {
       configDirty = false;
       toast("存好了，yoyo 一会儿就换上");
       setTimeout(function () { views.settings.load().catch(fail); }, 2500);
@@ -1535,6 +1717,13 @@ const BODY = String.raw`
     </div></section>
     <section class="view scroll" id="settings"><div class="page">
       <div class="panel" id="switches"></div>
+      <div class="panel">
+        <h2>常用设置</h2>
+        <form id="field-form" novalidate>
+          <div id="field-groups"></div>
+          <div class="actions"><button class="primary" id="fields-save" type="submit">保存常用设置</button><span class="side-note">只改你动过的项，别的原样留着；回复时用工具、念出来在上面的开关里</span></div>
+        </form>
+      </div>
       <div class="panel">
         <h2>整份配置</h2>
         <textarea class="code" id="config-text" spellcheck="false" aria-label="整份配置"></textarea>

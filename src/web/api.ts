@@ -16,11 +16,11 @@ import { paceNote, type PaceDecision, type PaceOptions } from '../kernel/pace.ts
 import type { AgentTask, Approval, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
-import { addSchedule, removeSchedule } from '../features/alarms/schedule.ts';
+import { addSchedule, removeSchedule, updateSchedule } from '../features/alarms/schedule.ts';
 import { addContact, removeContact } from '../features/contacts/contacts.ts';
 import type { ArtifactFiles, PetHost, Repos } from '../ports/index.ts';
 import { enqueue } from '../runtime/inbox.ts';
-import { SettingsError, readSettings, saveSwitches, saveText } from './settings.ts';
+import { SettingsError, readSettings, saveFields, saveSwitches, saveText } from './settings.ts';
 
 export interface WebDeps {
   readonly config: Config;
@@ -364,6 +364,37 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     }
   }
 
+  /** 改一条日程：正文里写了的项才改，类型不对的回 400；没有这条回 404。 */
+  function editAlarm(id: string, body: unknown): unknown {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new RequestError('要给要改的项');
+    // 项名、值的类型（带 ? 的可以是 null）
+    const types = {
+      title: 'string',
+      time: 'string',
+      kind: 'string',
+      date: 'string?',
+      repeat: 'string?',
+      weekday: 'number?',
+      enabled: 'boolean',
+    } as const;
+    const names = { string: '要是一段文字', number: '要是一个数', boolean: '只能是 true 或 false' };
+    const patch: Record<string, unknown> = {};
+    for (const [name, type] of Object.entries(types)) {
+      const value = field(body, name);
+      if (value === undefined) continue;
+      const base = type.replace('?', '') as keyof typeof names;
+      if (value === null && type.endsWith('?')) patch[name] = null;
+      else if (typeof value === base) patch[name] = value;
+      else throw new RequestError(`${name} ${names[base]}`);
+    }
+    try {
+      return removed(updateSchedule(repos, id, patch), '条日程');
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      throw new RequestError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   /** 工作台里说的这句：去掉首尾空白，空的、太长的、没有常驻进程的都在开始回之前就拒绝。 */
   function said(body: unknown): { readonly said: string; readonly talk: NonNullable<WebDeps['talk']> } {
     if (!deps.talk) throw new RequestError('常驻进程里才能聊', 503);
@@ -555,6 +586,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       }
       if (route === 'GET /api/alarms') return ok(repos.schedule.list());
       if (route === 'POST /api/alarms') return ok(addAlarm(body));
+      if (method === 'PATCH' && parts.length === 3 && parts[1] === 'alarms') return ok(editAlarm(id, body));
       if (method === 'DELETE' && parts.length === 3 && parts[1] === 'alarms') {
         return ok(removed(removeSchedule(repos, id), '条日程'));
       }
@@ -578,6 +610,15 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         if (typeof switches !== 'object' || switches === null) throw new RequestError('要给 switches');
         saveSwitches(deps.paths.configFile, switches as Record<string, unknown>);
         repos.activity.record({ type: 'config-switch', text: Object.keys(switches).join(' ') });
+        return ok({ saved: true });
+      }
+      if (route === 'PATCH /api/config/fields') {
+        const fields = field(body, 'fields');
+        if (typeof fields !== 'object' || fields === null || Array.isArray(fields))
+          throw new RequestError('要给 fields');
+        saveFields(deps.paths.configFile, fields as Record<string, unknown>, text(body, 'version'));
+        // 行为记录只写改了哪几项，不写值（里面有密钥）
+        repos.activity.record({ type: 'config-fields', text: Object.keys(fields).join(' ') });
         return ok({ saved: true });
       }
       if (route === 'POST /api/chat') return ok(await talk(body));

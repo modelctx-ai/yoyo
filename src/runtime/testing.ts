@@ -73,6 +73,11 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
       markFired: (id, occurrence) => {
         schedule = schedule.map((item) => (item.id === id ? { ...item, lastFired: occurrence } : item));
       },
+      update: (next) => {
+        const found = schedule.some((item) => item.id === next.id);
+        schedule = schedule.map((item) => (item.id === next.id ? next : item));
+        return found;
+      },
       remove: (id) => {
         const before = schedule.length;
         schedule = schedule.filter((item) => item.id !== id);

@@ -382,6 +382,113 @@ describe('web 管理页', () => {
     );
   });
 
+  test('改日程：PATCH /api/alarms/:id 改字段、暂停、恢复；填错回 400，没有的回 404', async () => {
+    const added = (await call('POST', '/api/alarms', { title: '周会', time: '10:00', repeat: 'weekly', weekday: 1 }))
+      .data as { id: string };
+    const path = `/api/alarms/${added.id}`;
+    const edited = await call('PATCH', path, { title: '开周会', time: '10:30', weekday: 2 });
+    assert.equal(edited.status, 200);
+    assert.deepEqual(edited.data, {
+      id: added.id,
+      title: '开周会',
+      kind: 'alarm',
+      time: '10:30',
+      date: null,
+      repeat: 'weekly',
+      weekday: 2,
+      enabled: true,
+      lastFired: null,
+    });
+    const paused = await call('PATCH', path, { enabled: false });
+    assert.equal((paused.data as { enabled: boolean; title: string }).enabled, false);
+    assert.equal((paused.data as { title: string }).title, '开周会', '没写的项不动');
+    assert.equal(((await call('GET', '/api/alarms')).data as { enabled: boolean }[])[0]?.enabled, false);
+    assert.equal(((await call('PATCH', path, { enabled: true })).data as { enabled: boolean }).enabled, true);
+    // 改成一次性
+    const once = await call('PATCH', path, { repeat: null, date: '2026-11-01' });
+    assert.deepEqual(
+      [
+        (once.data as { repeat: null }).repeat,
+        (once.data as { date: string }).date,
+        (once.data as { weekday: null }).weekday,
+      ],
+      [null, '2026-11-01', null],
+    );
+
+    assert.deepEqual(await call('PATCH', path, { time: '25:00' }), {
+      status: 400,
+      data: { error: '时间要写成 HH:MM' },
+    });
+    assert.deepEqual(await call('PATCH', path, { title: '  ' }), { status: 400, data: { error: '日程要有标题' } });
+    assert.deepEqual(await call('PATCH', path, { enabled: 'no' }), {
+      status: 400,
+      data: { error: 'enabled 只能是 true 或 false' },
+    });
+    assert.deepEqual(await call('PATCH', path, { weekday: '1' }), {
+      status: 400,
+      data: { error: 'weekday 要是一个数' },
+    });
+    assert.deepEqual(await call('PATCH', path, { kind: 'noise' }), {
+      status: 400,
+      data: { error: '类型只能是 alarm 或 task' },
+    });
+    assert.deepEqual(await call('PATCH', '/api/alarms/s_nope', { title: '喝水' }), {
+      status: 404,
+      data: { error: '没有这条日程' },
+    });
+    assert.equal(((await call('GET', '/api/alarms')).data as { time: string }[])[0]?.time, '10:30', '填错的没写进去');
+    assert.deepEqual(
+      repos.activity
+        .list(20)
+        .map((event) => event.type)
+        .filter((type) => type.startsWith('schedule-'))
+        .slice(-5),
+      ['schedule-add', 'schedule-edit', 'schedule-pause', 'schedule-resume', 'schedule-edit'],
+    );
+    assert.equal((await call('DELETE', path)).status, 200);
+  });
+
+  test('设置表单：PATCH /api/config/fields 只改白名单里的项，密钥打码、不泄露也不被码盖掉', async () => {
+    const read = (await call('GET', '/api/config')).data as {
+      version: string;
+      text: string;
+      fields: Record<string, unknown>;
+    };
+    assert.equal(read.fields['llm.model'], 'demo');
+    assert.equal(read.fields['llm.apiKey'], '••••••', '读出来是码');
+    assert.equal(read.fields['speech.apiKey'], '', '没填的是空');
+    assert.equal(read.fields['llm.provider'], 'openai-compatible', '没写的按缺省补齐');
+    assert.ok(!JSON.stringify(read).includes('secret-key'));
+    const before = JSON.parse(readFileSync(paths.configFile, 'utf8')) as Record<string, unknown>;
+
+    const saved = await call('PATCH', '/api/config/fields', {
+      fields: { 'llm.model': 'demo-2', 'llm.apiKey': '••••••', 'pace.options': [900, 300, 300, 1800] },
+      version: read.version,
+    });
+    assert.deepEqual(saved, { status: 200, data: { saved: true } });
+    const after = JSON.parse(readFileSync(paths.configFile, 'utf8')) as {
+      llm: { apiKey: string; model: string };
+      pace: { options: number[] };
+    };
+    assert.equal(after.llm.model, 'demo-2');
+    assert.equal(after.llm.apiKey, 'secret-key', '码不当成新密钥');
+    assert.deepEqual(after.pace.options, [300, 900, 1800]);
+    assert.deepEqual({ ...after, llm: before['llm'], pace: undefined }, { ...before, pace: undefined });
+
+    const stale = await call('PATCH', '/api/config/fields', { fields: { 'llm.model': 'x' }, version: read.version });
+    assert.deepEqual(stale, { status: 409, data: { error: 'config.json 在别处改过了：刷新一下再改' } });
+    assert.deepEqual(await call('PATCH', '/api/config/fields', { fields: { 'llm.model': 3 } }), {
+      status: 400,
+      data: { error: 'llm.model 要是一段文字' },
+    });
+    assert.equal((await call('PATCH', '/api/config/fields', { fields: { 'web.port': 1 } })).status, 400);
+    assert.equal((await call('PATCH', '/api/config/fields', { fields: [] })).status, 400);
+    assert.equal((await call('PATCH', '/api/config/fields', {})).status, 400);
+    const events = repos.activity.list(20).filter((event) => event.type === 'config-fields');
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.['text'], 'llm.model llm.apiKey pace.options', '只记改了哪几项，不记值');
+  });
+
   test('子任务等回答：详情带问题，POST /api/tasks/:id/answer 回答以后排队接着做；不在等的、空回答、没有的都报清楚', async () => {
     const task = repos.agentTasks.create(
       { title: '做封面', goal: '做封面', criteria: [], agent: 'general', origin: 'main' },

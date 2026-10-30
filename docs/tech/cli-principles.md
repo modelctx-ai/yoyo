@@ -53,7 +53,7 @@ sources:
 
 | 命令 | 查什么 |
 | --- | --- |
-| `alarm list`、`contact list` | 日程、联系人 |
+| `alarm list`、`contact list` | 日程（行尾带编号，暂停的标「暂停中」）、联系人 |
 | `context tail` | 最近的对话 |
 | `memory core`、`facts`、`history <id>`、`rules` | 画像、记住的事、一条事实的来源、归纳出的程序 |
 | `task list [--state …]`、`show <编号>`、`log <编号>`、`agents` | 子任务和子 agent 类型 |
@@ -62,7 +62,7 @@ sources:
 | `search <词>... [--in chat,tasks,files,facts,alarms,contacts] [--limit N]` | 在对话、子任务、交付物（按文件名）、记住的事、日程、联系人里一起找，几个词都要有，每类新的在前；一行开头是哪一类，带着能接着查的编号 [^search] |
 | `log tail` | 最近做过的事 |
 
-改东西（加日程、派子任务、取消）还走各自的工具：参数有结构，规则不让做的能原样交回模型。
+改东西（加、改、暂停日程，派子任务，取消）还走各自的工具：`alarm edit`、`pause`、`resume` 不开给 agent，主线程改日程用 `update_alarm`：参数有结构，规则不让做的能原样交回模型。
 
 # 加一条命令时
 

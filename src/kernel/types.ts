@@ -77,6 +77,18 @@ export interface ScheduleInput {
   readonly kind?: string;
 }
 
+/** 改一条日程：没写的项不动。`repeat` 写 null 或空是改成一次性（要有日期）。 */
+export interface SchedulePatch {
+  readonly title?: string;
+  readonly time?: string;
+  readonly date?: string | null;
+  readonly repeat?: string | null;
+  readonly weekday?: number | null;
+  readonly kind?: string;
+  /** false 是暂停，true 是恢复。 */
+  readonly enabled?: boolean;
+}
+
 /** yoyo 运行期间看到的一次粘贴板变化。 */
 export interface ClipEntry {
   readonly text: string;

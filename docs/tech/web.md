@@ -37,9 +37,9 @@ sources:
 
 # 做什么
 
-主人在命令行里能看的、能改的，管理页都给一份网页，长成一个聊天工作台（布局和后面的打算见[工作台](workbench.md)）：主聊天（最近的对话，能打字和 yoyo 聊，回复边写边显示，往上滚接着加载更早的）、状态（桌宠连没连上、模型、右键对话、记忆、下一句碎碎念、在忙什么）、心迹（画像能改，事实能忘，规矩能退役）、日程和联系人（加、删）、行为轨迹。还有「说一句」「听一句」，和右键菜单一样交给收件箱。
+主人在命令行里能看的、能改的，管理页都给一份网页，长成一个聊天工作台（布局和后面的打算见[工作台](workbench.md)）：主聊天（最近的对话，能打字和 yoyo 聊，回复边写边显示，往上滚接着加载更早的）、状态（桌宠连没连上、模型、右键对话、记忆、下一句碎碎念、在忙什么）、心迹（画像能改，事实能忘，规矩能退役）、日程（加、改、暂停、删）和联系人（加、删）、行为轨迹。还有「说一句」「听一句」，和右键菜单一样交给收件箱。
 
-除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，忘掉事实是 `facts.forget`，退役规矩是 `procedures.retire`，派子任务是 `createAgentTask`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
+除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，改和暂停日程是 `updateSchedule`，忘掉事实是 `facts.forget`，退役规矩是 `procedures.retire`，派子任务是 `createAgentTask`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
 
 # 在哪跑
 
@@ -94,12 +94,13 @@ sources:
 | `PUT /api/memory/core` | 改画像：`{ text }`，去掉首尾空白，最多 4000 字；记 `memory-core-edit` |
 | `DELETE /api/memory/facts/:id` | 真删除一条事实；记 `memory-forget` |
 | `DELETE /api/memory/rules/:id` | 规矩退役；记 `memory-retire` |
-| `GET`、`POST /api/alarms`，`DELETE /api/alarms/:id` | 日程：列、加、删；删记 `schedule-remove` |
+| `GET`、`POST /api/alarms`，`PATCH`、`DELETE /api/alarms/:id` | 日程：列、加、改、删；删记 `schedule-remove`。`PATCH` 正文里写了的项才改：`title`、`time`、`date`、`repeat`（`null` 是改成一次性，要有日期）、`weekday`、`kind`、`enabled`（`false` 暂停、`true` 恢复），规则和校验同 `addSchedule`（`updateSchedule`）；改了时间、日期、重复、星期几的清掉「最近响过」的记号，新时间当天照样响；记 `schedule-edit`（带改了哪几项）、`schedule-pause`、`schedule-resume`，什么都没变不记。类型不对、填错回 400，没有这条 404，回改好的这一条 |
 | `GET`、`POST /api/contacts`，`DELETE /api/contacts/:id` | 联系人：列、加、删；删记 `contact-remove` |
 | `POST /api/actions/whisper`、`/listen` | 写进收件箱，下一拍做 |
 | `GET /api/config` | 打过码的整份原文、各开关的值、指纹、文件路径 |
 | `PUT /api/config` | 存整份：`{ text, version }` |
 | `PATCH /api/config` | 只改开关：`{ switches: { "weather.enabled": false } }` |
+| `PATCH /api/config/fields` | 只改表单里的几项：`{ fields: { "llm.model": "…" }, version }`；`GET /api/config` 的 `fields` 是它们现在的值（密钥是码）。见下面「改配置」 |
 
 # 流式回复
 
@@ -119,11 +120,13 @@ sources:
 
 # 改配置
 
-「设置」页签：常用的开关直接点，整份 `config.json` 也能改。写进文件就完了，换上新配置是常驻进程自己的事（见下一节）。[^settings]
+「设置」页签：常用的开关直接点，开关下面是「常用设置」表单（模型、语音、碎碎念间隔），整份 `config.json` 也能改。写进文件就完了，换上新配置是常驻进程自己的事（见下一节）。[^settings]
 
 * 读：整份原文，名字像密钥的键（`apiKey`、`token`、`secret`、`password`、`Authorization` 之类，`mcpServers` 的 `env`、`headers` 里的也算）非空的值换成 `••••••`；还有各开关按缺省值补齐后的值，和文件内容的指纹。
 * 存整份：交回来的还是 `••••••` 的，换回同一位置原来的值；原来那里没有就不存，免得把码当成密钥写进去。指纹对不上（开关刚点过、编辑器里改过）回 409，页面换成最新的，刚才的改动要重新改。
 * 只改开关：只认开关表里那几个、只收 `true` / `false`，别的原样留着。`web.enabled` 不在里面：关掉它管理页就没了。开关改完，框里的整份没动过就跟着刷新。
+* 只改表单里的几项（`PATCH /api/config/fields`）：只认白名单里的路径，值按各项自己的校验（类型、范围），写错回 400，一句话说是哪一项（几项都错的一起说，一项也不写；报错里不带值）；写得进去的几项按路径放回原位，别的内容和键的顺序原样留着（没有的键加在那一段末尾）。给了 `version` 先对指纹，对不上回 409，和整份存一样。白名单：`llm.provider`（`openai-compatible`、`anthropic`）、`llm.baseUrl`（空或 `http(s)://` 开头）、`llm.model`、`llm.apiKey`、`llm.tools`，`speech.apiKey`、`speech.model`、`speech.referenceId`、`speech.autoplay`、`speech.tone`（四种语气或空，空是拿掉这一项），`intervalSec`（60 到 86400 秒），`pace.options`（2 到 8 档、每档 60 到 86400 的整数秒，去重排序再写）、`pace.recent`（0 到 20）。`llm.tools`、`speech.autoplay` 页面上已经是开关，表单里不重复放，接口收。记 `config-fields`，只写改了哪几项，不写值。
+* 表单里的密钥（`llm.apiKey`、`speech.apiKey`）：读出来是 `••••••`（空的是空），交回来还是码就不改（原来那里没有值就回 400，免得把码当密钥存），交新的是换，交空是清掉。页面只交回动过的项，所以没碰的密钥根本不会出现在请求里。
 * 写之前和常驻进程启动时一样检查（`parseConfig`、`assertDirectorReady`），不过就回 400，文件一个字不改。先写临时文件再改名，权限照旧。记 `config-edit` 或 `config-switch`。
 
 # 热加载
@@ -141,14 +144,14 @@ sources:
 
 # 页面
 
-一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；聊天的回复和子任务的过程用 `fetch` 读流，一个事件一个事件地拆；往上翻的消息、小卡片都并进已加载的，重画时按高度差补回滚动位置；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data: blob:`，`blob:` 给交付物的图片预览）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
+一个 HTML，样式和脚本内联，放在 `page.ts` 的模板字符串里：不用构建，`pnpm pack:app` 时跟着进单文件。日程的编辑是就地把那一行换成表单（保存换回行、取消原样放回）；设置的表单只把动过的项交回，保存后重新读。脚本是不用框架的原生 JS，数据一律用 `textContent` 放进页面，不拼 HTML；回复里只认 `**加粗**`，拆成文字和 `strong` 节点。图标是内联的线条 SVG；聊天的回复和子任务的过程用 `fetch` 读流，一个事件一个事件地拆；往上翻的消息、小卡片都并进已加载的，重画时按高度差补回滚动位置；yoyo 的头像是 `assets/icon.png` 缩成 96×96 的 WebP，内联成 data URI（`src/web/avatar.ts`，CSP 只许 `img-src 'self' data: blob:`，`blob:` 给交付物的图片预览）。跟随系统的浅色、深色。窄窗口先收起聊天列表，再把左边一列缩成图标。[^page]
 
 改页面时注意：脚本放在模板字符串里，不能写反引号和 `${`；CSP 不许写 `style` 属性，样式都放样式表，脚本要改样式就改 class 或 `node.style`。
 
 # 还没做
 
-* 设置页上只有开关是表单，别的要在整份配置里改 JSON。
-* 联系人、日程的编辑（现在只能删了重加），日程的暂停。
+* 设置表单只放了常用的几项，别的（`pace.decision`、`memory`、`files` 等）还在整份配置里改 JSON。
+* 联系人的编辑（现在只能删了重加）。
 * 记忆的「事实的来龙去脉」（命令行的 `memory history`）、笔记和整理。
 
 [^server]: 管理页服务

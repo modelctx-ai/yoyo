@@ -161,7 +161,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | --- | --- | --- |
 | 会话 `SessionStore` | `~/.yoyo/yoyo.db` 里的 `ctx_entries`（ctx-sqlite），每只宠物一个会话 `pet:<id>` | `createYoyoContext`、`sessionFor` |
 | 上下文 `ContextBuilder` | ctx 的参考实现，配 `yoyoProjection`（碎碎念事件折成一条助手消息）和来源（工作状态、粘贴板，打开记忆时加两个记忆来源）。事实怎么收、放哪由每个 agent 的 `context` 定，builder 照做 | `yoyoProjection`、`taskSource`、`clipboardSource` |
-| 工具 `ToolRegistry` | `llm.tools` 打开才有：`web_search`、`weather_forecast`、`list_alarms`、`add_alarm`，加 `mcpServers` 的工具，打开记忆时加 `recall` | `createYoyoTools`、`connectMcp` |
+| 工具 `ToolRegistry` | `llm.tools` 打开才有：`web_search`、`weather_forecast`、`list_alarms`、`add_alarm`、`update_alarm`，加 `mcpServers` 的工具，打开记忆时加 `recall` | `createYoyoTools`、`connectMcp` |
 | 执行环境 `Executor` | 注册表自带的进程内函数执行环境；每台 MCP 服务器经 ctx-mcp 的 hub，打开 `sandbox` 时 stdio 服务器的进程由沙箱程序（srt）启动，hub 只看到改写后的命令；打开记忆和 `llm.tools` 时还有记忆本身（`recall`） | `createYoyoHarness` 的 `executors` |
 | `Harness` | ctx 的参考实现（AI SDK 循环）。碎碎念和回复是同一个 harness 跑的两个 `AgentSpec` | `createYoyoHarness`、`agents.ts` |
 | 编排 `Orchestrator` | yoyo 的编排器：协议的几样交给 ctx 的进程内队列（同一会话串行），加上拍子、让路、收件箱、到点 | `createYoyoOrchestrator` |
@@ -188,7 +188,7 @@ ctx 把一个 agent 拆成七个组件，每个一个协议，见 [ctx 仓库](h
 | 报错 | `stopReason` 是 `error` 或 `aborted` 就报错。`RunResult.error`（`ErrorInfo`）带 `statusCode` 和 `responseBody`，`compose.ts` 抹掉 `llm.apiKey`、压成一行、截到 180 字，和 `describeError` 对抛出来的错误做的一样；有状态码时「模型接口返回 <状态码>：<正文片段>」，否则「模型没回：…」 | `compose.ts` |
 | 桌宠对话 | 每拍读 `GET /chat?rounds=200`，按幂等键 `pet:<ts>:<role>:<text>` 并进来，`source` 是 `dsh-pet`；已有的键由存储跳过。导入的条目 `at` 是过去，日志里排在写入的位置，投影和 `yoyo context tail` 按 `(at, seq)` 排回原来的位置（`compareEntries`） | `storePetChat` |
 | 网关 | 右键对话走 `startGateway({ accessToken, rewrite, fetch })`，本机随机端口：`fetch` 换成 yoyo 自己（`answeringFetch`），请求不转发出去，交给编排器的 `chat` / `petWhisper` 跑一轮，再按 Chat Completions 的格式回；`rewrite` 原样返回，只为让网关先检查正文。令牌、Host、Origin 的检查照旧由网关做。`channel-base`、`channel-token` 记进 kv，`yoyo chat sync` 用它重接。桌宠还没开时只重试 `bindChat`，每 30 秒一次。哪种 `llm.provider` 都行 | `startChannel`、`connectChannel` |
-| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness；打开记忆时再加 `recall`，执行环境是记忆 | `createYoyoTools`、`connectMcp`、`createApp` |
+| 工具 | `llm.tools` 打开才建注册表：`web_search`（配了 anysearch 才有）、`weather_forecast`、`list_alarms`、`add_alarm`、`update_alarm`，本地工具用 `addTool` 加；再加 `mcpServers` 的工具，MCP hub 本身是执行环境，经 `executors` 交给上下文和 harness；打开记忆时再加 `recall`，执行环境是记忆 | `createYoyoTools`、`connectMcp`、`createApp` |
 | 压缩 | 配了 `context.compactAt` 才自动压：整段历史超过阈值就 `compact({ keep: context.keep, timeoutMs: 60_000 })`，摘要之前的条目还在库里。压缩另记的 `ctx.compacted` 和别的框架事件 `ctx.*` 投影里看不见，不计入阈值，`yoyo context tail` 也不列。`yoyo context compact` 随时手动压，超时一样 | `compactIfNeeded`、`compactContext` |
 | 旧摘要 | 摘要的 `covers` 在 ctx 0.3 里按 `seq` 算，升级前写的旧摘要（`v` 是 0）可能盖住了后写进来的旧记录。常驻进程启动时、开拍子之前找一次：有，而且有模型，就用 `COMPACT_INSTRUCTIONS` 重新压一次，新摘要取代旧摘要；没有模型记一条警告，下次启动再做。命令行不做，出错不挡启动 | `recompactLossySummaries`、`runDaemon` |
 | 模型 | `createModel({ provider, baseUrl, apiKey, model })`；没配齐就是 `null`：只用预制台词，碎碎念说完也不听 | `createLanguageModel` |
@@ -405,7 +405,7 @@ registry.addTool(
 
 * 名字只用字母、数字、`_`、`-`，最长 64。
 * 照现有工具的写法，出错返回一句中文，不抛错，模型能接着说。
-* 改了库的工具要记行为，例如 `add_alarm` 经 `addSchedule` 记 `schedule-add`。
+* 改了库的工具要记行为，例如 `add_alarm` 经 `addSchedule` 记 `schedule-add`，`update_alarm` 经 `updateSchedule` 记 `schedule-edit`、`schedule-pause`、`schedule-resume`。
 * 只有 `llm.tools` 打开时才交给模型，而且只在回复时给；碎碎念的 agent 配置是 `tools: false`。
 
 ## 接一个 MCP 服务器
