@@ -5,7 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, eventEntry, userEntry, type MemoryStore } from '@modelctx-ai/ctx';
+import {
+  assistantEntry,
+  createContext,
+  createMemoryStore,
+  eventEntry,
+  userEntry,
+  type Context,
+  type MemoryStore,
+} from '@modelctx-ai/ctx';
 import { createMemoryStore as createMemory } from '@modelctx-ai/ctx-memory';
 
 import { parseConfig } from '../app/config.ts';
@@ -14,6 +22,7 @@ import type { PaceDecision } from '../kernel/pace.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { requestApproval } from '../features/approvals/approvals.ts';
+import { mergeAgents } from '../features/tasks/agents.ts';
 import { askTask } from '../features/tasks/tasks.ts';
 import { drain } from '../runtime/inbox.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
@@ -48,6 +57,61 @@ function raw(
 }
 
 const T0 = new Date(2026, 9, 24, 15, 0, 0).getTime();
+
+interface SseEvent {
+  readonly event: string;
+  readonly data: unknown;
+}
+
+/** 在后台读一个 SSE 响应：事件边来边进 `events`（注释行跳过），流结束 `done` 就好；`stop` 是客户端自己掐断。 */
+function collectSse(response: Response): { events: SseEvent[]; done: Promise<void>; stop: () => Promise<void> } {
+  const events: SseEvent[] = [];
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  const done = (async () => {
+    let buffer = '';
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) return;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      for (let cut = buffer.indexOf('\n\n'); cut >= 0; cut = buffer.indexOf('\n\n')) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const name = /^event: (.*)$/m.exec(frame)?.[1];
+        const data = /^data: (.*)$/m.exec(frame)?.[1];
+        if (name && data) events.push({ event: name, data: JSON.parse(data) as unknown });
+      }
+    }
+  })();
+  return { events, done, stop: () => reader.cancel() };
+}
+
+/** 读到流结束，返回所有事件。 */
+async function readSse(response: Response): Promise<SseEvent[]> {
+  const stream = collectSse(response);
+  await stream.done;
+  return stream.events;
+}
+
+/** POST /api/tasks 应该被拒：回 400，返回那句话。 */
+async function badRequest(
+  call: (method: string, path: string, body?: unknown) => Promise<{ status: number; data: unknown }>,
+  body: unknown,
+): Promise<string> {
+  const { status, data } = await call('POST', '/api/tasks', body);
+  assert.equal(status, 400);
+  return (data as { error: string }).error;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(condition: () => boolean, ms = 2000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('等太久了');
+    await sleep(10);
+  }
+}
 
 describe('web 管理页', () => {
   const home = mkdtempSync(join(tmpdir(), 'yoyo-web-'));
@@ -95,10 +159,15 @@ describe('web 管理页', () => {
         },
       },
       schedule: () => ({ nextWhisper: T0 + 60_000, lastTalk: 0, lastPace }),
-      talk: async (text) => {
+      talk: async (text, _signal, onDelta) => {
         if (text === '坏了') throw new Error('没配 llm，回不了话');
-        return `收到：${text}`;
+        const reply = `收到：${text}`;
+        // 流式时一个字一个字吐，开头多一个换行：整段回复是去了首尾空白的
+        for (const piece of `\n${reply}`) onDelta?.(piece);
+        return reply;
       },
+      agents: mergeAgents([]),
+      pollMs: 20,
       now: () => new Date(T0),
       files,
       reveal: (path) => void revealed.push(path),
@@ -401,8 +470,15 @@ describe('web 管理页', () => {
         at: T0 + 10,
       }),
     );
-    const items = (await call('GET', '/api/context')).data as { kind: string; task?: number; state?: string }[];
-    assert.deepEqual(items.at(-1), {
+    const items = (await call('GET', '/api/context')).data as {
+      seq: number;
+      kind: string;
+      task?: number;
+      state?: string;
+    }[];
+    const { seq, ...last } = items.at(-1)!;
+    assert.ok(Number.isInteger(seq));
+    assert.deepEqual(last, {
       at: T0 + 10,
       kind: 'task',
       text: '子任务 #1「整理周报」取消了。',
@@ -539,8 +615,15 @@ describe('web 管理页', () => {
         at: T0 + 20,
       }),
     );
-    const items = (await call('GET', '/api/context')).data as { kind: string; approval?: number; state?: string }[];
-    assert.deepEqual(items.at(-1), {
+    const items = (await call('GET', '/api/context')).data as {
+      seq: number;
+      kind: string;
+      approval?: number;
+      state?: string;
+    }[];
+    const { seq, ...last } = items.at(-1)!;
+    assert.ok(Number.isInteger(seq));
+    assert.deepEqual(last, {
       at: T0 + 20,
       kind: 'approval',
       text: '批准请求 #1「写 a.md」：主人在工作台里拒绝了，没有做。',
@@ -555,6 +638,349 @@ describe('web 管理页', () => {
     assert.deepEqual(
       drain(paths.inboxFile).map((message) => message.type),
       ['whisper', 'listen'],
+    );
+  });
+
+  const open = (path: string, init: { method?: string; body?: unknown; token?: string } = {}): Promise<Response> =>
+    fetch(new URL(path, web.origin), {
+      method: init.method ?? 'GET',
+      headers: {
+        authorization: `Bearer ${init.token ?? web.token}`,
+        ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+
+  test('流式聊天：delta 一小段一小段来，最后 done 带整段回复，和 POST /api/chat 交回的一样', async () => {
+    const response = await open('/api/chat/stream', { method: 'POST', body: { text: '  在吗 ' } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    const events = await readSse(response);
+    // 假的 talk 先吐一个换行，再一个字一个字吐 `收到：在吗`
+    assert.deepEqual(
+      events.map((event) => event.event),
+      ['delta', 'delta', 'delta', 'delta', 'delta', 'delta', 'done'],
+    );
+    const text = events
+      .filter((event) => event.event === 'delta')
+      .map((event) => (event.data as { text: string }).text)
+      .join('');
+    assert.equal(text, '\n收到：在吗', '增量是模型原文，还没去首尾空白');
+    const done = events.at(-1)?.data as { reply: string };
+    assert.deepEqual(done, { reply: '收到：在吗' });
+    assert.deepEqual(await call('POST', '/api/chat', { text: '在吗' }), { status: 200, data: done });
+  });
+
+  test('流式聊天没回上来：error 事件带原因，没有 done', async () => {
+    const events = await readSse(await open('/api/chat/stream', { method: 'POST', body: { text: '坏了' } }));
+    assert.deepEqual(events, [{ event: 'error', data: { error: 'yoyo 没回上来：没配 llm，回不了话' } }]);
+  });
+
+  test('流式聊天的门槛和别的接口一样：令牌、Host、Origin、只收 JSON；空的、太长的开流之前就拒绝', async () => {
+    assert.equal(
+      (await open('/api/chat/stream', { method: 'POST', body: { text: '在吗' }, token: 'bad' })).status,
+      401,
+    );
+    const json = { 'content-type': 'application/json', authorization: `Bearer ${web.token}` };
+    const body = JSON.stringify({ text: '在吗' });
+    const evil = await raw(web, 'POST', '/api/chat/stream', {
+      headers: { ...json, origin: 'http://evil.example' },
+      body,
+    });
+    assert.equal(evil.status, 403);
+    const host = await raw(web, 'POST', '/api/chat/stream', { headers: { ...json, host: 'evil.example' }, body });
+    assert.equal(host.status, 403);
+    const form = await raw(web, 'POST', '/api/chat/stream', {
+      headers: { 'content-type': 'text/plain', authorization: `Bearer ${web.token}` },
+      body,
+    });
+    assert.equal(form.status, 415);
+    const empty = await open('/api/chat/stream', { method: 'POST', body: { text: ' ' } });
+    assert.equal(empty.status, 400);
+    assert.match(empty.headers.get('content-type') ?? '', /^application\/json/);
+    assert.deepEqual(await empty.json(), { error: '要说点什么' });
+    assert.equal((await open('/api/chat/stream', { method: 'POST', body: { text: '长'.repeat(4001) } })).status, 400);
+  });
+
+  test('子任务过程用 SSE 推：开头一份，有新的一步或状态变了才再推，结束推最后一份再 end；没有的 404、没令牌 401', async () => {
+    const task = repos.agentTasks.create(
+      { title: '整理周报', goal: '本周进展', criteria: [], agent: 'general', origin: 'web' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running' }, T0 + 1);
+    const response = await open(`/api/tasks/${task.id}/events`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const stream = collectSse(response);
+    const taskAt = (n: number) =>
+      (stream.events[n] as SseEvent).data as { task: { steps: unknown[]; progress: unknown; state: string } };
+    const steps = () => taskAt(stream.events.length - 1).task.steps.length;
+
+    await waitFor(() => stream.events.length === 1);
+    const first = stream.events[0]?.data as {
+      task: { id: number; state: string; progress: unknown };
+      artifacts: unknown[];
+    };
+    assert.equal(stream.events[0]?.event, 'task');
+    assert.equal(first.task.id, task.id);
+    assert.equal(first.task.state, 'running');
+    assert.deepEqual(first.artifacts, []);
+    assert.equal(steps(), 0);
+    await sleep(100);
+    assert.equal(stream.events.length, 1, '没有新的就不推');
+
+    await context.store.append(taskSession(task.id), [assistantEntry('先拆 todo', { at: T0 + 2 })]);
+    await waitFor(() => stream.events.length === 2);
+    assert.equal(steps(), 1);
+
+    repos.agentTasks.update(task.id, { todos: [{ text: '收集材料', state: 'done' }] }, T0 + 3);
+    await waitFor(() => stream.events.length === 3);
+    assert.deepEqual(taskAt(2).task.progress, { done: 1, total: 1 });
+
+    repos.agentTasks.update(task.id, { state: 'done', result: '写好了', finishedAt: T0 + 4 }, T0 + 4);
+    await stream.done;
+    assert.deepEqual(
+      stream.events.map((event) => event.event),
+      ['task', 'task', 'task', 'task', 'end'],
+    );
+    assert.equal(taskAt(3).task.state, 'done');
+
+    // 已经结束的：一份加 end，流就关了
+    const finished = await readSse(await open(`/api/tasks/${task.id}/events`));
+    assert.deepEqual(
+      finished.map((event) => event.event),
+      ['task', 'end'],
+    );
+    assert.equal((await open('/api/tasks/9999/events')).status, 404);
+    assert.equal((await open(`/api/tasks/${task.id}/events`, { token: 'bad' })).status, 401);
+  });
+
+  test('客户端自己断开：服务端不再推，也不出错', async () => {
+    const task = repos.agentTasks.create(
+      { title: '慢慢做', goal: '目标', criteria: [], agent: 'general', origin: 'web' },
+      T0,
+    );
+    repos.agentTasks.update(task.id, { state: 'running' }, T0 + 1);
+    const stream = collectSse(await open(`/api/tasks/${task.id}/events`));
+    await waitFor(() => stream.events.length === 1);
+    await stream.stop();
+    await stream.done.catch(() => {});
+    repos.agentTasks.update(task.id, { state: 'cancelled', finishedAt: T0 + 2 }, T0 + 2);
+    await sleep(80);
+    assert.equal(stream.events.length, 1);
+    assert.deepEqual(
+      logger.lines.filter((line) => line.includes('管理页')),
+      [],
+    );
+    // 服务还能正常回别的请求
+    assert.equal((await call('GET', '/api/status')).status, 200);
+  });
+
+  test('派子任务：GET /api/agents 列类型；POST /api/tasks 规则同主线程，来源是 web，建好回概要', async () => {
+    const agents = (await call('GET', '/api/agents')).data as { name: string; description: string }[];
+    assert.deepEqual(
+      agents.map((agent) => agent.name),
+      ['general', 'research', 'writer'],
+    );
+    assert.match(agents[1]?.description ?? '', /上网查/);
+    assert.deepEqual(Object.keys(agents[0] ?? {}).toSorted(), ['description', 'name'], '不带指令和工具清单');
+
+    const made = await call('POST', '/api/tasks', {
+      title: ' 查机票 ',
+      goal: '查下周一到周三北京到上海的机票',
+      criteria: ['给出三个航班', '  ', '写明价格'],
+      agent: 'research',
+    });
+    assert.equal(made.status, 200);
+    const task = made.data as { id: number; title: string; agent: string; state: string; origin: string };
+    assert.deepEqual([task.title, task.agent, task.state, task.origin], ['查机票', 'research', 'queued', 'web']);
+    const stored = repos.agentTasks.get(task.id);
+    assert.deepEqual(stored?.criteria, ['给出三个航班', '写明价格']);
+    assert.ok(
+      repos.activity
+        .list(50)
+        .some((event) => event.type === 'task-add' && event.id === task.id && event.origin === 'web'),
+    );
+
+    // 验收标准也收整段文字，按行拆；类型不写是 general
+    const text = (await call('POST', '/api/tasks', { title: '整理', goal: '整理桌面', criteria: '第一条\r\n第二条' }))
+      .data as {
+      id: number;
+      agent: string;
+    };
+    assert.equal(text.agent, 'general');
+    assert.deepEqual(repos.agentTasks.get(text.id)?.criteria, ['第一条', '第二条']);
+  });
+
+  test('派子任务的校验：标题和目标要有、太长不行、验收标准最多 8 条、没有这种类型，都回 400 说清楚，没建', async () => {
+    const before = repos.agentTasks.list({ limit: 200 }).length;
+    assert.equal(await badRequest(call, { goal: '做点事' }), '标题不能空着');
+    assert.equal(await badRequest(call, { title: ' ', goal: '做点事' }), '标题不能空着');
+    assert.equal(await badRequest(call, { title: '做事' }), '目标不能空着');
+    assert.match(await badRequest(call, { title: '长'.repeat(61), goal: '做点事' }), /标题太长了，最多 60 字/);
+    assert.match(await badRequest(call, { title: '做事', goal: '长'.repeat(4001) }), /目标太长了，最多 4000 字/);
+    assert.match(
+      await badRequest(call, { title: '做事', goal: '做', criteria: Array(9).fill('一条') }),
+      /验收标准最多 8 条/,
+    );
+    assert.equal(
+      await badRequest(call, { title: '做事', goal: '做', agent: 'ghost' }),
+      '没有「ghost」这种子 agent，有：general、research、writer',
+    );
+    assert.equal(repos.agentTasks.list({ limit: 200 }).length, before);
+    assert.equal(
+      (await raw(web, 'POST', '/api/tasks', { headers: { authorization: `Bearer ${web.token}` }, body: '{}' })).status,
+      415,
+    );
+  });
+});
+
+const said = (n: number): string => `第${n}句`;
+
+describe('web 管理页：没开子任务、往前翻', () => {
+  const home = mkdtempSync(join(tmpdir(), 'yoyo-web-'));
+  const paths = resolvePaths({ YOYO_HOME: home, YOYO_CONFIG: join(home, 'config.json') });
+  const servers: WebServer[] = [];
+
+  /** 一个自己的日志和上下文的服务；`agents` 不给就是子任务没打开。 */
+  async function serve(options: { agents?: ReturnType<typeof mergeAgents> } = {}) {
+    const repos = memoryRepos({ now: () => new Date(T0) });
+    const context: Context = createContext({
+      store: createMemoryStore(),
+      session: sessionFor('main'),
+      projection: yoyoProjection,
+    });
+    const web = await startWeb({
+      config: parseConfig({}),
+      paths,
+      repos,
+      context,
+      memory: createMemory(),
+      host: { name: 'console', workStatus: async () => ({ state: 'idle', task: null }) },
+      ...(options.agents ? { agents: options.agents } : {}),
+    });
+    servers.push(web);
+    const call = async (path: string, body?: unknown): Promise<{ status: number; data: unknown }> => {
+      const response = await fetch(new URL(path, web.origin), {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+          authorization: `Bearer ${web.token}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      return { status: response.status, data: await response.json() };
+    };
+    return { context, repos, call };
+  }
+
+  afterAll(async () => {
+    await Promise.all(servers.map((web) => web.close()));
+  });
+
+  interface Item {
+    readonly at: number;
+    readonly seq: number;
+    readonly kind: string;
+    readonly text: string;
+  }
+  const cursor = (item: Item | undefined): string => `${item?.at}:${item?.seq}`;
+  const texts = (items: unknown): string[] => (items as Item[]).map((item) => item.text);
+
+  test('子任务没打开（没给类型）：类型清单是空的，派不了，回 409 说怎么开', async () => {
+    const { call } = await serve();
+    assert.deepEqual(await call('/api/agents'), { status: 200, data: [] });
+    assert.deepEqual(await call('/api/tasks', { title: '做事', goal: '做' }), {
+      status: 409,
+      data: { error: '子任务没打开：config.json 里把 tasks.enabled 设成 true' },
+    });
+  });
+
+  test('往前翻：游标是页上最早那条的 at:seq，一页一页接上，不重不漏；不满一页就是到头了', async () => {
+    const { context, call } = await serve();
+    // 130 句，之后再导入一条很久以前的桌宠对话：序号最大，但 at 最早，排在最前
+    await context.append(...Array.from({ length: 130 }, (_, n) => userEntry(said(n), { at: T0 + n * 1000 })));
+    await context.append(...petChatEntries([{ role: 'user', content: '很久以前', ts: T0 - 1_000_000 }]));
+
+    const latest = (await call('/api/context?limit=50')).data as Item[];
+    assert.deepEqual(
+      texts(latest),
+      Array.from({ length: 50 }, (_, n) => said(80 + n)),
+    );
+    const second = (await call(`/api/context?limit=50&before=${cursor(latest[0])}`)).data as Item[];
+    assert.deepEqual(
+      texts(second),
+      Array.from({ length: 50 }, (_, n) => said(30 + n)),
+    );
+    const third = (await call(`/api/context?limit=50&before=${cursor(second[0])}`)).data as Item[];
+    assert.deepEqual(texts(third), ['很久以前', ...Array.from({ length: 30 }, (_, n) => said(n))]);
+    assert.ok(third.length < 50, '不满一页：到头了');
+    assert.deepEqual((await call(`/api/context?limit=50&before=${cursor(third[0])}`)).data, [], '再往前没有了');
+
+    // 没给 limit 是 40 条，最多 200 条
+    assert.equal(((await call(`/api/context?before=${cursor(latest[0])}`)).data as Item[]).length, 40);
+    await context.append(
+      ...Array.from({ length: 100 }, (_, n) => userEntry(said(130 + n), { at: T0 + (130 + n) * 1000 })),
+    );
+    assert.equal(((await call('/api/context?limit=1000')).data as Item[]).length, 200);
+  });
+
+  test('游标按 (at, seq)：同一时刻的几条，从中间翻只拿排在前面的', async () => {
+    const { context, call } = await serve();
+    await context.append(
+      userEntry('甲', { at: T0 + 5000 }),
+      userEntry('乙', { at: T0 + 5000 }),
+      userEntry('丙', { at: T0 + 5000 }),
+      userEntry('更早', { at: T0 }),
+      userEntry('更晚', { at: T0 + 9000 }),
+    );
+    const all = (await call('/api/context?limit=10')).data as Item[];
+    assert.deepEqual(texts(all), ['更早', '甲', '乙', '丙', '更晚']);
+    const middle = all[2];
+    assert.deepEqual(texts((await call(`/api/context?limit=10&before=${cursor(middle)}`)).data), ['更早', '甲']);
+    // 游标可以是任意时刻，不必是某一条
+    assert.deepEqual(texts((await call(`/api/context?limit=10&before=${T0 + 1}:0`)).data), ['更早']);
+    assert.deepEqual((await call(`/api/context?limit=10&before=${T0}:0`)).data, []);
+  });
+
+  test('翻页的游标写错回 400；日志末尾全是不显示的条目时，取最新一页也能往里找', async () => {
+    const { context, call } = await serve();
+    for (const before of ['abc', '12', '1:', ':2', '1:2:3', '-1:x']) {
+      assert.deepEqual(await call(`/api/context?before=${before}`), {
+        status: 400,
+        data: { error: 'before 要写成 <at>:<seq>' },
+      });
+    }
+    await context.append(userEntry('很久以前的一句', { at: T0 }), assistantEntry('回你', { at: T0 + 1 }));
+    // 600 条不显示的事件把它们挤出末尾 500 条
+    await context.append(...Array.from({ length: 600 }, (_, n) => eventEntry('noise', { at: T0 + 2 + n })));
+    assert.deepEqual(texts((await call('/api/context?limit=5')).data), ['很久以前的一句', '回你']);
+  });
+
+  test('小卡片可以按类型和时间取：往前翻时取更早的', async () => {
+    const { repos, call } = await serve();
+    // 测试用的库里每条记录的时间都是 T0，这里只验类型筛和 limit、before 参数传到了
+    repos.activity.record({ type: 'whisper' });
+    repos.activity.record({ type: 'task-add', id: 1, title: '甲' });
+    repos.activity.record({ type: 'schedule-add', title: '喝水' });
+    const cards = (await call('/api/activity?limit=200&types=schedule-add,task-add,approval-ask')).data as {
+      type: string;
+    }[];
+    assert.deepEqual(
+      cards.map((card) => card.type),
+      ['task-add', 'schedule-add'],
+    );
+    assert.deepEqual(
+      (await call(`/api/activity?types=task-add&before=${encodeURIComponent(new Date(T0).toISOString())}`)).data,
+      [],
+    );
+    const after = new Date(T0 + 1000).toISOString();
+    assert.equal(
+      ((await call(`/api/activity?types=task-add&before=${encodeURIComponent(after)}`)).data as unknown[]).length,
+      1,
     );
   });
 });

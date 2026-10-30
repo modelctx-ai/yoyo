@@ -17,6 +17,7 @@ import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
 import { OWNER_TOOL_NAMES } from '../brain/files.ts';
+import { tapDeltas } from '../brain/harness.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { fixedPacer, paceSecrets } from '../brain/pace.ts';
@@ -178,9 +179,10 @@ export interface YoyoOrchestrator extends Orchestrator {
   chat(text: string, signal?: AbortSignal): Promise<string>;
   /**
    * 工作台里打的一句：和右键对话同一个 agent，问答记进日志（来源 `workbench`），桌宠那边不念、不冒泡。
-   * 算作说过话，碎碎念照样让路。
+   * 算作说过话，碎碎念照样让路。给了 `onDelta`，模型每吐一小段就交一次（多步的话各步的文字都会来）；
+   * 返回的整段回复才是记进日志的，增量只是边写边看。
    */
-  talk(text: string, signal?: AbortSignal): Promise<string>;
+  talk(text: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<string>;
   /**
    * 子任务结束了或提了问题（结果、问题已经写回主会话）：排进来，下一拍叫醒主线程转告主人。照 Claude Code 后台任务的
    * `<task-notification>`：通知进主线程，主线程用自己的话告诉主人。
@@ -216,7 +218,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   const { config, paths, logger, repos, clipboard, search, context, harness, director, model, factSources } = deps;
   const memory = deps.memory ?? null;
   const clock = deps.clock ?? Date.now;
-  const runs = createOrchestrator({ harness, store: context.store, logger });
+  // 编排器只调 harness.run；要看文字增量的那一轮（工作台的流式回复）由 tap 改走 stream
+  const tap = tapDeltas(harness);
+  const runs = createOrchestrator({ harness: tap.harness, store: context.store, logger });
   // 报错里抹掉的密钥：模型的，加上记忆的决策、提取模型的，和碎碎念间隔的决策模型的
   const secrets = [config.llm.apiKey, ...memorySecrets(config.memory), ...paceSecrets(config.pace)].filter(Boolean);
   const intervalMs = whisperIntervalMs(config.intervalSec);
@@ -414,9 +418,12 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     return { talked: true };
   }
 
-  async function chat(text: string, signal?: AbortSignal): Promise<string> {
+  async function converse(text: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<string> {
     if (!model) throw new Error('没配 llm，右键对话回不了');
     state.lastTalk = clock();
+    // 要看增量的这一轮自己定编号，登记到 tap 上，跑完撤掉
+    const runId = onDelta ? crypto.randomUUID() : undefined;
+    const unwatch = onDelta && runId ? tap.watch(runId, onDelta) : undefined;
     try {
       const searchText = await lookUp(text);
       const answer = await generateChat(context, orchestrator, {
@@ -426,20 +433,24 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         secrets,
         tools: config.llm.tools,
         signal: runSignal(signal),
+        ...(runId ? { runId } : {}),
         ...(factSources ? { sources: factSources.reply } : {}),
         ...(searchText ? { searchText } : {}),
       });
       logger.info(`右键对话回了 ${answer.length} 字`);
       return answer;
     } finally {
+      unwatch?.();
       state.lastTalk = clock();
     }
   }
 
-  async function talk(text: string, signal?: AbortSignal): Promise<string> {
+  const chat = (text: string, signal?: AbortSignal): Promise<string> => converse(text, signal);
+
+  async function talk(text: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<string> {
     const at = clock();
-    const answer = await chat(text, signal);
-    // 回上来了才记：没回成的那句不留在日志里，工作台上提示一声就好
+    const answer = await converse(text, signal, onDelta);
+    // 回上来了才记：没回成的那句不留在日志里，工作台上提示一声就好。记的是整段回复（和 done 交回去的一样），不是增量拼的
     await context.append(
       userEntry(text, { at, source: WORKBENCH_SOURCE }),
       assistantEntry(answer, { at: Math.max(clock(), at + 1), source: WORKBENCH_SOURCE }),

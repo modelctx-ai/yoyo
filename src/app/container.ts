@@ -454,7 +454,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             memory: memory?.store ?? openMemoryStore(db),
             host,
             schedule: () => orchestrator.state,
-            talk: (text) => orchestrator.talk(text),
+            talk: (text, signal, onDelta) => orchestrator.talk(text, signal, onDelta),
+            agents,
             files: artifactFiles,
             // 工作台里点了批准：常驻进程马上照做，不等下一次轮到
             onApproved: () => approvals?.poke(),

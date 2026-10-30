@@ -128,6 +128,8 @@ export function replyRequest(context: Context, options: ReplyOptions): RunReques
 export interface ChatOptions extends ReplyOptions {
   /** 主人在右键对话里说的这句。 */
   readonly text: string;
+  /** 这一轮自己定的编号：调用方要按它登记文字增量（见 `tapDeltas`）。 */
+  readonly runId?: string;
 }
 
 /**
@@ -141,6 +143,7 @@ export function chatRequest(context: Context, options: ChatOptions): RunRequest 
     agent: replyRequestAgent(options),
     prompt: found ? `${options.text}\n\n${found}` : options.text,
     record: false,
+    ...(options.runId ? { runId: options.runId } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
 }

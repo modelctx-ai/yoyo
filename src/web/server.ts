@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 
 import { errorText } from '../app/log.ts';
 import type { Logger } from '../ports/index.ts';
-import { createWebApi, type ApiFile, type WebDeps } from './api.ts';
+import { createWebApi, type ApiFile, type ApiResult, type WebDeps } from './api.ts';
 import { pageHtml } from './page.ts';
 
 export interface WebServer {
@@ -58,6 +58,42 @@ function sendFile(res: ServerResponse, file: ApiFile): void {
     'content-security-policy': "sandbox; default-src 'none'",
   });
   res.end(file.bytes);
+}
+
+/** 心跳隔多久：没有新事件时发一行注释，免得中间有谁把空闲的连接掐了。 */
+const HEARTBEAT_MS = 15_000;
+
+/**
+ * 回 SSE：一个事件是 `event: <名字>` 加一行 `data: <JSON>`，空行结束。响应头和别的接口一样带 `no-store`、`nosniff`，
+ * 认证、Host、Origin 都在这之前查过了。连接断了就中止 `signal`，推的一方照它收尾；断了以后再 `emit` 什么也不做。
+ */
+async function sendStream(
+  res: ServerResponse,
+  stream: NonNullable<ApiResult['stream']>,
+  logger?: Logger,
+): Promise<void> {
+  res.writeHead(200, {
+    ...COMMON_HEADERS,
+    'content-type': 'text/event-stream; charset=utf-8',
+    'x-accel-buffering': 'no',
+  });
+  const closed = new AbortController();
+  res.on('close', () => closed.abort());
+  const write = (chunk: string): void => {
+    if (!res.writableEnded && !res.destroyed) res.write(chunk);
+  };
+  const beat = setInterval(() => write(': 还在\n\n'), HEARTBEAT_MS);
+  // 先发一行注释，响应头马上到客户端
+  write(': yoyo\n\n');
+  try {
+    await stream((event, data) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`), closed.signal);
+  } catch (error) {
+    logger?.warn(`管理页的流出错：${errorText(error)}`);
+    write(`event: error\ndata: ${JSON.stringify({ error: '出错了，看一眼 yoyo 的日志' })}\n\n`);
+  } finally {
+    clearInterval(beat);
+    res.end();
+  }
 }
 
 function page(res: ServerResponse): void {
@@ -132,6 +168,7 @@ export function startWeb(options: WebOptions): Promise<WebServer> {
       }
     }
     const result = await api(method, path, body);
+    if (result.stream) return sendStream(res, result.stream, logger);
     if (result.file) return sendFile(res, result.file);
     send(res, result.status, result.body);
   }
