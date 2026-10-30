@@ -327,6 +327,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             memory: memory?.store ?? openMemoryStore(db),
             host,
             schedule: () => orchestrator.state,
+            talk: (text) => orchestrator.talk(text),
             logger,
             port,
             ...(resume?.webToken ? { token: resume.webToken } : {}),

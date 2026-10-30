@@ -96,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         buildMenu()
         buildWindow()
         if directorAlive() {
-            notice("yoyo 已经在跑了，正在打开管理页…")
+            notice("yoyo 已经在跑了，正在打开工作台…")
         } else {
             notice("yoyo 正在启动…")
             startDaemon()
@@ -252,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if self.quitting { return }
             let running = self.daemon != nil || directorAlive()
             if tries <= 0 || !running {
-                if running { self.notice("管理页没开：\(line)") }
+                if running { self.notice("工作台没开：\(line)") }
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.waitForManager(tries - 1) }
@@ -437,7 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         main.addItem(editItem)
 
         let windowMenu = NSMenu(title: "窗口")
-        windowMenu.addItem(item("管理页", #selector(showWindow), "1"))
+        windowMenu.addItem(item("工作台", #selector(showWindow), "1"))
         windowMenu.addItem(item("重新载入", #selector(reload), "r"))
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -452,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        menu.addItem(item("管理页", #selector(showWindow)))
+        menu.addItem(item("工作台", #selector(showWindow)))
         menu.addItem(item(updateItem.title, #selector(checkUpdateFromMenu)))
         return menu
     }

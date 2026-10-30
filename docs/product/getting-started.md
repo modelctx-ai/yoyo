@@ -26,12 +26,12 @@ status: stable
 1. 到 [Releases](https://github.com/modelctx-ai/yoyo/releases) 下载 `yoyo-<版本>-macos-arm64.dmg`，打开，把 yoyo 拖进「应用程序」。
 2. 打开 yoyo。它没经过 Apple 公证，第一次会被系统拦下：到「系统设置 → 隐私与安全性」，在最下面点「仍要打开」，以后不再问。
 3. 第一次打开会把示例配置放到 `~/.yoyo/config.json`，然后提示没跑起来。点「打开配置」，填上 `speech.apiKey` 和 `speech.referenceId`。想让模型现写，再填 `llm` 的 `baseUrl`、`apiKey`、`model`。
-4. 存好，再打开 yoyo：桌宠出来、开口说话，yoyo 的窗口里是[管理页](usage.md#管理页)。
+4. 存好，再打开 yoyo：桌宠出来、开口说话，yoyo 的窗口里是[工作台](usage.md#工作台)。
 
 * 关掉窗口，桌宠和 yoyo 照旧在。点 Dock 上的 yoyo、右键桌宠的「管理」都能再打开。退出 yoyo（⌘Q）时桌宠一起关。
 * 第一次听你说话时，系统会问 yoyo 能不能用麦克风；第一次按 Control+Option+Y 时，要在「辅助功能」里允许 yoyo。
 * 桌宠已经开着（例如你自己用独立模式开的）就直接用，退出时也不关它。yoyo 开的桌宠，输出记在 `~/.yoyo/pet.log`；yoyo 自己的记在 `~/.yoyo/app.log`，菜单「yoyo → 打开日志」能看。
-* 终端里已经在跑 `yoyo start`，再打开 yoyo 就只显示管理页，不另起一份。
+* 终端里已经在跑 `yoyo start`，再打开 yoyo 就只显示工作台，不另起一份。
 
 ## 更新
 
@@ -104,7 +104,7 @@ pnpm pet
 
 # 开关
 
-说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，存好一两秒内生效，不用重启；右键「管理」打开的管理页里也能直接点。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
+说完要不要听你回应、报不报天气、配不配表情包和音效，都是 `config.json` 里的开关，写 `true` 或 `false`，存好一两秒内生效，不用重启；工作台的「设置」里也能直接点。示例配置里听写（`listen.enabled`）是打开的，不想说完就听就改成 `false`。全部开关见[配置](configuration.md#开关)。
 
 # 不接桌宠试一试
 

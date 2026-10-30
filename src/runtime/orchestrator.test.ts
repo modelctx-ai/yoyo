@@ -33,6 +33,7 @@ import {
   CONSOLIDATE_IDLE_MS,
   MEME_RETRY_MS,
   WHISPER_RETRY_MS,
+  WORKBENCH_SOURCE,
   compactDue,
   consolidateDue,
   createYoyoOrchestrator,
@@ -420,6 +421,25 @@ describe('orchestrator 跑模型', () => {
     assert.deepEqual(await context.entries(), before, '问答由桌宠记，下一拍并进来');
     assert.equal(state.lastTalk, T0 + 5_000);
     assert.ok(logger.lines.includes('右键对话回了 10 字'), logger.lines.join('\n'));
+    await orchestrator.close();
+  });
+
+  test('工作台聊一句：和右键对话同一个 agent，问答记进日志（来源 workbench），记一笔', async () => {
+    const model = createScriptedModel([{ type: 'text', text: '带了' }]);
+    const { orchestrator, context, repos, state, clock } = orchestratorRig({ model });
+    clock.now = T0 + 5_000;
+    assert.equal(await orchestrator.talk('伞带了吗'), '带了');
+    const entries = await context.entries();
+    assert.deepEqual(
+      entries.map((entry) => (entry.type === 'message' ? `${entry.message.role}:${entry.source}:${entry.at}` : '')),
+      [`user:${WORKBENCH_SOURCE}:${T0 + 5_000}`, `assistant:${WORKBENCH_SOURCE}:${T0 + 5_001}`],
+    );
+    assert.equal(state.lastTalk, T0 + 5_000);
+    assert.deepEqual(
+      repos.activity.list(10).map((event) => event.type),
+      ['chat-workbench'],
+    );
+    await assert.rejects(orchestratorRig().orchestrator.talk('在吗'));
     await orchestrator.close();
   });
 
