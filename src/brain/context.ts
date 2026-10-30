@@ -43,6 +43,28 @@ export const yoyoProjection: ProjectionOptions = {
   summary: (entry) => ({ role: 'user', content: `前面对话的摘要：\n${entry.text}` }),
 };
 
+/** 子任务做完写回主线程的 `task` 事件：作为一条系统消息交给主线程，由它转告主人。 */
+export const TASK_EVENT = 'task';
+
+/** 主线程的投影：再加上子任务的结果。子任务自己的会话用 `yoyoProjection`。 */
+export const mainProjection: ProjectionOptions = {
+  ...yoyoProjection,
+  events: {
+    ...yoyoProjection.events,
+    [TASK_EVENT]: {
+      render: (events) =>
+        events
+          .filter((event) => event.text)
+          .map((event) => ({ role: 'user' as const, content: `系统消息：${event.text ?? ''}` })),
+    },
+  },
+};
+
+/** 每个子任务一个会话，输入、工具调用和结果都记在里面。 */
+export function taskSession(id: number): string {
+  return `task:${id}`;
+}
+
 export interface YoyoContextOptions {
   readonly db: DatabaseSync;
   readonly petId: string;
@@ -56,6 +78,32 @@ export interface YoyoContextOptions {
   readonly logger?: Logger;
 }
 
+export interface TaskContextOptions {
+  readonly sources?: readonly ContextSource[];
+  readonly tools: ToolRegistry;
+  readonly executors?: readonly Executor[];
+  readonly model?: LanguageModel | null;
+  readonly logger?: Logger;
+}
+
+/**
+ * 子任务用的上下文：和主线程同一个存储，工具是子 agent 那份注册表。会话按运行给（`taskSession`），
+ * 这里的缺省会话不会用到。
+ */
+export function createTaskContext(main: Pick<Context, 'store'>, options: TaskContextOptions): Context {
+  return createContext({
+    store: main.store,
+    session: taskSession(0),
+    projection: yoyoProjection,
+    sources: options.sources,
+    tools: options.tools,
+    executors: options.executors,
+    model: options.model ?? undefined,
+    source: 'yoyo',
+    logger: options.logger,
+  });
+}
+
 /** ctx-sqlite 复用 yoyo.db（表前缀 'ctx_'）；打开时 ctx-sqlite 自己把 0.1 的库迁到当前结构，第一次还会把旧表 context_items 迁进来。 */
 export async function createYoyoContext(options: YoyoContextOptions): Promise<Context> {
   const store = createSqliteStore({ database: options.db, prefix: 'ctx_' });
@@ -64,7 +112,7 @@ export async function createYoyoContext(options: YoyoContextOptions): Promise<Co
   return createContext({
     store,
     session,
-    projection: { ...yoyoProjection, window: options.maxTokens ? { maxTokens: options.maxTokens } : undefined },
+    projection: { ...mainProjection, window: options.maxTokens ? { maxTokens: options.maxTokens } : undefined },
     sources: options.sources,
     tools: options.tools,
     executors: options.executors,

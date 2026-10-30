@@ -147,3 +147,56 @@ export interface InboxMessage {
   readonly type: InboxRequest;
   readonly at?: number;
 }
+
+/** 子任务的状态：排队、在做、做完、没做成、取消。 */
+export type AgentTaskState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+/** 子任务里一项 todo 的状态。 */
+export type TodoState = 'pending' | 'in_progress' | 'done' | 'skipped';
+
+export interface Todo {
+  readonly text: string;
+  readonly state: TodoState;
+  /** 做完或跳过时的一句说明。 */
+  readonly note?: string;
+}
+
+/** 验收时逐条对的结果。 */
+export interface CriterionCheck {
+  readonly criterion: string;
+  readonly met: boolean;
+  readonly evidence: string;
+}
+
+/** 主线程派给子 agent 的一件事：目标、验收标准，做的时候自己拆成 todo，做完交回结果。 */
+export interface AgentTask {
+  readonly id: number;
+  readonly title: string;
+  readonly goal: string;
+  /** 验收标准，一条一句。 */
+  readonly criteria: readonly string[];
+  readonly state: AgentTaskState;
+  readonly todos: readonly Todo[];
+  readonly result: string | null;
+  readonly checks: readonly CriterionCheck[];
+  readonly error: string | null;
+  /** 谁开的：`main`（主线程的工具）、`cli`、`web`。 */
+  readonly origin: string;
+  readonly createdAt: number;
+  readonly startedAt: number | null;
+  readonly finishedAt: number | null;
+  readonly updatedAt: number;
+  /** 做完以后告诉过主人没有。 */
+  readonly announcedAt: number | null;
+}
+
+export interface AgentTaskInput {
+  readonly title: string;
+  readonly goal: string;
+  readonly criteria: readonly string[];
+  readonly origin: string;
+}
+
+/** 能改的字段。 */
+export type AgentTaskPatch = Partial<
+  Pick<AgentTask, 'state' | 'todos' | 'result' | 'checks' | 'error' | 'startedAt' | 'finishedAt' | 'announcedAt'>
+>;

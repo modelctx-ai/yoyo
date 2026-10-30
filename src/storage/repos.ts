@@ -3,6 +3,8 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import type {
   ActivityRecord,
   ActivityValue,
+  AgentTask,
+  AgentTaskState,
   Contact,
   MemePack,
   Repeat,
@@ -55,6 +57,38 @@ function scheduleOf(row: Row): ScheduleItem {
   };
 }
 
+function agentTaskOf(row: Row): AgentTask {
+  return {
+    id: Number(row.id),
+    title: str(row.title),
+    goal: str(row.goal),
+    criteria: JSON.parse(str(row.criteria)) as string[],
+    state: str(row.state) as AgentTaskState,
+    todos: JSON.parse(str(row.todos)) as AgentTask['todos'],
+    result: strOrNull(row.result),
+    checks: JSON.parse(str(row.checks)) as AgentTask['checks'],
+    error: strOrNull(row.error),
+    origin: str(row.origin),
+    createdAt: Number(row.created_at),
+    startedAt: numOrNull(row.started_at),
+    finishedAt: numOrNull(row.finished_at),
+    updatedAt: Number(row.updated_at),
+    announcedAt: numOrNull(row.announced_at),
+  };
+}
+
+/** `update` 能改的字段对应的列；数组存成 JSON。 */
+const TASK_COLUMNS: Readonly<Record<string, string>> = {
+  state: 'state',
+  todos: 'todos',
+  result: 'result',
+  checks: 'checks',
+  error: 'error',
+  startedAt: 'started_at',
+  finishedAt: 'finished_at',
+  announcedAt: 'announced_at',
+};
+
 function activityOf(row: Row): ActivityRecord {
   const payload = JSON.parse(str(row.payload)) as Record<string, ActivityValue>;
   return { at: str(row.at), type: str(row.type), ...payload };
@@ -94,6 +128,11 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
     getKv: db.prepare('SELECT value FROM kv WHERE key = ?'),
     setKv: db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)'),
     tasks: db.prepare('SELECT text FROM tasks ORDER BY id'),
+    insertAgentTask: db.prepare(
+      'INSERT INTO agent_tasks (title, goal, criteria, state, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ),
+    agentTask: db.prepare('SELECT * FROM agent_tasks WHERE id = ?'),
+    agentTasks: db.prepare('SELECT * FROM agent_tasks ORDER BY id DESC LIMIT ?'),
   };
 
   return {
@@ -195,6 +234,42 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
     tasks: {
       list() {
         return sql.tasks.all().map((row) => str(row.text));
+      },
+    },
+    agentTasks: {
+      create(input, now) {
+        const { lastInsertRowid } = sql.insertAgentTask.run(
+          input.title,
+          input.goal,
+          JSON.stringify(input.criteria),
+          'queued',
+          input.origin,
+          now,
+          now,
+        );
+        return agentTaskOf(sql.agentTask.get(lastInsertRowid)!);
+      },
+      get(id) {
+        const row = sql.agentTask.get(id);
+        return row ? agentTaskOf(row) : null;
+      },
+      list(options = {}) {
+        // 子任务不会多：取最近的一批再按状态筛
+        const rows = sql.agentTasks.all(options.states ? 500 : (options.limit ?? 50)).map(agentTaskOf);
+        const picked = options.states ? rows.filter((task) => options.states!.includes(task.state)) : rows;
+        return picked.slice(0, options.limit ?? 50);
+      },
+      update(id, patch, now) {
+        const sets: string[] = ['updated_at = ?'];
+        const values: (string | number | null)[] = [now];
+        for (const [key, value] of Object.entries(patch)) {
+          const column = TASK_COLUMNS[key];
+          if (!column || value === undefined) continue;
+          sets.push(`${column} = ?`);
+          values.push(Array.isArray(value) ? JSON.stringify(value) : (value as string | number | null));
+        }
+        const changed = db.prepare(`UPDATE agent_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+        return Number(changed.changes) > 0 ? this.get(id) : null;
       },
     },
   };

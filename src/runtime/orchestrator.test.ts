@@ -443,6 +443,36 @@ describe('orchestrator 跑模型', () => {
     await orchestrator.close();
   });
 
+  test('子任务做完、没做成，桌宠各说一声；取消的不说；tasks.notify 关着就只记下不说', async () => {
+    const { orchestrator, calls, repos } = orchestratorRig({ state: { nextWhisper: T0 + 3_600_000 } });
+    const finished = (title: string, state: 'done' | 'failed' | 'cancelled') => {
+      const task = repos.agentTasks.create({ title, goal: '目标', criteria: [], origin: 'main' }, T0);
+      repos.agentTasks.update(task.id, { state, finishedAt: T0 }, T0);
+      return task.id;
+    };
+    finished('周报', 'done');
+    finished('查资料', 'failed');
+    finished('算了', 'cancelled');
+    await orchestrator.tick();
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith('speak:')),
+      ['speak:「周报」做好啦，结果放在工作台里。', 'speak:「查资料」没做成，原因写在工作台里。'],
+    );
+    assert.ok(repos.agentTasks.list().every((task) => task.announcedAt !== null));
+    await orchestrator.tick();
+    assert.equal(calls.filter((call) => call.startsWith('speak:')).length, 2, '说过的不再说');
+
+    const quiet = orchestratorRig({ config: { tasks: { notify: false } }, state: { nextWhisper: T0 + 3_600_000 } });
+    const task = quiet.repos.agentTasks.create({ title: '周报', goal: '目标', criteria: [], origin: 'main' }, T0);
+    quiet.repos.agentTasks.update(task.id, { state: 'done', finishedAt: T0 }, T0);
+    await quiet.orchestrator.tick();
+    assert.deepEqual(
+      quiet.calls.filter((call) => call.startsWith('speak:')),
+      [],
+    );
+    assert.notEqual(quiet.repos.agentTasks.get(task.id)?.announcedAt, null);
+  });
+
   test('右键对话：没配模型就报错；调用方取消就停', async () => {
     await assert.rejects(orchestratorRig().orchestrator.chat('在吗'), { message: '没配 llm，右键对话回不了' });
     const { orchestrator } = orchestratorRig({ model: createScriptedModel([{ type: 'text', text: '在呢' }]) });

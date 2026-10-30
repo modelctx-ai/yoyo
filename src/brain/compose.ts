@@ -71,7 +71,7 @@ function describeInfo(info: ErrorInfo, secrets: readonly string[]): ErrorDescrip
 }
 
 /** 交给编排器跑一轮，等它跑完，返回最后一步的文字。出错或被取消就抛一句中文。 */
-async function run(runs: Runs, request: RunRequest, secrets: readonly string[] | undefined): Promise<string> {
+export async function run(runs: Runs, request: RunRequest, secrets: readonly string[] | undefined): Promise<string> {
   let result: RunResult;
   try {
     const handle = await runs.submit(request);
