@@ -18,9 +18,10 @@ import { createMemory } from '@modelctx-ai/ctx-memory';
 import { createDecisionModel, createExtractionModel, type SystemOneSpec } from '@modelctx-ai/ctx-models';
 import { createSqliteMemoryStore } from '@modelctx-ai/ctx-sqlite';
 
-import type { MemoryConfig, SystemOneConfig } from '../app/config.ts';
+import type { MemoryConfig } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Logger } from '../ports/index.ts';
+import { systemOneSpec } from './model.ts';
 import { currentTask, type TaskDeps } from './sources.ts';
 
 /** 回复用的记忆来源：画像加按最近一条用户话召回的事实。 */
@@ -94,17 +95,6 @@ export function createYoyoMemory(options: YoyoMemoryOptions): YoyoMemory {
     ...(options.now ? { now: options.now } : {}),
   });
   return { memory, store: options.store };
-}
-
-/** 配置里的一节写成 `SystemOneSpec`：空着的项不带。 */
-export function systemOneSpec(config: SystemOneConfig): SystemOneSpec {
-  return {
-    provider: config.provider,
-    model: config.model,
-    ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
-    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-    ...(config.accountId ? { accountId: config.accountId } : {}),
-  };
 }
 
 export interface SystemOneModels {

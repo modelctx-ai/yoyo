@@ -26,10 +26,10 @@ import {
   createYoyoMemory,
   memorySecrets,
   memorySources,
-  systemOneSpec,
   openMemoryStore,
   type YoyoMemory,
 } from './memory.ts';
+import { systemOneSpec } from './model.ts';
 import { replyInstructions } from './prompts.ts';
 import { taskSource } from './sources.ts';
 

@@ -73,6 +73,31 @@ describe('container', () => {
     await assert.rejects(app.openChannel(), /已经关闭/);
   });
 
+  test('碎碎念的间隔：没配 pace.decision 按 intervalSec；配了问决策模型，说完一句按它挑的排下一句', async () => {
+    const plain = await createApp(parseConfig({ stage: 'console' }), tempPaths(), { logger: memoryLogger() });
+    assert.equal(plain.pacer.name, 'fixed');
+    await plain.close();
+
+    const config = parseConfig({
+      stage: 'console',
+      pace: { decision: { provider: 'typesafe', model: 'jev-latest', apiKey: 'ts-key' } },
+    });
+    const made = await createApp(config, tempPaths(), { logger: memoryLogger() });
+    assert.equal(made.pacer.name, 'typesafe:jev-latest');
+    await made.close();
+
+    const app = await createApp(config, tempPaths(), {
+      logger: memoryLogger(),
+      director: fakeDirector([]),
+      pacer: { name: 'spy', next: async () => ({ source: 'decided', ms: 900_000, option: '15m', confidence: 0.9 }) },
+    });
+    const start = app.orchestrator.state.nextWhisper;
+    await app.orchestrator.tick();
+    assert.ok(app.orchestrator.state.nextWhisper >= start + 900_000);
+    assert.equal(app.orchestrator.state.lastPace?.source, 'decided');
+    await app.close();
+  });
+
   test('桌宠舞台用 dsh-pet；配了 anysearch 才有搜索，llm.tools 打开才有工具', async () => {
     const config = parseConfig({
       pet: { id: 'desk' },

@@ -19,6 +19,7 @@ import { generateChat, generateRelay, generateReply, generateWhisper } from '../
 import { OWNER_TOOL_NAMES } from '../brain/files.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
+import { fixedPacer } from '../brain/pace.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
@@ -26,11 +27,11 @@ import { shouldSearch } from '../features/search/question.ts';
 import { approvalAnnounceLine, approvalRelayPrompt } from '../features/approvals/approvals.ts';
 import { announceLine, needsRelay, pendingApprovals, relayPrompt } from '../features/tasks/tasks.ts';
 import type { AgentTask, Approval } from '../kernel/types.ts';
-import { nextWhisperAt } from '../kernel/pace.ts';
+import { nextWhisperAt, whisperIntervalMs, type PaceDecision, type PaceInput } from '../kernel/pace.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
 import type { Line, Tone } from '../kernel/types.ts';
-import type { Clipboard, Logger, Repos, WebSearch } from '../ports/index.ts';
+import type { Clipboard, Logger, Repos, WebSearch, WhisperPacer } from '../ports/index.ts';
 import type { Director } from './director.ts';
 import { drain } from './inbox.ts';
 
@@ -51,11 +52,6 @@ export const CONSOLIDATE_TIMEOUT_MS = 10 * 60 * 1000;
 /** kv 里记下最近一次夜里整理成功的本地日期。 */
 export const CONSOLIDATED_KEY = 'memory-consolidated';
 
-/** 两句日常碎碎念的间隔：至少一分钟，缺省 5 分钟。 */
-export function whisperIntervalMs(intervalSec: number): number {
-  return Math.max(60, intervalSec || 300) * 1000;
-}
-
 export function memeIdle(now: number, nextWhisper: number): boolean {
   return now + MEME_LEAD_MS < nextWhisper;
 }
@@ -75,6 +71,25 @@ export function whisperStep(nextWhisper: number, lastTalk: number, now: number):
   if (now < nextWhisper) return { kind: 'wait' };
   const shifted = nextWhisperAt(nextWhisper, lastTalk, now);
   return shifted > now ? { kind: 'delay', until: shifted } : { kind: 'speak' };
+}
+
+/**
+ * 说完一句以后交给定间隔的：连着几句没人回应要数上这句；上一句碎碎念之后有过对话（`lastTalk` 更晚），就从这句重新数。
+ */
+export function paceInput(
+  spoken: PerformResult,
+  state: Pick<ScheduleState, 'lastTalk' | 'unanswered' | 'whisperedAt'>,
+  now: number,
+): PaceInput {
+  const talkedSince = state.whisperedAt !== null && state.lastTalk > state.whisperedAt;
+  return {
+    now,
+    tone: spoken.line.tone,
+    line: { text: spoken.line.text, kind: spoken.line.kind },
+    talked: spoken.talked,
+    unanswered: spoken.talked ? 0 : talkedSince ? 1 : state.unanswered + 1,
+    sinceTalkMs: state.lastTalk > 0 ? Math.max(0, now - state.lastTalk) : null,
+  };
 }
 
 /** 说完一句以后的下一句：隔一个间隔；刚有人说话，还要等对话停下来。 */
@@ -111,6 +126,12 @@ export interface ScheduleState {
   lastCompact: number | null;
   /** 最近一次找表情包失败的时间。 */
   memeFailedAt: number | null;
+  /** 上一句日常碎碎念说完的时间。 */
+  whisperedAt: number | null;
+  /** 连着几句日常碎碎念没人回应。 */
+  unanswered: number;
+  /** 上一句说完以后，下一句的间隔是怎么定的。 */
+  lastPace: PaceDecision | null;
 }
 
 export interface PerformResult {
@@ -133,6 +154,8 @@ export interface YoyoOrchestratorDeps {
   readonly model: LanguageModel | null;
   /** 两个 agent 各收哪些来源；不给就都收全部来源。 */
   readonly factSources?: FactSources;
+  /** 说完一句以后定下一句隔多久；不给就按 `intervalSec`。 */
+  readonly pacer?: WhisperPacer;
   /** `memory.enabled` 打开时才有：拍子末尾门控，夜里整理。 */
   readonly memory?: YoyoMemory | null;
   /** 回复那份注册表里现在有哪些工具；转告那一轮按它去掉读写文件的。不给就全给。 */
@@ -203,11 +226,15 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   // 报错里抹掉的密钥：模型的，加上记忆的决策、提取模型的
   const secrets = [config.llm.apiKey, ...memorySecrets(config.memory)].filter(Boolean);
   const intervalMs = whisperIntervalMs(config.intervalSec);
+  const pacer = deps.pacer ?? fixedPacer(intervalMs);
   const state: ScheduleState = {
     nextWhisper: clock(),
     lastTalk: 0,
     lastCompact: null,
     memeFailedAt: null,
+    whisperedAt: null,
+    unanswered: 0,
+    lastPace: null,
     ...deps.state,
   };
   /** 常驻时随拍子一起停：停下以后，正在跑的模型不再等。 */
@@ -503,6 +530,32 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     }
   }
 
+  /** 说完一句：问定间隔的下一句隔多久，记下来。按 `intervalSec` 的不记行为，和没有这一步时一样。 */
+  async function pace(spoken: PerformResult): Promise<number> {
+    const input = paceInput(spoken, state, clock());
+    const decision = await pacer.next(input, stopping.signal);
+    state.whisperedAt = clock();
+    state.unanswered = input.unanswered;
+    state.lastPace = decision;
+    if (decision.source === 'decided') {
+      repos.activity.record({
+        type: 'pace',
+        source: decision.source,
+        sec: Math.round(decision.ms / 1000),
+        option: decision.option,
+        confidence: Math.round(decision.confidence * 100) / 100,
+      });
+    } else if (decision.source === 'fallback') {
+      repos.activity.record({
+        type: 'pace',
+        source: decision.source,
+        sec: Math.round(decision.ms / 1000),
+        reason: decision.reason,
+      });
+    }
+    return decision.ms;
+  }
+
   async function petWhisper(signal?: AbortSignal): Promise<string> {
     if (!model) throw new Error('没配 llm，写不了碎碎念');
     return (await writeWhisper(new Date(clock()), model, signal)).text;
@@ -550,7 +603,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
           throw error;
         }
         if (spoken?.talked) state.lastTalk = clock();
-        state.nextWhisper = nextAfterSpeak(clock(), intervalMs, state.lastTalk);
+        state.nextWhisper = nextAfterSpeak(clock(), spoken ? await pace(spoken) : intervalMs, state.lastTalk);
       }
       if (compactDue(config, clock(), state.lastCompact)) {
         state.lastCompact = clock();

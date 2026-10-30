@@ -249,6 +249,51 @@ describe('config', () => {
     assert.equal(parseConfig({ memory: 'yes' }).memory.consolidateAt, '03:00');
   });
 
+  test('pace：缺省没有决策模型，四档 5 分钟到 1 小时，把握 0.4，带最近 6 句', () => {
+    const { pace } = parseConfig(FIRST);
+    assert.deepEqual(pace, {
+      options: [
+        { id: '5m', ms: 300_000 },
+        { id: '15m', ms: 900_000 },
+        { id: '30m', ms: 1_800_000 },
+        { id: '1h', ms: 3_600_000 },
+      ],
+      minConfidence: 0.4,
+      recent: 6,
+    });
+    assert.equal(parseConfig({ pace: null }).pace.recent, 6);
+    assert.equal(parseConfig({ pace: 'jev' }).pace.decision, undefined);
+  });
+
+  test('pace 写错按缺省值：档位丢掉少于一分钟和不是数的，去重排好，不到两档用缺省；把握、条数超出范围按缺省', () => {
+    const { pace } = parseConfig({
+      pace: {
+        decision: { provider: 'typesafe', model: 'jev-latest', apiKey: 'ts-key' },
+        options: ['600', 120, 30, 'x', 600, 7200.4, null],
+        minConfidence: 2,
+        recent: 0,
+      },
+    });
+    assert.deepEqual(
+      pace.options.map((option) => option.id),
+      ['2m', '10m', '2h'],
+    );
+    assert.equal(pace.options.at(2)?.ms, 7_200_000);
+    assert.equal(pace.minConfidence, 0.4);
+    assert.equal(pace.recent, 0);
+    assert.deepEqual(pace.decision, {
+      provider: 'typesafe',
+      model: 'jev-latest',
+      apiKey: 'ts-key',
+      baseUrl: '',
+      accountId: '',
+    });
+    assert.equal(parseConfig({ pace: { options: [300, 30] } }).pace.options.length, 4);
+    assert.equal(parseConfig({ pace: { options: '300' } }).pace.options.length, 4);
+    assert.equal(parseConfig({ pace: { recent: 99 } }).pace.recent, 6);
+    assert.equal(parseConfig({ pace: { recent: '3' } }).pace.recent, 3);
+  });
+
   test('memory 写错按缺省值：主题去掉空项，一项不剩用缺省；数超出范围、时间写错都按缺省', () => {
     const { memory } = parseConfig({
       memory: {
