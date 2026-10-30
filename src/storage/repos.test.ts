@@ -18,6 +18,9 @@ function count(db: DatabaseSync, table: string): number {
   return Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n);
 }
 
+/** 一串记录的时刻，只留 hh:mm。 */
+const times = (events: readonly { at: string }[]): string[] => events.map((event) => event.at.slice(11, 16));
+
 describe('createRepos', () => {
   test('联系人按创建时间排序', () => {
     const { repos } = fresh();
@@ -141,6 +144,31 @@ describe('createRepos', () => {
     const raw = db.prepare('SELECT type, payload FROM activity ORDER BY id LIMIT 1').get();
     assert.equal(raw?.type, 'lively');
     assert.equal(raw?.payload, '{"action":"写代码","text":"在呢"}');
+  });
+
+  test('行为记录能按类型、按时间筛：在符合的里面数条数，仍从旧到新', () => {
+    let minute = 0;
+    const { repos } = fresh(() => new Date(Date.UTC(2026, 9, 23, 9, minute++)));
+    for (const type of ['whisper', 'task-add', 'whisper', 'schedule-add', 'whisper', 'task-add']) {
+      repos.activity.record({ type, n: minute });
+    }
+    assert.deepEqual(times(repos.activity.list(10, { types: ['task-add', 'schedule-add'] })), [
+      '09:01',
+      '09:03',
+      '09:05',
+    ]);
+    assert.deepEqual(times(repos.activity.list(2, { types: ['task-add', 'schedule-add'] })), ['09:03', '09:05']);
+    assert.deepEqual(times(repos.activity.list(10, { before: '2026-10-23T09:03:00.000Z' })), [
+      '09:00',
+      '09:01',
+      '09:02',
+    ]);
+    assert.deepEqual(times(repos.activity.list(10, { types: ['whisper'], before: '2026-10-23T09:04:00.000Z' })), [
+      '09:00',
+      '09:02',
+    ]);
+    assert.deepEqual(repos.activity.list(10, { types: [] }), [], '空清单什么都不匹配');
+    assert.equal(repos.activity.list(3, {}).length, 3, '没给条件和原来一样');
   });
 
   test('行为记录缺省只取最近 20 条', () => {

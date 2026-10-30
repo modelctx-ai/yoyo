@@ -94,7 +94,13 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
     },
     activity: {
       record: (event) => void activity.push({ ...event, at: now().toISOString() }),
-      list: (limit = 20) => activity.slice(-limit),
+      list: (limit = 20, filter) =>
+        activity
+          .filter(
+            (item) =>
+              (!filter?.types || filter.types.includes(item.type)) && (!filter?.before || item.at < filter.before),
+          )
+          .slice(-limit),
     },
     spoken: {
       recent: (at, windowMs) =>

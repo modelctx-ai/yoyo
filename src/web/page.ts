@@ -47,6 +47,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .nav-item[aria-current="page"] { background: var(--panel); color: var(--accent-strong); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 30, 60, .06); }
 .section-title { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 1px; padding: 18px 10px 6px; }
 .section-title .count { margin-left: auto; font-weight: 400; letter-spacing: 0; }
+.section-title .add { border: 0; background: none; color: var(--accent-strong); font-size: 12px; font-weight: 600; letter-spacing: 0; padding: 2px 8px; border-radius: 999px; cursor: pointer; }
+.section-title .add:hover { background: var(--hover); }
+.nav-item.only-narrow { display: none; }
 .task-item { display: flex; flex-direction: column; gap: 6px; width: 100%; border: 0; background: none; border-radius: 10px; padding: 8px 10px; cursor: pointer; text-align: left; }
 .task-item .line { display: flex; align-items: center; gap: 9px; }
 .task-item .mini { display: block; height: 4px; margin-left: 16px; border-radius: 2px; background: var(--hover); overflow: hidden; }
@@ -107,7 +110,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .label { margin: 0; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 1px; }
 .card h2.title { margin: 0; font-size: 16px; }
 
-.thread { flex: 1; overflow-y: auto; padding: 20px 0 8px; }
+.thread { flex: 1; overflow-y: auto; overflow-anchor: none; padding: 20px 0 8px; }
 .thread-inner { max-width: 820px; margin: 0 auto; padding: 0 28px; display: flex; flex-direction: column; gap: 14px; }
 .when { align-self: center; color: var(--muted); font-size: 12px; padding: 6px 0 0; letter-spacing: .5px; }
 .msg { display: flex; gap: 10px; align-items: flex-end; max-width: 86%; }
@@ -117,6 +120,9 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .msg.me .bubble { background: var(--accent); color: var(--accent-text); border-radius: 18px 18px 6px 18px; }
 .msg.me .meta { text-align: right; }
 .msg.pending .bubble { color: var(--muted); }
+.msg.streaming .bubble::after { content: "\258D"; color: var(--accent); margin-left: 1px; animation: blink 1s infinite; }
+.edge { align-self: center; color: var(--muted); font-size: 12px; padding: 2px 0 6px; }
+.edge-btn { align-self: center; border: 1px solid var(--line); background: var(--panel); color: var(--soft-text); border-radius: 999px; padding: 4px 14px; font-size: 13px; cursor: pointer; }
 .typing::after { content: "…"; animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .2; } }
 .whisper { align-self: center; max-width: 80%; color: var(--muted); font-size: 13px; text-align: center; white-space: pre-wrap; }
@@ -175,6 +181,14 @@ label.row { cursor: pointer; }
 label.row input { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
 form.inline input[name="title"], form.inline input[name="name"], form.inline input[name="yoyo"] { flex: 1 1 160px; }
 
+.taskform { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.taskform label { display: flex; flex-direction: column; gap: 6px; }
+.taskform .k { color: var(--muted); font-size: 13px; font-weight: 600; }
+.taskform input, .taskform select, .taskform textarea { width: 100%; }
+.taskform .note { color: var(--muted); font-size: 13px; }
+.taskform .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+#task-goal { min-height: 140px; }
+#task-criteria { min-height: 96px; }
 .todo { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: flex-start; }
 .todo:first-of-type { border-top: 0; }
 .todo .mark { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-strong); box-sizing: border-box; margin-top: 2px; display: flex; align-items: center; justify-content: center; }
@@ -247,6 +261,7 @@ form.inline input[name="title"], form.inline input[name="name"], form.inline inp
   .me { padding: 4px 0 12px; } .me .who, .nav-item span, .section-title, .tasks, .hint, .status, .quick { display: none !important; }
   .avatar.lg { width: 40px; height: 40px; }
   .nav-item { justify-content: center; padding: 10px; }
+  .nav-item.only-narrow { display: flex; }
 }
 @media (max-width: 560px) {
   .bar { padding: 10px 14px; } .bar input[type="search"] { width: 110px; }
@@ -343,6 +358,74 @@ function api(method, path, body) {
   });
 }
 
+/** 读 SSE：一个事件是 event: 名字 加 data: JSON，空行结束；注释行（冒号开头）跳过。读完（连接关了）才返回 */
+function readEvents(response, onEvent) {
+  var reader = response.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = "";
+  function frame(text) {
+    var name = "message";
+    var data = [];
+    text.split("\n").forEach(function (line) {
+      if (line.slice(0, 6) === "event:") name = line.slice(6).trim();
+      else if (line.slice(0, 5) === "data:") data.push(line.slice(5).replace(/^ /, ""));
+    });
+    if (!data.length) return;
+    var parsed = null;
+    try { parsed = JSON.parse(data.join("\n")); } catch (e) { return; }
+    onEvent(name, parsed);
+  }
+  function pump() {
+    return reader.read().then(function (chunk) {
+      if (chunk.done) return;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      var cut = buffer.indexOf("\n\n");
+      while (cut >= 0) {
+        frame(buffer.slice(0, cut));
+        buffer = buffer.slice(cut + 2);
+        cut = buffer.indexOf("\n\n");
+      }
+      return pump();
+    });
+  }
+  return pump();
+}
+
+/** 开一个要带令牌的 SSE 连接（EventSource 带不了 Authorization）：不是 2xx 就按普通接口的样子抛错 */
+function openStream(method, path, body, signal) {
+  var init = { method: method, headers: { authorization: "Bearer " + token }, signal: signal };
+  if (body !== undefined) {
+    init.headers["content-type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  return fetch(path, init).then(function (response) {
+    if (response.ok) return response;
+    if (response.status === 401) lock();
+    return response.json().catch(function () { return {}; }).then(function (data) {
+      var error = new Error(data.error || ("出错了（" + response.status + "）"));
+      error.status = response.status;
+      throw error;
+    });
+  });
+}
+
+/** 聊一句，边写边交增量；整段回复在 done 里，返回它 */
+function streamChat(text, onDelta) {
+  return openStream("POST", "/api/chat/stream", { text: text }).then(function (response) {
+    var reply = null;
+    var failure = "";
+    return readEvents(response, function (name, data) {
+      if (name === "delta") onDelta(data.text);
+      else if (name === "done") reply = data.reply;
+      else if (name === "error") failure = data.error;
+    }).then(function () {
+      if (failure) throw new Error(failure);
+      if (reply === null) throw new Error("连接断了，没等到完整的回复");
+      return reply;
+    });
+  });
+}
+
 function fail(error) { toast(error.message || String(error)); }
 
 function pad(n) { return (n < 10 ? "0" : "") + n; }
@@ -391,7 +474,12 @@ var DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 
 // ---- 对话 ----
 
-var thread = { signature: "", pending: false, query: "", tasks: "", approvals: "" };
+var thread = { signature: "", pending: false, query: "", tasks: "", approvals: "", items: {}, cards: {}, loaded: false, start: false, older: false };
+/** 最新的一页取多少条，往前翻时每次翻多少条 */
+var PAGE = 200;
+var OLDER = 50;
+/** 对话里穿插的小卡片，来自这几种行为记录 */
+var CARD_TYPES = "schedule-add,task-add,approval-ask";
 var VIA = { "dsh-pet": "桌宠对话" };
 var TASK_STATES = { queued: "排队", running: "在做", waiting: "等回答", done: "做完", failed: "没做成", cancelled: "取消了" };
 var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
@@ -493,19 +581,40 @@ function approvalResultCard(item) {
   return eventRow(kind, item.state === "approved" ? "check" : "cross", lines[0], detail, null, item.text, function () { show("approvals"); });
 }
 
-/** 对话和新加的日程按时间排在一起，隔了一刻钟以上就插一行时间 */
-function renderThread(items, events, force) {
+/** 取回来的对话和小卡片并进已有的：翻出来的旧消息、滑出最新一页的消息都留着，不会被轮询丢掉 */
+function absorb(items, events) {
+  items.forEach(function (item) { thread.items[item.seq] = item; });
+  events.forEach(function (event) { thread.cards[JSON.stringify(event)] = event; });
+}
+
+function loadedItems() {
+  return Object.keys(thread.items).map(function (key) { return thread.items[key]; }).sort(function (a, b) { return a.at - b.at || a.seq - b.seq; });
+}
+
+/** 对话和新加的日程按时间排在一起，隔了一刻钟以上就插一行时间。keep：往上加载了旧的，保持眼前这一条不动 */
+function renderThread(force, keep) {
+  var items = loadedItems();
+  // 比最早一条消息还早的小卡片先不显示（翻到了再出现），免得悬在最上面
+  var floor = items.length ? items[0].at : 0;
   var merged = items.map(function (item) { return { at: item.at, item: item }; });
-  events.forEach(function (event) {
-    if (event.type === "schedule-add" || event.type === "task-add" || event.type === "approval-ask") merged.push({ at: Date.parse(event.at), event: event });
+  Object.keys(thread.cards).forEach(function (key) {
+    var event = thread.cards[key];
+    var at = Date.parse(event.at);
+    if (at < floor && !thread.start) return;
+    if (event.type === "schedule-add" || event.type === "task-add" || event.type === "approval-ask") merged.push({ at: at, event: event });
   });
   merged.sort(function (a, b) { return a.at - b.at; });
-  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0) + ":" + thread.tasks + ":" + thread.approvals;
+  var signature = merged.length + ":" + (merged.length ? merged[merged.length - 1].at : 0) + ":" + thread.tasks + ":" + thread.approvals + ":" + thread.start + thread.older;
   if (!force && signature === thread.signature) return;
   thread.signature = signature;
   var box = $("#thread");
-  var stick = force || nearBottom(box);
+  var stick = !keep && (force || nearBottom(box));
+  var height = box.scrollHeight;
+  var offset = box.scrollTop;
   var nodes = [];
+  if (items.length) {
+    nodes.push(thread.start ? h("div", { class: "edge", text: "更早的没有了" }) : h("button", { class: "edge-btn", type: "button", disabled: thread.older ? "" : null, text: thread.older ? "加载中……" : "加载更早的", onclick: loadOlder }));
+  }
   var last = 0;
   merged.forEach(function (entry) {
     if (entry.at - last > 15 * 60000) nodes.push(h("div", { class: "when", text: when(entry.at) }));
@@ -517,12 +626,36 @@ function renderThread(items, events, force) {
   fill(inner, nodes, "还没聊过。在下面打一句话，或者右键桌宠的「对话」。");
   applySearch();
   if (stick) box.scrollTop = box.scrollHeight;
+  else if (keep) box.scrollTop = offset + (box.scrollHeight - height);
 }
 
 function loadThread(force) {
   if (thread.pending) return Promise.resolve();
-  return Promise.all([api("GET", "/api/context?limit=200"), api("GET", "/api/activity?limit=200")]).then(function (both) {
-    if (!thread.pending) renderThread(both[0], both[1], force);
+  return Promise.all([api("GET", "/api/context?limit=" + PAGE), api("GET", "/api/activity?limit=200&types=" + CARD_TYPES)]).then(function (both) {
+    if (thread.pending) return;
+    // 第一次取就不满一页：整段对话都在这里了，上面没有更早的
+    if (!thread.loaded) { thread.loaded = true; thread.start = both[0].length < PAGE; }
+    absorb(both[0], both[1]);
+    renderThread(force, false);
+  });
+}
+
+/** 往上翻：取比现在最早一条更早的一页（游标是那条的 at:seq）；不满一页就是到头了 */
+function loadOlder() {
+  var items = loadedItems();
+  if (thread.older || thread.start || thread.pending || !items.length) return;
+  var first = items[0];
+  thread.older = true;
+  renderThread(true, true);
+  Promise.all([
+    api("GET", "/api/context?limit=" + OLDER + "&before=" + first.at + ":" + first.seq),
+    api("GET", "/api/activity?limit=200&types=" + CARD_TYPES + "&before=" + encodeURIComponent(new Date(first.at).toISOString())),
+  ]).then(function (both) {
+    if (both[0].length < OLDER) thread.start = true;
+    absorb(both[0], both[1]);
+  }, fail).then(function () {
+    thread.older = false;
+    if (!thread.pending) renderThread(true, true);
   });
 }
 
@@ -547,11 +680,26 @@ function sendMessage(event) {
   var empty = inner.querySelector(".empty");
   if (empty) empty.remove();
   var mine = message({ kind: "user", text: text, via: "workbench" });
-  var waiting = h("div", { class: "msg pending" }, [avatar(), h("div", { class: "bubble typing", text: "在想" })]);
+  var bubble = h("div", { class: "bubble typing", text: "在想" });
+  var waiting = h("div", { class: "msg pending" }, [avatar(), bubble]);
   inner.appendChild(mine);
   inner.appendChild(waiting);
-  $("#thread").scrollTop = $("#thread").scrollHeight;
-  api("POST", "/api/chat", { text: text }).then(function () {
+  var box = $("#thread");
+  box.scrollTop = box.scrollHeight;
+  var got = "";
+  streamChat(text, function (piece) {
+    var stick = nearBottom(box);
+    got += piece;
+    // 模型有时先吐换行：开头的空白不显示，免得气泡上面空一行
+    waiting.className = "msg streaming";
+    bubble.className = "bubble";
+    bubble.replaceChildren.apply(bubble, rich(got.replace(/^\s+/, "")));
+    if (stick) box.scrollTop = box.scrollHeight;
+  }).then(function (reply) {
+    // 记进日志的是这一份整段回复（去了首尾空白），用它换掉增量拼出来的
+    waiting.className = "msg";
+    bubble.className = "bubble";
+    bubble.replaceChildren.apply(bubble, rich(reply));
     thread.pending = false;
     return loadThread(true);
   }, function (error) {
@@ -646,9 +794,21 @@ var views = {
     if (!openTask) return Promise.resolve();
     var id = openTask;
     return Promise.all([
-      Promise.all([api("GET", "/api/tasks/" + id), api("GET", "/api/artifacts?task=" + id)]).then(function (got) { renderTask(got[0], got[1]); }),
+      Promise.all([api("GET", "/api/tasks/" + id), api("GET", "/api/artifacts?task=" + id)]).then(function (got) { renderTask(got[0], got[1]); watchTask(got[0]); }),
       loadTasks(),
     ]);
+  } },
+  newtask: { title: "派一个子任务", sub: "写清楚目标和怎样算做好，yoyo 在后台做，进度在左边的子任务里", load: function () {
+    return api("GET", "/api/agents").then(function (list) {
+      var select = $("#task-agent");
+      var chosen = select.value;
+      agentList = list;
+      fill(select, list.map(function (agent) { return h("option", { value: agent.name, text: agent.name }); }), "");
+      if (chosen) select.value = chosen;
+      syncAgent();
+      $("#task-off").hidden = list.length > 0;
+      $("#task-submit").disabled = list.length === 0;
+    });
   } },
   memory: { title: "记忆", sub: "yoyo 记得的你：画像、记得的事、规矩。记错的可以删", load: function () {
     return api("GET", "/api/memory").then(function (m) {
@@ -732,6 +892,45 @@ var views = {
     });
   } },
 };
+
+var agentList = [];
+
+/** 选了哪种类型，下面写一句什么时候用 */
+function syncAgent() {
+  var name = $("#task-agent").value;
+  var found = agentList.filter(function (agent) { return agent.name === name; })[0];
+  $("#agent-note").textContent = found ? found.description : "";
+}
+
+/**
+ * 子任务详情开着、任务还在做时，用 SSE 接着收它的过程（有新的才推），不再每 4 秒整份重取；
+ * 连接断了或服务不支持就退回轮询：轮询那一拍会发现没有连着，重新连。
+ */
+var taskStream = { id: 0, alive: false, controller: null };
+
+function stopWatch() {
+  if (taskStream.controller) taskStream.controller.abort();
+  taskStream = { id: 0, alive: false, controller: null };
+}
+
+function watchTask(task) {
+  var live = task.state === "queued" || task.state === "running" || task.state === "waiting";
+  if (!live) return stopWatch();
+  if (taskStream.alive && taskStream.id === task.id) return;
+  stopWatch();
+  var controller = new AbortController();
+  var mine = { id: task.id, alive: true, controller: controller };
+  taskStream = mine;
+  openStream("GET", "/api/tasks/" + task.id + "/events", undefined, controller.signal).then(function (response) {
+    return readEvents(response, function (name, data) {
+      if (name !== "task" || current !== "task" || openTask !== task.id) return;
+      renderTask(data.task, data.artifacts);
+      loadTasks().catch(function () {});
+    });
+  }).catch(function () {}).then(function () {
+    mine.alive = false;
+  });
+}
 
 function loadTasks() {
   return api("GET", "/api/tasks").then(function (tasks) {
@@ -1099,12 +1298,13 @@ function show(name) {
     section.classList.toggle("active", section.id === name);
   });
   $("#search-box").hidden = name !== "chat";
-  if (name !== "task") $("#bar-actions").replaceChildren();
+  if (name !== "task") { $("#bar-actions").replaceChildren(); stopWatch(); }
   $("#title").textContent = views[name].title;
   $("#subtitle").textContent = views[name].sub;
-  try { sessionStorage.setItem("yoyo-view", name === "task" ? "chat" : name); } catch (e) {}
+  try { sessionStorage.setItem("yoyo-view", name === "task" || name === "newtask" ? "chat" : name); } catch (e) {}
   views[name].load().catch(fail);
   if (name === "chat") setTimeout(function () { $("#say").focus(); }, 0);
+  if (name === "newtask") setTimeout(function () { $("#task-title").focus(); }, 0);
 }
 
 function lock() {
@@ -1133,6 +1333,25 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
   $("#search").addEventListener("input", function (event) { thread.query = event.target.value.trim(); applySearch(); });
+  $("#thread").addEventListener("scroll", function (event) { if (event.target.scrollTop < 80) loadOlder(); });
+  $("#task-agent").addEventListener("change", syncAgent);
+  $("#task-cancel").addEventListener("click", function () { show("chat"); });
+  $("#task-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var button = $("#task-submit");
+    button.disabled = true;
+    api("POST", "/api/tasks", {
+      title: $("#task-title").value,
+      goal: $("#task-goal").value,
+      criteria: $("#task-criteria").value.split("\n"),
+      agent: $("#task-agent").value,
+    }).then(function (task) {
+      $("#task-form").reset();
+      toast("派出去了，在后台做");
+      loadTasks().catch(function () {});
+      openTaskView(task.id);
+    }, fail).finally(function () { button.disabled = false; });
+  });
   $("#core-save").addEventListener("click", function () {
     api("PUT", "/api/memory/core", { text: $("#core-text").value }).then(function () { toast("画像存好了"); views.memory.load(); }, fail);
   });
@@ -1179,7 +1398,8 @@ document.addEventListener("DOMContentLoaded", function () {
   setInterval(function () {
     if (document.hidden) return;
     if (current === "chat") loadThread(false).catch(function () {});
-    if (current === "task") views.task.load().catch(function () {});
+    // 开着的子任务有 SSE 接着推，没连上（断了、还没连）才轮询
+    if (current === "task" && !taskStream.alive) views.task.load().catch(function () {});
     if (current === "chat" || current === "task") loadTasks().catch(function () {});
     loadApprovals().catch(function () {});
   }, 4000);
@@ -1209,12 +1429,13 @@ const BODY = String.raw`
     <nav class="nav">
       ${navButton('chat', 'chat', '对话')}
       <button class="nav-item" data-view="approvals" type="button">${icon('shield')}<span>待批准</span><em class="count" id="approval-count" hidden>0</em></button>
+      <button class="nav-item only-narrow" data-view="newtask" type="button" title="派一个子任务" aria-label="派一个子任务">${icon('task')}<span>派一个子任务</span></button>
       ${navButton('memory', 'memory', '记忆')}
       ${navButton('alarms', 'alarm', '日程')}
       ${navButton('activity', 'trail', '轨迹')}
       ${navButton('contacts', 'people', '联系人')}
     </nav>
-    <div class="section-title">子任务<span class="count" id="task-count"></span></div>
+    <div class="section-title">子任务<span class="count" id="task-count"></span><button class="add" data-view="newtask" type="button">派一个</button></div>
     <div class="tasks" id="task-list"></div>
     <div class="hint" id="task-empty">要花时间的事跟 yoyo 说，她会派到后台去做，进度在这里。</div>
     <div class="side-foot">
@@ -1290,6 +1511,16 @@ const BODY = String.raw`
     </div></section>
     <section class="view scroll" id="approvals"><div class="page" id="approvals-page"></div></section>
     <section class="view scroll" id="task"><div class="page" id="task-page"></div></section>
+    <section class="view scroll" id="newtask"><div class="page">
+      <form class="card taskform" id="task-form">
+        <p class="empty" id="task-off" hidden>子任务没打开：config.json 里把 tasks.enabled 设成 true，存好就行。</p>
+        <label><span class="k">标题</span><input id="task-title" maxlength="60" placeholder="一句话，例如：整理本周周报" required></label>
+        <label><span class="k">目标</span><textarea id="task-goal" placeholder="要做成什么样、背景、范围、交回什么。子 agent 只看得到这段" required></textarea></label>
+        <label><span class="k">验收标准（一行一条，可以不写）</span><textarea id="task-criteria" placeholder="例如：每个项目都有进展和风险"></textarea></label>
+        <label><span class="k">类型</span><select id="task-agent"></select><span class="note" id="agent-note"></span></label>
+        <div class="acts"><button class="plain" id="task-cancel" type="button">不派了</button><button class="primary" id="task-submit" type="submit">派出去</button></div>
+      </form>
+    </div></section>
     <section class="view scroll" id="activity"><div class="page"><div class="panel" id="activity-list"></div></div></section>
     <section class="view scroll" id="contacts"><div class="page">
       <div class="panel">

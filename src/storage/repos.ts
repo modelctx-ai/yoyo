@@ -172,6 +172,10 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
     insertMeme: db.prepare('INSERT OR IGNORE INTO memes (url) VALUES (?)'),
     record: db.prepare('INSERT INTO activity (at, type, payload) VALUES (?, ?, ?)'),
     activity: db.prepare('SELECT at, type, payload FROM activity ORDER BY id DESC LIMIT ?'),
+    // 类型清单以 JSON 数组传进来，语句只有一条
+    activityFiltered: db.prepare(
+      'SELECT at, type, payload FROM activity WHERE (?1 IS NULL OR at < ?1) AND (?2 IS NULL OR type IN (SELECT value FROM json_each(?2))) ORDER BY id DESC LIMIT ?3',
+    ),
     spoken: db.prepare('SELECT text, at FROM spoken ORDER BY at, rowid'),
     forgetSpoken: db.prepare('DELETE FROM spoken WHERE at <= ?'),
     remember: db.prepare('INSERT OR REPLACE INTO spoken (text, at) VALUES (?, ?)'),
@@ -271,8 +275,11 @@ export function createRepos(db: DatabaseSync, clock: () => Date = () => new Date
         const { type, ...rest } = event;
         sql.record.run(clock().toISOString(), type, JSON.stringify(rest));
       },
-      list(limit = 20) {
-        return sql.activity.all(limit).toReversed().map(activityOf);
+      list(limit = 20, filter) {
+        const types = filter?.types ? JSON.stringify(filter.types) : null;
+        const before = filter?.before ?? null;
+        if (types === null && before === null) return sql.activity.all(limit).toReversed().map(activityOf);
+        return sql.activityFiltered.all(before, types, limit).toReversed().map(activityOf);
       },
     },
     spoken: {

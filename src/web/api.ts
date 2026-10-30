@@ -10,7 +10,8 @@ import { errorText } from '../app/log.ts';
 import { APPROVAL_EVENT, TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
 import { ApprovalError, decideApproval } from '../features/approvals/approvals.ts';
 import { artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
-import { TaskError, answerTask, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
+import type { AgentProfile } from '../features/tasks/agents.ts';
+import { TaskError, answerTask, cancelAgentTask, createAgentTask, isOpen, progress } from '../features/tasks/tasks.ts';
 import { paceNote, type PaceDecision, type PaceOptions } from '../kernel/pace.ts';
 import type { AgentTask, Approval, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
@@ -36,8 +37,15 @@ export interface WebDeps {
     /** 最近一次说完以后，下一句的间隔是怎么定的。 */
     readonly lastPace?: PaceDecision | null;
   };
-  /** 工作台里和 yoyo 聊一句，返回回复。常驻进程里才有。 */
-  readonly talk?: (text: string) => Promise<string>;
+  /**
+   * 工作台里和 yoyo 聊一句，返回整段回复。常驻进程里才有。给了 `onDelta`，模型每吐一小段就交一次，
+   * 流式接口用它；返回的整段回复才是记进日志的。
+   */
+  readonly talk?: (text: string, signal?: AbortSignal, onDelta?: (text: string) => void) => Promise<string>;
+  /** 子 agent 的类型（内置的加上 `~/.yoyo/agents`）；子任务没打开时是空的，不给也一样：工作台不能派。 */
+  readonly agents?: readonly AgentProfile[];
+  /** 子任务过程的流多久看一眼有没有新的，毫秒，缺省 1000。 */
+  readonly pollMs?: number;
   /** 子任务交付物的文件；不给就看不了、删不了原文。 */
   readonly files?: ArtifactFiles;
   /** 工作台里批准了一件事：常驻进程马上照做，不等下一次轮到。 */
@@ -54,7 +62,11 @@ export interface ApiResult {
   readonly body: unknown;
   /** 有这个就原样回文件，不回 JSON。 */
   readonly file?: ApiFile;
+  /** 有这个就回 SSE：`emit` 推一个事件，连接断了 `signal` 就中止；函数返回时流收尾。 */
+  readonly stream?: (emit: StreamEmit, signal: AbortSignal) => Promise<void>;
 }
+
+export type StreamEmit = (event: string, data: unknown) => void;
 
 export interface ApiFile {
   readonly bytes: Uint8Array;
@@ -81,6 +93,10 @@ const CORE_MAX = 4000;
 const TALK_MAX = 4000;
 /** 子任务的过程最多给最近这么多步。 */
 const STEPS_MAX = 300;
+/** 对话里翻一页最多多少条。 */
+const CONTEXT_MAX = 200;
+/** 取最近的对话时先读最后这么多条日志；这里面能显示的不够一页才整段读。 */
+const WINDOW = 500;
 
 /** 交付物：加上工作台怎么给人看。 */
 function artifactSummary(artifact: Artifact): unknown {
@@ -124,6 +140,19 @@ function limitOf(query: URLSearchParams, fallback: number, max: number): number 
   return Number.isInteger(value) && value > 0 ? Math.min(value, max) : fallback;
 }
 
+/** 等一会儿，`signal` 中止了就马上醒。 */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
 /** 删的东西没找到就回 404。 */
 function removed<T>(value: T | null, what: string): T {
   if (value === null) throw new RequestError(`没有这${what}`, 404);
@@ -132,6 +161,8 @@ function removed<T>(value: T | null, what: string): T {
 
 export interface ContextItem {
   readonly at: number;
+  /** 日志里的序号：和 `at` 一起是翻页的游标（`before=<at>:<seq>`）。 */
+  readonly seq: number;
   readonly kind: string;
   readonly text: string;
   /** 从哪来的：`dsh-pet` 是桌宠右键对话，`workbench` 是工作台，没有是语音和自己说的。 */
@@ -147,16 +178,23 @@ export function contextItem(entry: Entry): ContextItem | null {
   if (entry.type === 'message') {
     const body = textOf(entry.message);
     if (!body) return null;
-    return { at: entry.at, kind: entry.message.role, text: body, ...(entry.source ? { via: entry.source } : {}) };
+    return {
+      at: entry.at,
+      seq: entry.seq,
+      kind: entry.message.role,
+      text: body,
+      ...(entry.source ? { via: entry.source } : {}),
+    };
   }
   if (entry.type === 'event' && entry.kind === 'whisper' && entry.text) {
-    return { at: entry.at, kind: 'whisper', text: entry.text };
+    return { at: entry.at, seq: entry.seq, kind: 'whisper', text: entry.text };
   }
-  if (entry.type === 'summary') return { at: entry.at, kind: 'summary', text: entry.text };
+  if (entry.type === 'summary') return { at: entry.at, seq: entry.seq, kind: 'summary', text: entry.text };
   if (entry.type === 'event' && entry.kind === APPROVAL_EVENT && entry.text) {
     const meta = entry.meta ?? {};
     return {
       at: entry.at,
+      seq: entry.seq,
       kind: 'approval',
       text: entry.text,
       ...(typeof meta['id'] === 'number' ? { approval: meta['id'] } : {}),
@@ -167,6 +205,7 @@ export function contextItem(entry: Entry): ContextItem | null {
     const meta = entry.meta ?? {};
     return {
       at: entry.at,
+      seq: entry.seq,
       kind: 'task',
       text: entry.text,
       ...(typeof meta['id'] === 'number' ? { task: meta['id'] } : {}),
@@ -278,14 +317,31 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     return { id };
   }
 
+  /**
+   * 对话的一页：按 `(at, seq)` 排好，取最后 `limit` 条能显示的。给了 `before`（`<at>:<seq>`，页上最早那条的游标）
+   * 就只看排在它前面的，往前翻用；不够 `limit` 条就是翻到头了。
+   */
   async function recent(query: URLSearchParams): Promise<unknown> {
-    const limit = limitOf(query, 40, 200);
-    // entries 按写入顺序返回；导入的桌宠对话 at 在过去，按 (at, seq) 排回它们的位置
-    return (await deps.context.entries({ last: 500 }))
-      .toSorted(compareEntries)
-      .map(contextItem)
-      .filter((item) => item !== null)
-      .slice(-limit);
+    const limit = limitOf(query, 40, CONTEXT_MAX);
+    const raw = query.get('before');
+    const cursor = raw === null ? null : /^(-?\d+):(\d+)$/.exec(raw);
+    if (raw !== null && !cursor) throw new RequestError('before 要写成 <at>:<seq>');
+    const before = cursor ? { at: Number(cursor[1]), seq: Number(cursor[2]) } : null;
+    const page = (entries: readonly Entry[]): ContextItem[] =>
+      entries
+        .filter((entry) => before === null || compareEntries(entry, before) < 0)
+        .toSorted(compareEntries)
+        .map(contextItem)
+        .filter((item) => item !== null)
+        .slice(-limit);
+    // entries 按写入顺序返回；导入的桌宠对话 at 在过去，按 (at, seq) 排回它们的位置。
+    // 最新的一页每几秒就取一次，只读日志末尾；往前翻、或者末尾里能显示的不够一页，才整段读
+    if (before === null) {
+      const tail = await deps.context.entries({ last: WINDOW });
+      const items = page(tail);
+      if (items.length >= limit || tail.length < WINDOW) return items;
+    }
+    return page(await deps.context.entries());
   }
 
   function addAlarm(body: unknown): unknown {
@@ -308,16 +364,42 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     }
   }
 
-  async function talk(body: unknown): Promise<unknown> {
+  /** 工作台里说的这句：去掉首尾空白，空的、太长的、没有常驻进程的都在开始回之前就拒绝。 */
+  function said(body: unknown): { readonly said: string; readonly talk: NonNullable<WebDeps['talk']> } {
     if (!deps.talk) throw new RequestError('常驻进程里才能聊', 503);
-    const said = text(body, 'text')?.trim();
-    if (!said) throw new RequestError('要说点什么');
-    if (said.length > TALK_MAX) throw new RequestError(`太长了，最多 ${TALK_MAX} 字`);
+    const value = text(body, 'text')?.trim();
+    if (!value) throw new RequestError('要说点什么');
+    if (value.length > TALK_MAX) throw new RequestError(`太长了，最多 ${TALK_MAX} 字`);
+    return { said: value, talk: deps.talk };
+  }
+
+  async function talk(body: unknown): Promise<unknown> {
+    const ask = said(body);
     try {
-      return { reply: await deps.talk(said) };
+      return { reply: await ask.talk(ask.said) };
     } catch (error) {
       throw new RequestError(`yoyo 没回上来：${errorText(error)}`, 502);
     }
+  }
+
+  /**
+   * 流式聊一句：`delta` 是模型刚吐的一小段，`done` 是整段回复（和 `POST /api/chat` 交回的、记进日志的是同一份），
+   * 没回上来是 `error`。连接断了也让这一轮跑完、照常记进日志：刷新页面不该丢一句话。
+   */
+  function talkStream(body: unknown): ApiResult {
+    const ask = said(body);
+    return {
+      status: 200,
+      body: null,
+      stream: async (emit) => {
+        try {
+          const reply = await ask.talk(ask.said, undefined, (delta) => emit('delta', { text: delta }));
+          emit('done', { reply });
+        } catch (error) {
+          emit('error', { error: `yoyo 没回上来：${errorText(error)}` });
+        }
+      },
+    };
   }
 
   async function taskView(taskId: number): Promise<unknown> {
@@ -326,6 +408,82 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     const steps = taskSteps(await deps.context.store.list(taskSession(task.id)));
     const approvals = repos.approvals.list({ task: task.id, limit: 20 }).map(approvalSummary);
     return { ...task, progress: progress(task), steps: steps.slice(-STEPS_MAX), approvals };
+  }
+
+  /** 一个子任务现在的样子有没有变：状态、过程多了一步、批准请求有了结论、交了新文件，任何一样都算。 */
+  async function taskStamp(task: AgentTask): Promise<string> {
+    const [last] = await deps.context.store.list(taskSession(task.id), { last: 1 });
+    const approvals = repos.approvals.list({ task: task.id, limit: 20 });
+    const artifacts = repos.artifacts.list({ task: task.id });
+    return [
+      task.updatedAt,
+      last?.seq ?? 0,
+      approvals.map((item) => `${item.id}${item.state}${item.result === null ? 0 : 1}`).join(),
+      artifacts.map((item) => item.id).join(),
+    ].join(':');
+  }
+
+  /**
+   * 一个子任务的过程，有新的就推：`task` 是整份详情（和 `GET /api/tasks/:id` 一样）加交付物，开头先推一次；
+   * 子任务结束了推完最后一份再推 `end`。过程记在会话存储里，没有现成的通知，所以隔 `pollMs` 看一眼，
+   * 变了才推：省了页面自己每 4 秒整份重取。
+   */
+  function taskEvents(taskId: number): ApiResult {
+    if (!Number.isInteger(taskId) || !repos.agentTasks.get(taskId))
+      throw new RequestError(`没有子任务 #${taskId}`, 404);
+    const pollMs = deps.pollMs ?? 1000;
+    return {
+      status: 200,
+      body: null,
+      stream: async (emit, signal) => {
+        let seen = '';
+        while (!signal.aborted) {
+          const task = repos.agentTasks.get(taskId);
+          if (!task) return;
+          const stamp = await taskStamp(task);
+          if (stamp !== seen) {
+            seen = stamp;
+            emit('task', {
+              task: await taskView(taskId),
+              artifacts: repos.artifacts.list({ task: taskId }).map(artifactSummary),
+            });
+            if (!isOpen(task)) return emit('end', {});
+          }
+          await sleep(pollMs, signal);
+        }
+      },
+    };
+  }
+
+  /** 子 agent 的类型：名字和什么时候用。 */
+  function agentList(): unknown {
+    return (deps.agents ?? []).map(({ name, description }) => ({ name, description }));
+  }
+
+  /** 工作台里派一个子任务：规则和类型校验同主线程（`createAgentTask`），来源记 `web`。 */
+  function newTask(body: unknown): unknown {
+    const profiles = deps.agents ?? [];
+    if (profiles.length === 0) throw new RequestError('子任务没打开：config.json 里把 tasks.enabled 设成 true', 409);
+    const criteria = field(body, 'criteria');
+    try {
+      const task = createAgentTask(
+        repos,
+        {
+          title: field(body, 'title'),
+          goal: field(body, 'goal'),
+          // 页面上一行一条；接口也收整段文字，按行拆
+          criteria: typeof criteria === 'string' ? criteria.split(/\r?\n/) : criteria,
+          agent: field(body, 'agent'),
+          origin: 'web',
+        },
+        now(),
+        profiles.map((profile) => profile.name),
+      );
+      return taskSummary(task);
+    } catch (error) {
+      if (error instanceof TaskError) throw new RequestError(error.message);
+      throw error;
+    }
   }
 
   function approvalOf(id: string): Approval {
@@ -377,7 +535,16 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     try {
       if (route === 'GET /api/status') return ok(await status());
       if (route === 'GET /api/context') return ok(await recent(url.searchParams));
-      if (route === 'GET /api/activity') return ok(repos.activity.list(limitOf(url.searchParams, 50, 500)));
+      if (route === 'GET /api/activity') {
+        // types=a,b 只看这几种；before=<ISO 时间> 只看那以前的：往前翻对话时取更早的小卡片
+        const types = url.searchParams.get('types');
+        const before = url.searchParams.get('before');
+        const filter = {
+          ...(types ? { types: types.split(',').filter(Boolean) } : {}),
+          ...(before ? { before } : {}),
+        };
+        return ok(repos.activity.list(limitOf(url.searchParams, 50, 500), filter));
+      }
       if (route === 'GET /api/memory') return ok(await memoryView());
       if (route === 'PUT /api/memory/core') return ok(await setCore(body));
       if (method === 'DELETE' && parts.length === 4 && parts[1] === 'memory' && parts[2] === 'facts') {
@@ -414,7 +581,13 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         return ok({ saved: true });
       }
       if (route === 'POST /api/chat') return ok(await talk(body));
+      if (route === 'POST /api/chat/stream') return talkStream(body);
+      if (route === 'GET /api/agents') return ok(agentList());
       if (route === 'GET /api/tasks') return ok(repos.agentTasks.list({ limit: 50 }).map(taskSummary));
+      if (route === 'POST /api/tasks') return ok(newTask(body));
+      if (method === 'GET' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'events') {
+        return taskEvents(Number(parts[2]));
+      }
       if (method === 'GET' && parts.length === 3 && parts[1] === 'tasks') return ok(await taskView(Number(id)));
       if (method === 'POST' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'cancel') {
         try {

@@ -13,11 +13,12 @@ import {
   type Memory,
   type Note,
   type OrchestratorEvent,
+  textOf,
 } from '@modelctx-ai/ctx';
 import { createMemoryStore as createNoteStore } from '@modelctx-ai/ctx-memory';
 import { createScriptedModel, describeOrchestratorContract } from '@modelctx-ai/ctx/testing';
 import { createScriptedDecisionModel } from '@modelctx-ai/ctx-protocol/testing';
-import { MockLanguageModelV4 } from 'ai/test';
+import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
 
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
@@ -107,6 +108,28 @@ function orchestratorRig(
     state: { nextWhisper: T0, ...options.state },
   });
   return { orchestrator, context, logger, calls, state: orchestrator.state, clock, repos, paths };
+}
+
+/** 一小段一小段吐字的假模型。 */
+function streamingModel(pieces: readonly string[]): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: convertArrayToReadableStream([
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: '1' },
+        ...pieces.map((delta) => ({ type: 'text-delta' as const, id: '1', delta })),
+        { type: 'text-end', id: '1' },
+        {
+          type: 'finish',
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage: {
+            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 1, text: 1, reasoning: 0 },
+          },
+        },
+      ]),
+    }),
+  });
 }
 
 describeOrchestratorContract(
@@ -636,6 +659,42 @@ describe('orchestrator 跑模型', () => {
     );
     await assert.rejects(orchestratorRig().orchestrator.talk('在吗'));
     await orchestrator.close();
+  });
+
+  test('工作台流式聊一句：增量边吐边交，交回的整段回复和记进日志的是同一份（去了首尾空白）', async () => {
+    const model = streamingModel(['\n带', '了，', '路上', '小心\n']);
+    const { orchestrator, context, repos, clock } = orchestratorRig({ model });
+    clock.now = T0 + 5_000;
+    const pieces: string[] = [];
+    const reply = await orchestrator.talk('伞带了吗', undefined, (text) => pieces.push(text));
+    assert.deepEqual(pieces, ['\n带', '了，', '路上', '小心\n']);
+    assert.equal(reply, '带了，路上小心');
+    const logged = (await context.entries()).flatMap((entry) =>
+      entry.type === 'message' && entry.message.role === 'assistant' ? [textOf(entry.message)] : [],
+    );
+    assert.deepEqual(logged, [reply]);
+    assert.deepEqual(
+      repos.activity.list(10).map((event) => event.type),
+      ['chat-workbench'],
+    );
+    assert.equal(model.doStreamCalls.length, 1);
+    assert.equal(model.doGenerateCalls.length, 0);
+
+    // 没回成：不记，增量交出去的不算数
+    const broken = orchestratorRig({
+      model: new MockLanguageModelV4({
+        doStream: async () => {
+          throw new Error('接口挂了');
+        },
+      }),
+    });
+    await assert.rejects(
+      broken.orchestrator.talk('在吗', undefined, () => {}),
+      /接口挂了/,
+    );
+    assert.deepEqual(await broken.context.entries(), []);
+    await orchestrator.close();
+    await broken.orchestrator.close();
   });
 
   test('子任务结束：叫醒主线程，把 <task-notification> 交给回复的 agent，它的转告由桌宠说出来；取消的不叫醒', async () => {

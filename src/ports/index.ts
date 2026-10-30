@@ -159,10 +159,18 @@ export interface MemeRepo {
   write(pack: MemePack): void;
 }
 
+/** 只看哪几类、哪个时间以前的行为记录。 */
+export interface ActivityFilter {
+  /** 只要这几种 `type`。 */
+  readonly types?: readonly string[];
+  /** 只要早于这个 ISO 时间的（不含）。 */
+  readonly before?: string;
+}
+
 export interface ActivityRepo {
   record(event: ActivityEvent): void;
-  /** 最近 `limit` 条，按时间从旧到新。 */
-  list(limit?: number): ActivityRecord[];
+  /** 最近 `limit` 条（给了 `filter` 就在符合的里面数），按时间从旧到新。 */
+  list(limit?: number, filter?: ActivityFilter): ActivityRecord[];
 }
 
 export interface SpokenRepo {
