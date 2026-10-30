@@ -82,6 +82,10 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .col-main { flex: 3 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .col-side { flex: 2 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.card.ask { border-color: var(--warm); }
+.card.ask .question { white-space: pre-wrap; word-break: break-word; margin-bottom: 10px; }
+.card.ask textarea { min-height: 84px; }
+.card.ask .acts { display: flex; justify-content: flex-end; margin-top: 8px; }
 .card.pending { background: var(--side); border-style: dashed; color: var(--muted); }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .card-head .side-note { margin-left: auto; }
@@ -108,6 +112,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .event .chip { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex: none; background: var(--accent-soft); color: var(--accent-strong); }
 .event.done .chip { background: var(--ok-soft); color: var(--ok-strong); }
 .event.failed .chip { background: var(--danger-soft); color: var(--danger); }
+.event.ask .chip { background: var(--warm-soft); color: var(--warm); }
 .event.alarm .chip { background: var(--warm-soft); color: var(--warm); }
 .event .text { display: flex; flex-direction: column; min-width: 0; }
 .event .what { font-weight: 600; }
@@ -188,6 +193,7 @@ form.inline input[name="title"], form.inline input[name="name"], form.inline inp
 .preview-img { display: block; max-width: 100%; max-height: 420px; margin: 0 0 10px; border-radius: 12px; border: 1px solid var(--line); }
 .badge { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 12px; background: var(--hover); color: var(--muted); }
 .badge.running { background: var(--accent-soft); color: var(--accent-strong); }
+.badge.waiting { background: var(--warm-soft); color: var(--warm); }
 .badge.done { background: var(--ok-soft); color: var(--ok-strong); }
 .badge.failed { background: var(--danger-soft); color: var(--danger); }
 .tl { display: flex; gap: 12px; }
@@ -370,7 +376,7 @@ var DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 
 var thread = { signature: "", pending: false, query: "", tasks: "" };
 var VIA = { "dsh-pet": "桌宠对话" };
-var TASK_STATES = { queued: "排队", running: "在做", done: "做完", failed: "没做成", cancelled: "取消了" };
+var TASK_STATES = { queued: "排队", running: "在做", waiting: "等回答", done: "做完", failed: "没做成", cancelled: "取消了" };
 var TODO_MARKS = { pending: "", in_progress: "", done: "✓", skipped: "–" };
 var openTask = 0;
 /** 交付物：展开预览的那个，和取回来的原文（按编号和时间，交了新的就重新取） */
@@ -386,7 +392,7 @@ var memoryFacts = [];
 var TOPICS = { owner: "主人", work: "工作", people: "身边的人", routine: "作息", taste: "喜好", fix: "纠正" };
 
 function stateDot(state) {
-  return state === "running" ? "run" : state === "done" ? "ok" : state === "failed" ? "fail" : "";
+  return state === "running" ? "run" : state === "waiting" ? "off" : state === "done" ? "ok" : state === "failed" ? "fail" : "";
 }
 
 function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 80; }
@@ -440,7 +446,7 @@ function taskResultCard(item) {
   var lines = item.text.split("\n");
   // 卡片里只放纯文字：去掉加粗的星号
   var detail = lines.slice(1).join("\n").replace(/^结果：\n?/, "").replace(/\*\*/g, "");
-  var kind = item.state === "done" ? "done" : item.state === "failed" ? "failed" : "task";
+  var kind = item.state === "done" ? "done" : item.state === "failed" ? "failed" : item.state === "waiting" ? "ask" : "task";
   var iconName = item.state === "done" ? "check" : item.state === "failed" ? "cross" : "task";
   return eventRow(kind, iconName, lines[0], detail, null, item.text, function () { if (item.task) openTaskView(item.task); });
 }
@@ -674,7 +680,8 @@ var views = {
 function loadTasks() {
   return api("GET", "/api/tasks").then(function (tasks) {
     // 在做的几个排在最前，其余照旧新的在前
-    var listed = tasks.filter(function (task) { return task.state === "running"; }).concat(tasks.filter(function (task) { return task.state !== "running"; }));
+    var live = function (task) { return task.state === "running" || task.state === "waiting"; };
+    var listed = tasks.filter(live).concat(tasks.filter(function (task) { return !live(task); }));
     fill($("#task-list"), listed.map(function (task) {
       var active = current === "task" && openTask === task.id;
       var count = task.progress.total ? task.progress.done + "/" + task.progress.total : TASK_STATES[task.state];
@@ -696,7 +703,8 @@ function loadTasks() {
     $("#task-empty").hidden = tasks.length > 0;
     var running = tasks.filter(function (task) { return task.state === "running"; }).length;
     var queued = tasks.filter(function (task) { return task.state === "queued"; }).length;
-    $("#task-count").textContent = [running ? running + " 件在做" : "", queued ? queued + " 件排队" : ""].filter(Boolean).join(" · ");
+    var asking = tasks.filter(function (task) { return task.state === "waiting"; }).length;
+    $("#task-count").textContent = [running ? running + " 件在做" : "", asking ? asking + " 件等回答" : "", queued ? queued + " 件排队" : ""].filter(Boolean).join(" · ");
   });
 }
 
@@ -792,9 +800,32 @@ function sizeLabel(bytes) {
   return (bytes / 1048576).toFixed(1).replace(/\.0$/, "") + " MB";
 }
 
+/** 回答框里写了一半的话：4 秒一刷新不能丢，按子任务记 */
+var answerDraft = { id: 0, text: "" };
+
+/** 子 agent 在等回答：问题，加一个回答框 */
+function answerCard(task) {
+  var box = h("textarea", { id: "answer-box", rows: "3", placeholder: "在这里回答，子任务会接着做", "aria-label": "回答子任务的问题" });
+  if (answerDraft.id === task.id) box.value = answerDraft.text;
+  box.addEventListener("input", function () { answerDraft = { id: task.id, text: box.value }; });
+  var send = h("button", { class: "primary", type: "button", text: "回答" });
+  send.addEventListener("click", function () {
+    var value = box.value.trim();
+    if (!value) return;
+    send.disabled = true;
+    api("POST", "/api/tasks/" + task.id + "/answer", { answer: value }).then(function () {
+      answerDraft = { id: 0, text: "" };
+      toast("回答交给它了，它会接着做");
+      views.task.load(); loadTasks();
+    }, function (error) { send.disabled = false; fail(error); });
+  });
+  return card([labelRow("等你回答", task.askedAt ? when(task.askedAt) : ""), h("div", { class: "question", text: task.question }), box, h("div", { class: "acts" }, [send])], "ask");
+}
+
 function renderTask(task, artifacts) {
   artifacts = artifacts || [];
-  var open = task.state === "queued" || task.state === "running";
+  var typing = document.activeElement && document.activeElement.id === "answer-box";
+  var open = task.state === "queued" || task.state === "running" || task.state === "waiting";
   var origins = { main: "yoyo 派的", cli: "命令行派的", web: "工作台派的" };
   $("#title").textContent = task.title;
   $("#subtitle").textContent = "子任务 #" + task.id + " · " + task.agent + " · " + (origins[task.origin] || task.origin) + " · " + when(task.createdAt) + (task.finishedAt ? " · 结束于 " + when(task.finishedAt) : "");
@@ -805,6 +836,7 @@ function renderTask(task, artifacts) {
   if (cancel) $("#bar-actions").appendChild(cancel);
 
   var main = [card([labelRow("目标"), h("div", { class: "text", text: task.goal })])];
+  if (task.state === "waiting" && task.question) main.unshift(answerCard(task));
   var progressNote = task.progress.total ? task.progress.done + " / " + task.progress.total : "";
   var todoNodes = [labelRow("todo", progressNote)];
   if (task.progress.total) {
@@ -834,9 +866,14 @@ function renderTask(task, artifacts) {
       ]);
     }), checked ? [] : [h("div", { class: "side-note", text: "交结果时逐条对：满足没有、凭什么。对不上交不了。" })])));
   }
+  if (task.question && task.state !== "waiting") {
+    var asked = [labelRow("问过主人", task.askedAt ? when(task.askedAt) : ""), h("div", { class: "text", text: task.question })];
+    if (task.answer) asked.push(h("div", { class: "note", text: "回答：" + task.answer }));
+    main.push(card(asked));
+  }
   if (task.result) main.push(card([labelRow("结果"), h("div", { class: "text" }, rich(task.result))]));
   else if (task.error) main.push(card([labelRow("没做成"), h("div", { class: "text", text: task.error })]));
-  else if (open) main.push(card([labelRow("结果"), h("div", { text: "还在做。交了以后结果放在这里，也会回到和 yoyo 的对话里。" })], "pending"));
+  else if (open) main.push(card([labelRow("结果"), h("div", { text: task.state === "waiting" ? "在等你回答，回答以后接着做。交了以后结果放在这里，也会回到和 yoyo 的对话里。" : "还在做。交了以后结果放在这里，也会回到和 yoyo 的对话里。" })], "pending"));
   if (artifacts.length) main.push(artifactsCard(task, artifacts));
 
   var labels = { input: "收到", say: "说", call: "调用工具", result: "工具回了" };
@@ -849,6 +886,8 @@ function renderTask(task, artifacts) {
   });
   var side = card([labelRow("过程", task.steps.length ? task.steps.length + " 步" : "")].concat(steps.length ? steps : [h("div", { class: "empty", text: "还没开始" })]));
   fill($("#task-page"), [h("div", { class: "columns" }, [h("div", { class: "col-main" }, main), h("div", { class: "col-side" }, [side])])], "");
+  var again = $("#answer-box");
+  if (typing && again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
 }
 
 /** 记得的事按话题筛：话题按钮只列出有的 */

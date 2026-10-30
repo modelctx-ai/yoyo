@@ -333,6 +333,8 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       concurrency: config.tasks.concurrency,
       // 结果写回主会话以后，叫醒主线程转告主人
       onFinished: (task) => orchestrator.relayTask(task.id),
+      onAsked: (task) => orchestrator.relayTask(task.id),
+      answerTimeoutMs: config.tasks.answerTimeout * 3_600_000,
       agents,
       toolNames: () => worker.list().map((definition) => definition.name),
       // 类型写了 model：服务商、地址和密钥照 llm，只换模型名

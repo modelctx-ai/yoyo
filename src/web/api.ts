@@ -9,7 +9,7 @@ import type { Config } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import { TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
 import { artifactView, removeArtifact } from '../features/tasks/artifacts.ts';
-import { TaskError, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
+import { TaskError, answerTask, cancelAgentTask, progress } from '../features/tasks/tasks.ts';
 import type { AgentTask, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
 import { allFacts } from '../brain/memory.ts';
@@ -352,6 +352,16 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       if (method === 'POST' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'cancel') {
         try {
           return ok(taskSummary(cancelAgentTask(repos, Number(parts[2]), now())));
+        } catch (error) {
+          if (error instanceof TaskError) throw new RequestError(error.message, 409);
+          throw error;
+        }
+      }
+      if (method === 'POST' && parts.length === 4 && parts[1] === 'tasks' && parts[3] === 'answer') {
+        const answer = text(body, 'answer');
+        if (answer === undefined) throw new RequestError('要给 answer，回答要是一段文字');
+        try {
+          return ok(taskSummary(answerTask(repos, Number(parts[2]), answer, now())));
         } catch (error) {
           if (error instanceof TaskError) throw new RequestError(error.message, 409);
           throw error;

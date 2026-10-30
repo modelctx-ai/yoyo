@@ -13,6 +13,8 @@ export const GOAL_MAX = 4000;
 export const CRITERIA_MAX = 8;
 export const TODOS_MAX = 20;
 export const RESULT_MAX = 8000;
+export const QUESTION_MAX = 600;
+export const ANSWER_MAX = 2000;
 const LINE_MAX = 300;
 
 /** 规则不让做的事：一句话说清楚。工具把它原样交回模型，命令行打出来。 */
@@ -21,6 +23,7 @@ export class TaskError extends Error {}
 export const STATE_LABELS: Readonly<Record<AgentTaskState, string>> = {
   queued: '排队',
   running: '在做',
+  waiting: '等回答',
   done: '做完',
   failed: '没做成',
   cancelled: '取消了',
@@ -33,9 +36,15 @@ export const TODO_MARKS: Readonly<Record<TodoState, string>> = {
   skipped: '[-]',
 };
 
-/** 还在排队或在做。 */
+/** 还开着：排队、在做、等回答。 */
 export function isOpen(task: Pick<AgentTask, 'state'>): boolean {
-  return task.state === 'queued' || task.state === 'running';
+  return task.state === 'queued' || task.state === 'running' || task.state === 'waiting';
+}
+
+/** 有话要转告主人：结束了还没说的，或者在等回答、问题还没说的。 */
+export function needsRelay(task: Pick<AgentTask, 'state' | 'announcedAt' | 'questionAnnouncedAt'>): boolean {
+  if (task.state === 'waiting') return task.questionAnnouncedAt === null;
+  return (task.state === 'done' || task.state === 'failed' || task.state === 'cancelled') && task.announcedAt === null;
 }
 
 type TaskRepos = Pick<Repos, 'agentTasks' | 'activity'>;
@@ -96,6 +105,55 @@ function saved(repos: TaskRepos, id: number, patch: Parameters<Repos['agentTasks
   const task = repos.agentTasks.update(id, patch, now.getTime());
   if (!task) throw new TaskError(`没有子任务 #${id}`);
   return task;
+}
+
+/**
+ * 子 agent 做到一半要主人拿主意：记下问题，状态改成「等回答」，这一轮停下，不占并行名额。
+ * 一个子任务同时只有一个没答的问题；问了新的，上一个回答和转告记录清掉。
+ */
+export function askTask(repos: TaskRepos, id: number, question: unknown, now: Date): AgentTask {
+  const task = found(repos, id);
+  if (task.state === 'waiting') throw new TaskError(`子任务 #${id} 已经有一个问题在等主人回答了，一次只问一个`);
+  if (task.state !== 'running') throw new TaskError(`子任务 #${id} 现在是「${STATE_LABELS[task.state]}」，不能提问`);
+  const text = clean(question, '问题', QUESTION_MAX);
+  repos.activity.record({ type: 'task-ask', id, title: task.title, text });
+  return saved(
+    repos,
+    id,
+    {
+      state: 'waiting',
+      question: text,
+      askedAt: now.getTime(),
+      answer: null,
+      answeredAt: null,
+      questionAnnouncedAt: null,
+    },
+    now,
+  );
+}
+
+/** 主人回答了：只对「等回答」的有效。记下回答，放回排队，有名额就接着做，下一轮的输入带着回答。 */
+export function answerTask(repos: TaskRepos, id: number, answer: unknown, now: Date): AgentTask {
+  const task = found(repos, id);
+  if (task.state !== 'waiting') {
+    throw new TaskError(`子任务 #${id} 现在是「${STATE_LABELS[task.state]}」，没有在等回答`);
+  }
+  const text = clean(answer, '回答', ANSWER_MAX);
+  repos.activity.record({ type: 'task-answer', id, title: task.title, text });
+  return saved(repos, id, { state: 'queued', answer: text, answeredAt: now.getTime() }, now);
+}
+
+/** 等回答等了多久还没回，算超时。`timeoutMs` 为 0 不超时。 */
+export function answerExpired(task: Pick<AgentTask, 'state' | 'askedAt'>, now: number, timeoutMs: number): boolean {
+  return task.state === 'waiting' && timeoutMs > 0 && task.askedAt !== null && now - task.askedAt >= timeoutMs;
+}
+
+/** 超时没回答：按没做成结束，原因带上问的是什么。 */
+export function expireAnswer(repos: TaskRepos, id: number, timeoutMs: number, now: Date): AgentTask {
+  const task = found(repos, id);
+  const hours = Math.round((timeoutMs / 3_600_000) * 10) / 10;
+  const asked = task.question ? `：问的是「${task.question.slice(0, 80)}」` : '';
+  return failTask(repos, id, `等主人回答超时，等了 ${hours} 小时没回${asked}`, now);
 }
 
 /** 取消：排队的不做了，在做的由常驻进程看到后停下。 */
@@ -246,6 +304,10 @@ export function taskDetail(task: AgentTask, artifacts: readonly Delivered[] = []
     const { done, total } = progress(task);
     parts.push('', `todo（${done}/${total}）：`, ...todoLines(task.todos));
   }
+  if (task.question) {
+    parts.push('', task.state === 'waiting' ? '问题（等主人回答）：' : '问过：', task.question);
+    if (task.answer) parts.push('', '主人的回答：', task.answer);
+  }
   if (task.checks.length > 0) {
     parts.push('', '验收：', ...task.checks.map((c) => `${c.met ? '✓' : '✗'} ${c.criterion}：${c.evidence}`));
   }
@@ -267,13 +329,20 @@ export function taskBrief(task: AgentTask): string {
   return parts.join('\n');
 }
 
-/** 上一轮停下了、任务还没交：带上 todo 的现状催它接着做。 */
-export function continuePrompt(task: AgentTask): string {
+/**
+ * 上一轮停下了、任务还没交：带上 todo 的现状催它接着做。
+ * `answered` 是这一轮接着的是主人的回答：把问题和回答带上。
+ */
+export function continuePrompt(task: AgentTask, answered = false): string {
   const todos = task.todos.length > 0 ? ['现在的 todo：', ...todoLines(task.todos)].join('\n') : '还没拆 todo。';
+  const reply =
+    answered && task.question && task.answer
+      ? `你问主人：${task.question}\n主人回答了：${task.answer}\n照这个回答接着做，不用再问同一件事。`
+      : `子任务 #${task.id} 还没交结果。`;
   return [
-    `子任务 #${task.id} 还没交结果。`,
+    reply,
     todos,
-    '接着做：做完一项就用 task_todo 标上；都做完、验收标准都对上了就用 task_finish 交结果；确实做不了就用 task_fail 说明原因。',
+    '接着做：做完一项就用 task_todo 标上；都做完、验收标准都对上了就用 task_finish 交结果；确实做不了就用 task_fail 说明原因；要主人拿主意就用 task_ask 问一个问题。',
   ].join('\n\n');
 }
 
@@ -282,12 +351,14 @@ export function resultNote(task: AgentTask, artifacts: readonly Delivered[] = []
   const files = artifacts.length > 0 ? `\n交付物（在工作台里）：${deliveredLines(artifacts).join('、')}` : '';
   if (task.state === 'done') return `子任务 #${task.id}「${task.title}」做完了。\n结果：\n${task.result ?? ''}${files}`;
   if (task.state === 'failed') return `子任务 #${task.id}「${task.title}」没做成：${task.error ?? ''}`;
+  if (task.state === 'waiting') return `子任务 #${task.id}「${task.title}」想问主人：${task.question ?? ''}`;
   return `子任务 #${task.id}「${task.title}」${STATE_LABELS[task.state]}。`;
 }
 
 const STATUS: Readonly<Record<AgentTaskState, string>> = {
   queued: 'queued',
   running: 'running',
+  waiting: 'needs_input',
   done: 'completed',
   failed: 'failed',
   cancelled: 'cancelled',
@@ -304,6 +375,7 @@ export function taskNotification(task: AgentTask, artifacts: readonly Delivered[
     `<status>${STATUS[task.state]}</status>`,
     `<title>${task.title}</title>`,
   ];
+  if (task.state === 'waiting' && task.question) parts.push(`<question>${task.question}</question>`);
   if (task.result) parts.push(`<result>\n${task.result}\n</result>`);
   if (task.checks.length > 0) {
     parts.push(
@@ -316,8 +388,21 @@ export function taskNotification(task: AgentTask, artifacts: readonly Delivered[
   return parts.join('\n');
 }
 
-/** 主线程被子任务的通知叫醒时收到的话：通知本身，加上该怎么转告。 */
-export function relayPrompt(task: AgentTask, artifacts: readonly Delivered[] = []): string {
+/**
+ * 主线程被子任务的通知叫醒时收到的话：通知本身，加上该怎么转告。
+ * `canAnswer` 是主线程手上有没有 `task_answer`：没有就告诉主人去工作台里答。
+ */
+export function relayPrompt(task: AgentTask, artifacts: readonly Delivered[] = [], canAnswer = true): string {
+  if (task.state === 'waiting') {
+    const after = canAnswer
+      ? `主人回答以后，用 task_answer 把回答原样交给子任务 #${task.id}。现在先别调 task_answer：回答要等主人说了才算。`
+      : '主人可以在工作台里直接回答。';
+    return (
+      `${taskNotification(task, artifacts)}\n\n` +
+      `你派出去的子任务 #${task.id} 做到一半要主人拿主意。用自己的话把问题转告主人，一两句，说清楚是哪个子任务在问；` +
+      `问题里的选项和背景别漏。${after}`
+    );
+  }
   const files =
     artifacts.length > 0 ? '交了文件的，说一声放在工作台里了（例如「周报放在工作台里了」），不用念文件名的后缀。' : '';
   const how =
@@ -332,9 +417,11 @@ export function announceLine(task: AgentTask, now: Date): Line {
   const tone = toneForHour(now.getHours());
   return {
     text:
-      task.state === 'done'
-        ? `「${task.title}」做好啦，结果放在工作台里。`
-        : `「${task.title}」没做成，原因写在工作台里。`,
+      task.state === 'waiting'
+        ? `「${task.title}」有件事要问你，问题写在工作台里。`
+        : task.state === 'done'
+          ? `「${task.title}」做好啦，结果放在工作台里。`
+          : `「${task.title}」没做成，原因写在工作台里。`,
     tone,
     cue: TONE_CUES[tone],
     action: '碎碎念-对屏碎碎念',
@@ -342,8 +429,20 @@ export function announceLine(task: AgentTask, now: Date): Line {
   };
 }
 
-/** 主线程每一轮都能看到的：在做和刚结束的子任务。 */
+/**
+ * 主线程每一轮都能看到的：排队、在做和等回答的子任务。等回答的把问题也列出来，
+ * 主人回答时对得上是哪个，用 `task_answer` 带上那个编号。
+ */
 export function tasksFact(tasks: readonly AgentTask[]): string | null {
   if (tasks.length === 0) return null;
-  return ['子任务：', ...tasks.map(taskRow)].join('\n');
+  const parts = ['子任务：', ...tasks.map(taskRow)];
+  const waiting = tasks.filter((task) => task.state === 'waiting' && task.question);
+  if (waiting.length > 0) {
+    parts.push(
+      '',
+      '在等主人回答的问题（主人回答了，用 task_answer 带上对应的编号交回去；分不清回答的是哪一个就先问清楚）：',
+      ...waiting.map((task) => `#${task.id}「${task.title}」问：${task.question ?? ''}`),
+    );
+  }
+  return parts.join('\n');
 }

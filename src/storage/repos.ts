@@ -87,6 +87,11 @@ function agentTaskOf(row: Row): AgentTask {
     finishedAt: numOrNull(row.finished_at),
     updatedAt: Number(row.updated_at),
     announcedAt: numOrNull(row.announced_at),
+    question: strOrNull(row.question),
+    askedAt: numOrNull(row.asked_at),
+    answer: strOrNull(row.answer),
+    answeredAt: numOrNull(row.answered_at),
+    questionAnnouncedAt: numOrNull(row.question_announced_at),
   };
 }
 
@@ -100,6 +105,11 @@ const TASK_COLUMNS: Readonly<Record<string, string>> = {
   startedAt: 'started_at',
   finishedAt: 'finished_at',
   announcedAt: 'announced_at',
+  question: 'question',
+  askedAt: 'asked_at',
+  answer: 'answer',
+  answeredAt: 'answered_at',
+  questionAnnouncedAt: 'question_announced_at',
 };
 
 function activityOf(row: Row): ActivityRecord {

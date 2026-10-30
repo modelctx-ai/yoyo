@@ -137,14 +137,17 @@ describe('config', () => {
     assert.equal(parseConfig({ web: null }).web.enabled, true);
   });
 
-  test('子任务：缺省打开、做完说一声、同时做两件；写错按缺省', () => {
-    const defaults = { enabled: true, notify: true, concurrency: 2 };
+  test('子任务：缺省打开、做完说一声、同时做两件、等回答 24 小时；写错按缺省', () => {
+    const defaults = { enabled: true, notify: true, concurrency: 2, answerTimeout: 24 };
     assert.deepEqual(parseConfig({}).tasks, defaults);
-    assert.deepEqual(parseConfig({ tasks: { enabled: 'false', notify: false, concurrency: '4' } }).tasks, {
-      enabled: false,
-      notify: false,
-      concurrency: 4,
-    });
+    assert.deepEqual(
+      parseConfig({ tasks: { enabled: 'false', notify: false, concurrency: '4', answerTimeout: '2.5' } }).tasks,
+      { enabled: false, notify: false, concurrency: 4, answerTimeout: 2.5 },
+    );
+    assert.equal(parseConfig({ tasks: { answerTimeout: 0 } }).tasks.answerTimeout, 0, '0 是不超时');
+    for (const answerTimeout of [-1, 721, 'soon']) {
+      assert.equal(parseConfig({ tasks: { answerTimeout } }).tasks.answerTimeout, 24, String(answerTimeout));
+    }
     assert.deepEqual(parseConfig({ tasks: 'x' }).tasks, defaults);
     for (const concurrency of [0, 9, 1.5, 'many']) {
       assert.equal(parseConfig({ tasks: { concurrency } }).tasks.concurrency, 2, String(concurrency));

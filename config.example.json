@@ -60,7 +60,8 @@
   "tasks": {
     "enabled": true,
     "notify": true,
-    "concurrency": 2
+    "concurrency": 2,
+    "answerTimeout": 24
   },
   "files": {
     "workspace": "",
