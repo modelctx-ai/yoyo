@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, type MemoryStore } from '@modelctx-ai/ctx';
+import { createContext, createMemoryStore, eventEntry, userEntry, type MemoryStore } from '@modelctx-ai/ctx';
 import { createMemoryStore as createMemory } from '@modelctx-ai/ctx-memory';
 
 import { parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
-import { petChatEntries, sessionFor, yoyoProjection } from '../brain/context.ts';
+import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
 import { drain } from '../runtime/inbox.ts';
 import { memoryLogger, memoryRepos } from '../runtime/testing.ts';
 import { startWeb, type WebServer } from './server.ts';
@@ -272,6 +272,60 @@ describe('web 管理页', () => {
         .toSorted(),
       ['config-edit', 'config-switch'],
     );
+  });
+
+  test('子任务：列表、详情带一步步的过程、取消；主聊天里做完的那条带编号', async () => {
+    const task = repos.agentTasks.create(
+      { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'], origin: 'main' },
+      T0,
+    );
+    repos.agentTasks.update(
+      task.id,
+      {
+        state: 'running',
+        todos: [
+          { text: '收集', state: 'done' },
+          { text: '写', state: 'pending' },
+        ],
+      },
+      T0,
+    );
+    await context.store.append(taskSession(task.id), [userEntry('子任务 #1：整理周报', { at: T0 })]);
+    const list = (await call('GET', '/api/tasks')).data as { id: number; state: string; progress: unknown }[];
+    assert.deepEqual(list[0], {
+      id: task.id,
+      title: '整理周报',
+      state: 'running',
+      origin: 'main',
+      createdAt: T0,
+      finishedAt: null,
+      progress: { done: 1, total: 2 },
+    });
+    const detail = (await call('GET', `/api/tasks/${task.id}`)).data as { goal: string; steps: unknown[] };
+    assert.equal(detail.goal, '本周进展');
+    assert.deepEqual(detail.steps, [{ at: T0, kind: 'input', text: '子任务 #1：整理周报' }]);
+    assert.equal((await call('GET', '/api/tasks/99')).status, 404);
+    assert.equal((await call('POST', `/api/tasks/${task.id}/cancel`, {})).status, 200);
+    assert.deepEqual(await call('POST', `/api/tasks/${task.id}/cancel`, {}), {
+      status: 409,
+      data: { error: `子任务 #${task.id} 已经「取消了」` },
+    });
+
+    await context.append(
+      eventEntry('task', {
+        text: '子任务 #1「整理周报」取消了。',
+        meta: { id: task.id, state: 'cancelled' },
+        at: T0 + 10,
+      }),
+    );
+    const items = (await call('GET', '/api/context')).data as { kind: string; task?: number; state?: string }[];
+    assert.deepEqual(items.at(-1), {
+      at: T0 + 10,
+      kind: 'task',
+      text: '子任务 #1「整理周报」取消了。',
+      task: task.id,
+      state: 'cancelled',
+    });
   });
 
   test('说一句、听一句交给收件箱，下一拍做', async () => {

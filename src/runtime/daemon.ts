@@ -34,6 +34,8 @@ export interface DaemonApp {
   openWeb(): Promise<{ readonly origin: string; readonly url: string } | null>;
   /** 起按键助手。由组装根决定：macOS 且 `hotkey.enabled` 才真的起，别处什么也不做。 */
   startHotkey(): void;
+  /** 后台做子任务的；`tasks.enabled` 关着时是 null。 */
+  readonly tasks?: { start(signal: AbortSignal): void } | null;
   close(): Promise<void>;
 }
 
@@ -209,5 +211,6 @@ export async function runDaemon(app: DaemonApp, options: DaemonOptions = {}): Pr
   void watchSayings(app, signal);
 
   app.orchestrator.start(signal);
+  app.tasks?.start(signal);
   await finished;
 }

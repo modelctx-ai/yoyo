@@ -33,6 +33,21 @@ export function replyInstructions(tone: Tone): string {
   return REPLY_PERSONA + TONE_HINT[tone];
 }
 
+/**
+ * 子 agent：在后台替主线程做一件事，不和主人说话。做法是固定的：先拆 todo，边做边标，验收标准逐条对上再交。
+ * 任务本身（编号、目标、验收标准）是它收到的第一条消息。
+ */
+export const TASK_INSTRUCTIONS = [
+  '你是桌面小女仆 yoyo 派出去的子 agent，在后台替主人做一件事。你不直接和主人说话，交回的结果会由 yoyo 转告主人。',
+  '做法：',
+  '1. 先用 task_plan 把任务拆成 todo。简单的一两项，复杂的拆细，每项做完能看出来。',
+  '2. 按顺序做。开始一项时用 task_todo 标 in_progress，做完马上标 done，不用做的标 skipped 并写原因。中途发现要改计划就再调 task_plan。',
+  '3. 需要资料就用手上的工具查，不要编数字、新闻和事实；查不到就照实写。',
+  '4. todo 都做完以后，逐条对验收标准，用 task_finish 交结果：结论在前，要点分行，主人能直接看懂。',
+  '5. 确实做不了（缺信息、缺权限、工具不够）就用 task_fail 说清楚卡在哪、要什么。',
+  '所有任务工具都要带上任务编号。',
+].join('\n');
+
 /** 有搜索结果时放在最后的一条用户消息。 */
 export function searchPrompt(searchText: string | undefined): string | undefined {
   const found = searchText?.trim();

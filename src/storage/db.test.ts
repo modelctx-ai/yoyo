@@ -68,7 +68,26 @@ CREATE TABLE IF NOT EXISTS kv (
 );
 `;
 
-const APP_TABLES = ['activity', 'clipboard', 'contacts', 'kv', 'meme_pack', 'memes', 'schedule', 'spoken', 'tasks'];
+const APP_TABLES = [
+  'activity',
+  'agent_tasks',
+  'clipboard',
+  'contacts',
+  'kv',
+  'meme_pack',
+  'memes',
+  'schedule',
+  'spoken',
+  'tasks',
+];
+
+/** 旧版以后新加的表：只加表，旧表一字不动。 */
+const ADDED_TABLES = ['agent_tasks'];
+
+/** 去掉新加的表，剩下的应该和旧版一样。 */
+function oldTables(sql: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(sql).filter(([name]) => !ADDED_TABLES.includes(name)));
+}
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'yoyo-'));
@@ -166,7 +185,7 @@ const LEGACY_NAMES = [
 ];
 
 describe('openDatabase', () => {
-  test('新库建出旧版那九张表，语句一字不差，不建 context_items', () => {
+  test('新库建出旧版那九张表，语句一字不差，不建 context_items；另外只多出新加的表', () => {
     const dir = join(tempDir(), 'data', 'yoyo');
     const db = openDatabase(join(dir, 'yoyo.db'));
     const legacy = new DatabaseSync(':memory:');
@@ -174,7 +193,7 @@ describe('openDatabase', () => {
     const expected = tableSql(legacy);
     delete expected['context_items'];
     assert.deepEqual(Object.keys(tableSql(db)), APP_TABLES);
-    assert.deepEqual(tableSql(db), expected);
+    assert.deepEqual(oldTables(tableSql(db)), expected);
     assert.equal(db.prepare('PRAGMA journal_mode').get()?.journal_mode, 'wal');
     assert.equal(db.prepare('PRAGMA busy_timeout').get()?.timeout, 5000);
     assert.equal(statSync(dir).mode & 0o777, 0o700);
@@ -337,7 +356,7 @@ describe('openDatabase', () => {
 
     const db = openDatabase(file);
     const repos = createRepos(db);
-    assert.deepEqual(tableSql(db), schemaBefore);
+    assert.deepEqual(oldTables(tableSql(db)), schemaBefore);
     assert.deepEqual(rows(db, 'SELECT id, role, text, at, item_key FROM context_items ORDER BY id'), [
       { id: 1, role: 'whisper', text: '在呢', at: 1, item_key: null },
       { id: 2, role: 'user', text: '在吗', at: 2, item_key: 'pet:2:user:在吗' },

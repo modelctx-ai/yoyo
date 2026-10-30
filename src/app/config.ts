@@ -135,6 +135,13 @@ const web = z.looseObject({
   port: z.coerce.number().int().min(0).max(65_535).catch(0).default(0),
 });
 
+/** 子任务：主线程派给后台子 agent 的事，见 `runtime/tasks.ts`。 */
+const tasks = z.looseObject({
+  enabled: flag(true),
+  /** 做完或没做成时桌宠说一声。 */
+  notify: flag(true),
+});
+
 const context = z.looseObject({
   /** 交给模型的历史上限（估算 token）。不写就整段带上，和以前一样。 */
   maxTokens: optionalCount(),
@@ -261,6 +268,7 @@ export const configSchema = z.looseObject({
   /** 每个动作配一段很轻的音效。 */
   sfx: z.preprocess(objectOrNothing, toggle.prefault({})),
   context: z.preprocess(objectOrNothing, context.prefault({})),
+  tasks: z.preprocess(objectOrNothing, tasks.prefault({})),
   memory: z.preprocess(objectOrNothing, memory.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
   mcpServers: z.preprocess(objectOrNothing, z.record(z.string(), z.unknown()).default({})),
@@ -279,6 +287,7 @@ export type ContextConfig = Config['context'];
 export type McpServersConfig = Config['mcpServers'];
 export type SandboxConfig = Config['sandbox'];
 export type WebConfig = Config['web'];
+export type TasksConfig = Config['tasks'];
 export type MemoryConfig = Config['memory'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
 

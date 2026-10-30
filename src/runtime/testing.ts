@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { userEntry, type Context } from '@modelctx-ai/ctx';
 
 import { createYoyoContext, recordUser } from '../brain/context.ts';
+import { createRepos } from '../storage/repos.ts';
 import type {
   ActivityRecord,
   Line,
@@ -107,6 +108,8 @@ export function memoryRepos(options: { readonly now?: () => Date } = {}): Repos 
       set: (key, value) => void kv.set(key, value),
     },
     tasks: { list: () => [...tasks] },
+    // 子任务的读写有 JSON 列和自增 id，直接用内存里的 SQLite，不另写一份
+    agentTasks: createRepos(new DatabaseSync(':memory:'), now).agentTasks,
   };
 }
 

@@ -9,7 +9,7 @@ import { assistantEntry, eventEntry, userEntry } from '@modelctx-ai/ctx';
 import type { AppOverrides } from '../app/container.ts';
 import { resolvePaths, type Paths } from '../app/paths.ts';
 import type { UpdateSystem } from '../app/update.ts';
-import { createYoyoContext } from '../brain/context.ts';
+import { createYoyoContext, taskSession } from '../brain/context.ts';
 import { openMemoryStore } from '../brain/memory.ts';
 import { localDateKey } from '../kernel/time.ts';
 import { directorAlive, drain, writePid } from '../runtime/inbox.ts';
@@ -391,6 +391,36 @@ describe('commands', () => {
     });
     await assert.rejects(run('update', 'install'), /只有 yoyo\.app 能自己更新/);
     assert.deepEqual(await cli({ updater, installed: '0.2.0' }).run('update', 'install'), ['已经是最新的 0.2.0']);
+  });
+
+  test('task：自己派、列、看、看它一步步做了什么、取消；规则不让做的报一句话', async () => {
+    const { run, env } = cli();
+    assert.deepEqual(await run('task', 'list'), ['还没有子任务']);
+    assert.deepEqual(
+      await run('task', 'add', '--title', '整理周报', '--goal', '本周进展', '--criteria', '三个项目都有；每项三行内'),
+      ['开了子任务 #1，常驻进程在跑就会去做'],
+    );
+    assert.deepEqual(await run('task', 'list'), ['#1\t排队\t-\t整理周报']);
+    const [detail] = await run('task', 'show', '1');
+    assert.match(detail!, /验收标准：\n1\. 三个项目都有\n2\. 每项三行内/);
+    assert.equal(env.repos().agentTasks.get(1)?.origin, 'cli');
+    assert.deepEqual(await run('task', 'log', '1'), ['还没开始做']);
+
+    const context = await createYoyoContext({ db: env.db(), petId: 'default' });
+    await context.store.append(taskSession(1), [
+      userEntry('子任务 #1：整理周报', { at: NOW.getTime() }),
+      assistantEntry('先拆一下', { at: NOW.getTime() }),
+    ]);
+    const log = await run('task', 'log', '1');
+    assert.deepEqual(
+      log.map((line) => line.split('\t').slice(1).join(' ')),
+      ['收到 子任务 #1：整理周报', '说 先拆一下'],
+    );
+
+    assert.deepEqual(await run('task', 'cancel', '1'), ['取消了子任务 #1']);
+    await assert.rejects(run('task', 'cancel', '1'), /已经「取消了」/);
+    await assert.rejects(run('task', 'show', 'x'), /要给子任务编号/);
+    await assert.rejects(run('task', 'add', '--title', '没目标'), /目标不能空着/);
   });
 
   test('listen、whisper：导演在跑就交给它', async () => {

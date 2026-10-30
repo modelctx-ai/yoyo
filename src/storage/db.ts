@@ -49,6 +49,23 @@ CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   text TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  goal TEXT NOT NULL,
+  criteria TEXT NOT NULL,
+  state TEXT NOT NULL,
+  todos TEXT NOT NULL DEFAULT '[]',
+  result TEXT,
+  checks TEXT NOT NULL DEFAULT '[]',
+  error TEXT,
+  origin TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  announced_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

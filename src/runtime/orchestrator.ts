@@ -22,6 +22,7 @@ import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
 import { wantsReply } from '../features/listen/listen.ts';
 import { shouldSearch } from '../features/search/question.ts';
+import { announceLine } from '../features/tasks/tasks.ts';
 import { nextWhisperAt } from '../kernel/pace.ts';
 import { localDateKey, minutesOf } from '../kernel/time.ts';
 import { toneForHour } from '../kernel/tone.ts';
@@ -386,6 +387,20 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     return answer;
   }
 
+  /** 做完、没做成的子任务桌宠各说一声（`tasks.notify` 关着就不说），取消的不说；说过的记下来。 */
+  async function announceTasks(now: Date): Promise<void> {
+    // 列出来是新的在前，按做完的先后说
+    const finished = repos.agentTasks.list({ states: ['done', 'failed', 'cancelled'], limit: 20 }).toReversed();
+    for (const task of finished) {
+      if (task.announcedAt !== null) continue;
+      if (config.tasks.notify && task.state !== 'cancelled') {
+        await director.speak(announceLine(task, now), now);
+        state.lastTalk = clock();
+      }
+      repos.agentTasks.update(task.id, { announcedAt: clock() }, clock());
+    }
+  }
+
   async function petWhisper(signal?: AbortSignal): Promise<string> {
     if (!model) throw new Error('没配 llm，写不了碎碎念');
     return (await writeWhisper(new Date(clock()), model, signal)).text;
@@ -407,6 +422,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         await director.remind(item, now);
         state.lastTalk = clock();
       }
+      if (config.tasks.enabled) await announceTasks(now);
       if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);

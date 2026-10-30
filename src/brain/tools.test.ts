@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, test } from 'vite-plus/test';
 
 import {
@@ -15,7 +16,8 @@ import type { Repos, WebSearch } from '../ports/index.ts';
 import { generateReply } from './compose.ts';
 import { recordUser, yoyoProjection } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
-import { createYoyoTools } from './tools.ts';
+import { createRepos } from '../storage/repos.ts';
+import { addTaskWorkerTools, createYoyoTools } from './tools.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
@@ -60,6 +62,7 @@ function memoryRepos(): Repos & { readonly events: ActivityRecord[] } {
       },
     },
     tasks: { list: () => [] },
+    agentTasks: createRepos(new DatabaseSync(':memory:')).agentTasks,
   };
 }
 
@@ -165,6 +168,54 @@ describe('brain/tools', () => {
     repos.kv.set('place', TAIPEI);
     const tools = createYoyoTools({ repos, search: null, fetch: forecast(500).fetch, now: () => NOW });
     assert.equal(await run(tools, 'weather_forecast'), '天气没查到：天气接口 500');
+  });
+
+  test('子任务：主线程能派、列、看、取消；子 agent 那份没有派的，只有拆 todo、标状态、交结果、交不了', async () => {
+    const repos = memoryRepos();
+    const main = createYoyoTools({ repos, search: null, tasks: true, now: () => NOW });
+    assert.deepEqual(
+      main
+        .list()
+        .map((info) => info.name)
+        .filter((name) => name.startsWith('task_')),
+      ['task_create', 'task_list', 'task_show', 'task_cancel'],
+    );
+    const worker = createYoyoTools({ repos, search: null });
+    addTaskWorkerTools(worker, { repos, now: () => NOW });
+    assert.deepEqual(
+      worker
+        .list()
+        .map((info) => info.name)
+        .filter((name) => name.startsWith('task_')),
+      ['task_plan', 'task_todo', 'task_finish', 'task_fail'],
+    );
+
+    assert.equal(
+      await run(main, 'task_create', { title: '整理周报', goal: '本周进展', criteria: ['三个项目都有'] }),
+      '开了子任务 #1「整理周报」，排队等着做',
+    );
+    assert.equal(await run(main, 'task_create', { title: ' ', goal: 'x', criteria: [] }), '标题不能空着');
+    assert.equal(await run(main, 'task_list'), '#1\t排队\t-\t整理周报');
+    assert.match(String(await run(main, 'task_show', { id: 1 })), /^#1 整理周报（排队）/);
+    assert.equal(await run(main, 'task_show', { id: 9 }), '没有子任务 #9');
+    assert.equal(repos.agentTasks.get(1)?.origin, 'main');
+
+    // 子 agent 的工具只对在做的任务有效，规则不让做的原样交回去
+    assert.equal(await run(worker, 'task_plan', { id: 1, todos: ['收集'] }), '子任务 #1 现在是「排队」，不能再改');
+    repos.agentTasks.update(1, { state: 'running' }, NOW.getTime());
+    assert.equal(await run(worker, 'task_plan', { id: 1, todos: ['收集', '写'] }), 'todo 定好了，一共 2 项');
+    assert.equal(await run(worker, 'task_todo', { id: 1, index: 1, state: 'done' }), '改好了，还剩 1 项');
+    assert.equal(
+      await run(worker, 'task_finish', { id: 1, result: '周报', checks: [] }),
+      '还有 todo 没做完：2. 写。做完或跳过再交',
+    );
+    assert.equal(
+      await run(worker, 'task_todo', { id: 1, index: 2, state: 'done' }),
+      '改好了，todo 都做完了；对一遍验收标准再交结果',
+    );
+    const checks = [{ criterion: '三个项目都有', met: true, evidence: '有' }];
+    assert.equal(await run(worker, 'task_finish', { id: 1, result: '周报', checks }), '交好了，子任务 #1 做完');
+    assert.equal(await run(main, 'task_cancel', { id: 1 }), '子任务 #1 已经「做完」');
   });
 
   test('add_alarm 存进日程并记 schedule-add；写错了回校验文案；list_alarms 列出来', async () => {

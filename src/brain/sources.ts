@@ -1,6 +1,7 @@
 import { defineSource, type ContextSource } from '@modelctx-ai/ctx';
 
 import { latestClip } from '../features/clipboard/clipboard.ts';
+import { tasksFact } from '../features/tasks/tasks.ts';
 import type { PetHost, Repos } from '../ports/index.ts';
 
 export interface TaskDeps {
@@ -33,6 +34,11 @@ export function taskSource(deps: TaskDeps): ContextSource {
     const task = await currentTask(deps);
     return task ? `当前任务：${task}` : null;
   });
+}
+
+/** 还在排队和在做的子任务：主线程每一轮都看得到，主人问起不用再查。 */
+export function agentTasksSource(repos: Pick<Repos, 'agentTasks'>): ContextSource {
+  return defineSource('tasks', () => tasksFact(repos.agentTasks.list({ states: ['queued', 'running'], limit: 10 })));
 }
 
 /** 最近一次复制的内容，前 160 字。 */

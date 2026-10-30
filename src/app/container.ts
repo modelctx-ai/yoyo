@@ -1,6 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-import type { Context, ContextSource, Harness, LanguageModel, ToolRegistry } from '@modelctx-ai/ctx';
+import {
+  createOrchestrator,
+  type Context,
+  type ContextSource,
+  type Harness,
+  type LanguageModel,
+  type ToolRegistry,
+} from '@modelctx-ai/ctx';
 import type { McpHub } from '@modelctx-ai/ctx-mcp';
 
 import { createConsoleHost } from '../adapters/console/host.ts';
@@ -20,7 +27,7 @@ import { createSfxPlayer } from '../adapters/voice/sfx.ts';
 import { createSilentPlayer, silentSfx, silentSynthesizer } from '../adapters/voice/silent.ts';
 import { createWhisperTranscriber } from '../adapters/voice/whisper-cpp.ts';
 import { startChannel, type Channel } from '../brain/channel.ts';
-import { createYoyoContext } from '../brain/context.ts';
+import { createTaskContext, createYoyoContext } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import {
   MEMORY_SOURCE,
@@ -34,8 +41,8 @@ import {
 } from '../brain/memory.ts';
 import { connectMcp } from '../brain/mcp.ts';
 import { createLanguageModel } from '../brain/model.ts';
-import { clipboardSource, taskSource } from '../brain/sources.ts';
-import { createYoyoTools } from '../brain/tools.ts';
+import { agentTasksSource, clipboardSource, taskSource } from '../brain/sources.ts';
+import { addTaskWorkerTools, createYoyoTools } from '../brain/tools.ts';
 import type { FactSources } from '../brain/agents.ts';
 import type {
   AudioPlayer,
@@ -52,6 +59,7 @@ import type {
 } from '../ports/index.ts';
 import { createDirector, type Director } from '../runtime/director.ts';
 import { createYoyoOrchestrator, type ScheduleState, type YoyoOrchestrator } from '../runtime/orchestrator.ts';
+import { createTaskRunner, type TaskRunner } from '../runtime/tasks.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
@@ -96,6 +104,8 @@ export interface App extends AppServices {
   openWeb(): Promise<WebServer | null>;
   /** 起按键助手：只有 macOS 且 `hotkey.enabled` 才起，别处什么也不做。 */
   startHotkey(): void;
+  /** 后台做子任务的。`tasks.enabled` 关着时是 null。 */
+  readonly tasks: TaskRunner | null;
   /** 关掉编排器（等正在跑的一轮）、按键助手、管理页、MCP 连接和对话渠道。数据库留给进程退出时关。 */
   close(): Promise<void>;
 }
@@ -184,7 +194,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let mcp: McpHub | null = null;
   let tools = overrides.tools;
   if (!tools && config.llm.tools) {
-    tools = createYoyoTools({ repos, search });
+    tools = createYoyoTools({ repos, search, tasks: config.tasks.enabled });
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
     });
@@ -198,6 +208,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   const base: ContextSource[] = [
     taskSource({ host, repos }),
     ...(config.clipboard.enabled ? [clipboardSource(repos)] : []),
+    ...(config.tasks.enabled ? [agentTasksSource(repos)] : []),
   ];
   const sources = memory ? [...base, ...memorySources(memory.memory, { host, repos })] : base;
   // 两个记忆来源的查询不一样：碎碎念只收按任务召回的那个，回复只收按用户话召回的那个
@@ -267,6 +278,35 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     }),
   );
 
+  // 子 agent：另一份注册表（本地工具、拆 todo 和交结果的工具，加上主线程那边 MCP 和记忆的工具，没有派子任务的），
+  // 另一个上下文和 harness（同一个存储），和自己的编排器（`record: true`，所以配 owner、开始前 recover）
+  let tasks: TaskRunner | null = null;
+  if (config.tasks.enabled) {
+    const worker = createYoyoTools({ repos, search });
+    addTaskWorkerTools(worker, { repos });
+    const shared = new Set(executors.map((executor) => executor.name));
+    for (const definition of tools?.list() ?? []) {
+      if (shared.has(definition.executor)) worker.add(definition, { replace: true });
+    }
+    const taskContext = createTaskContext(context, {
+      sources,
+      tools: worker,
+      ...(executors.length > 0 ? { executors } : {}),
+      model,
+      logger,
+    });
+    const taskHarness = createYoyoHarness(taskContext, { logger, ...(executors.length > 0 ? { executors } : {}) });
+    tasks = createTaskRunner({
+      repos,
+      logger,
+      runs: createOrchestrator({ harness: taskHarness, store: context.store, owner: 'yoyo-tasks', logger }),
+      model,
+      main: context,
+      ...(factSources ? { sources: factSources.reply } : {}),
+      secrets: [config.llm.apiKey].filter(Boolean),
+    });
+  }
+
   let channel: Promise<Channel> | null = null;
   let web: Promise<WebServer | null> | null = null;
   let hotkey: HotkeyHelper | null = null;
@@ -294,6 +334,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     harness,
     director,
     orchestrator,
+    tasks,
     openChannel() {
       if (closed) return Promise.reject(new Error('yoyo 已经关闭'));
       if (!channel) {
@@ -364,6 +405,12 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       closed = true;
       hotkey?.stop();
       hotkey = null;
+      try {
+        // 正在做的子任务放回排队，下次接着做
+        await tasks?.close();
+      } catch (error) {
+        logger.warn(`子任务没停好：${errorText(error)}`);
+      }
       try {
         await orchestrator.close();
       } catch (error) {

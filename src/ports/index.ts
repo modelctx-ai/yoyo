@@ -5,6 +5,10 @@
 import type {
   ActivityEvent,
   ActivityRecord,
+  AgentTask,
+  AgentTaskInput,
+  AgentTaskPatch,
+  AgentTaskState,
   ClipEntry,
   Contact,
   MemePack,
@@ -163,6 +167,16 @@ export interface TaskRepo {
   list(): string[];
 }
 
+/** 子任务，id 从 1 往上数。 */
+export interface AgentTaskRepo {
+  create(input: AgentTaskInput, now: number): AgentTask;
+  get(id: number): AgentTask | null;
+  /** 新的在前。 */
+  list(options?: { readonly states?: readonly AgentTaskState[]; readonly limit?: number }): AgentTask[];
+  /** 改几个字段，顺带记 `updatedAt`；没有这个任务返回 null。 */
+  update(id: number, patch: AgentTaskPatch, now: number): AgentTask | null;
+}
+
 export interface Repos {
   readonly contacts: ContactRepo;
   readonly schedule: ScheduleRepo;
@@ -172,4 +186,5 @@ export interface Repos {
   readonly spoken: SpokenRepo;
   readonly kv: KvRepo;
   readonly tasks: TaskRepo;
+  readonly agentTasks: AgentTaskRepo;
 }
