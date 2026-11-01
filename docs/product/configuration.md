@@ -11,7 +11,7 @@ status: stable
 
 从源码运行时，配置写在 yoyo 目录的 `config.json`，可以从 `config.example.json` 复制。安装包的配置在 `~/.yoyo/config.json`，第一次打开 yoyo 时从包里的示例复制过去；放在数据目录里，换新版本时替换整个 app 也不会丢。菜单「yoyo → 打开配置」能直接打开它。`YOYO_CONFIG` 可以换一个位置。
 
-改了不用重启：常驻进程每秒看一眼 `config.json`，内容变了、读得出来，就在一两秒内换上，正在说的那句说完为止，下一句碎碎念的时间照旧。改坏了（不是 JSON，或者驱动桌宠却把语音删空了）只记一行，接着用原来的，改好了再换。两样要另外动一下：`pet.menu` 要关掉桌宠再开；没固定 `web.port` 时管理页的地址不变，固定成别的端口就换到那个端口。也可以在[工作台](usage.md#工作台)的「设置」里改。
+改了不用重启：常驻进程每秒看一眼 `config.json`，内容变了、读得出来，就在一两秒内换上。碎碎念的间隔、语音、音效、天气、表情包、听写、子任务通知这些（[能直接改的项](#能直接改的项)里写着「马上生效」的）就地换上，什么都不重来；改到别的项（模型、密钥、MCP 服务器、工具……），等 yoyo 正在说的那一轮说完（最多等一分半）再按新配置重新组装一份，下一句碎碎念的时间照旧。改坏了（不是 JSON，或者驱动桌宠却把语音删空了）只记一行，接着用原来的，改好了再换。两样要另外动一下：`pet.menu` 要关掉桌宠再开；没固定 `web.port` 时管理页的地址不变，固定成别的端口就换到那个端口。也可以在[工作台](usage.md#工作台)的「设置」里改。
 
 配置是宽松的，写错不会挡住启动：
 
@@ -24,7 +24,7 @@ status: stable
 
 # 开关
 
-想关掉哪样，就在 `config.json` 里把它写成 `false`，存好一两秒内生效；管理页的「设置」里也能直接点。
+想关掉哪样，就在 `config.json` 里把它写成 `false`，存好一两秒内生效；管理页的「设置」里也能直接点，命令行是 `yoyo config set weather.enabled false`。打开了工具的话，也可以直接跟 yoyo 说（「傍晚别报天气了」），见[让 yoyo 改自己的配置](#让-yoyo-改自己的配置)。
 
 | 开关                | 缺省                         | 管什么                                                   |
 | ------------------- | ---------------------------- | -------------------------------------------------------- |
@@ -45,6 +45,7 @@ status: stable
 | `tasks.concurrency` | `2`                          | 子任务同时做几件，1 到 8，多的排队；写错按 2             |
 | `files.read`、`files.write`、`files.edit` | `allow` | yoyo 能读、写、改文件（只在工作区里写）：`allow` 直接做，`ask` 每次先在工作台里问你，`deny` 不给；见[每次先问你](#每次先问你) |
 | `files.bash` | `allow` | yoyo 能在沙箱里跑命令：`allow`、`ask`、`deny` 同上；沙箱程序（srt）没装就没有，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
+| `settings.agent` | `allow` | yoyo 能不能按你说的改自己的几项配置：`allow` 直接改，`ask` 每次先在工作台里问你，`deny` 不能改；见[让 yoyo 改自己的配置](#让-yoyo-改自己的配置) |
 
 关掉的只是自动的那一下：`weather.enabled` 关了，回复时打开工具的模型照样能查天气；`memes.enabled` 关了，`yoyo meme refresh` 照样能找。
 
@@ -100,6 +101,7 @@ status: stable
 | `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自怎么给：`allow` 直接做，`ask` 给但每次动手前要你在工作台里批准，`deny` 不给；写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给（`allow`、`ask` 都一样） |
 | `files.bash` | `allow` | 跑命令的 `bash` 怎么给，三个值同上，写错按 `allow`。一律经沙箱程序跑，沙箱程序找不到就没有；规则同上，见[让 yoyo 跑命令](#让-yoyo-跑命令) |
 | `files.askTimeout` | `24` | 开关是 `ask` 的工具，等你批准等多少小时没批就按拒绝算，`0` 是一直等；写错按 24 |
+| `settings.agent` | `allow` | yoyo 改自己配置的三个工具怎么给：`allow`、`ask`、`deny` 和 `files.read` 一样，写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给改 |
 | `files.bashNetwork` | `[]` | 命令能连的域名，例如 `["pypi.org", "files.pythonhosted.org"]`；不写就是网络全关 |
 | `files.bashTimeout`、`files.bashMaxTimeout` | `120`、`600` | 命令没说时最多跑几秒，和它自己最多能要几秒（1 到 3600）；写错按缺省 |
 
@@ -291,6 +293,37 @@ sandbox:
 * **命令也一样**：`bash` 写成 `ask`，批准了才跑，照样经沙箱。
 * 子任务里调了也一样：子任务停在「等回答」，你批准或拒绝以后它接着做；它不收一句话的回答来代替批准。
 * 转告子任务结果的那一轮、碎碎念都不会碰这些工具。
+
+# 能直接改的项
+
+工作台「设置」、命令行 `yoyo config`、yoyo 自己改配置，认的是同一张表：每一项怎么写、改了是马上生效还是要重新组装、yoyo 能不能替你改。`yoyo config get` 列出全部和现在的值。
+
+| 项 | 改了 | yoyo 能改 |
+| --- | --- | --- |
+| `intervalSec`、`pace.options` | 马上生效 | 能 |
+| `speech.autoplay`、`sfx.enabled`、`weather.enabled`、`memes.enabled`、`listen.enabled`、`tasks.notify` | 马上生效 | 能 |
+| `pace.minConfidence`、`pace.recent`、`speech.tone`、`app.launchAtLogin` | 马上生效 | 不能 |
+| `clipboard.enabled`、`hotkey.enabled`、`llm.tools`、`memory.enabled`、`sandbox.enabled` | 重新组装 | 不能 |
+| `llm.provider`、`llm.baseUrl`、`llm.model`、`llm.apiKey`、`speech.model`、`speech.referenceId`、`speech.apiKey` | 重新组装 | 不能 |
+
+不在表里的项照样能在 `config.json` 或工作台的整份配置里改，改了按重新组装算。
+
+```sh
+yoyo config get                      # 全部
+yoyo config get intervalSec          # 一项
+yoyo config set intervalSec 900      # 值按 JSON 读：900、true、[300,900]，读不成就当文字
+yoyo config set pace.options '[600,1800,3600]'
+yoyo config undo                     # 撤销最近一次逐项修改
+```
+
+# 让 yoyo 改自己的配置
+
+打开了 `llm.tools`，你可以直接跟 yoyo 说「以后少念叨点」「别放语音了」「傍晚别报天气」，她看一眼现在是多少、改好，再用自己的话告诉你改了什么；说「刚才那个改回去」，她就撤销自己最近改的那一次。
+
+* **只能改上表里写着「能」的几项**，都是马上生效、改错了也不要紧的。模型、密钥、MCP 服务器、沙箱、粘贴板这些只有你能改：yoyo 读到的网页、文件里要是藏着坏指令，改了它们就等于能在你电脑上跑命令或者把数据发出去。
+* **每次改都记一笔**：谁改的（工作台、命令行、yoyo）、改了哪几项、改之前和改之后的值（密钥打码），在工作台的「轨迹」里看得到。`yoyo config undo` 撤销最近一次，不管是谁改的；yoyo 自己只撤她改的。之后又改过的、密钥，不撤。
+* **想先过目**：写 `"settings": { "agent": "ask" }`，yoyo 每次改都先在工作台里记一条「待批准」，和[每次先问你](#每次先问你)一样；`"deny"` 就是不让她改。
+* 转告子任务结果的那一轮不能改：子任务带回来的内容不一定可信。
 
 # 记忆
 

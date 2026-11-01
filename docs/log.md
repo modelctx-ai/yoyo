@@ -1,5 +1,9 @@
 # 文档更新记录
 
+## 2026-11-01
+
+* **更新** yoyo 自己改配置、能就地生效的不重建（#38）：[管理页](tech/web.md)的「改配置」写明开关和表单是配置项表的子集、和命令行、模型共用 `editSettings`，行为记录改成带来源和前后值的 `config-edit`（不再记 `config-switch`、`config-fields`）、能撤销；「热加载」改写成按 `classify` 分就地换上和等主线程空下来再重建，`sources` 加 `app/settings.ts`。[运行时原则](tech/runtime-principles.md)加第 8 条：yoyo 能改哪几项、为什么别的只给主人、转告那一轮不能改，`sources` 加 `app/settings.ts`、`brain/settings.ts`。架构的目录表加 `app/settings.ts`、`brain/settings.ts`，`supervisor` 一行和「常驻进程」跟上。配置的「写法」写明哪些马上生效、哪些重新组装，开关表和选项表加 `settings.agent`，新加「能直接改的项」「让 yoyo 改自己的配置」两节；日常使用加「让 yoyo 改设置」一节，常用命令加 `yoyo config`。`config.example.json` 加 `settings`。
+
 ## 2026-10-30
 
 * **更新** [发版](tech/release.md)补上 #32 里除签名公证以外的四项：流水线改成矩阵，`macos-15`（arm64）和 `macos-15-intel`（x86_64）各打一个 dmg，两个都打好了才由新的 `publish` job 挂到 Release（分开挂会抢着建 Release），`tools.sh` 按架构取（x86_64 不开 Metal、听写走 CPU，架构写进停放标记和 cmake 参数），冒烟测试加「程序的架构都是这台机器的」；`yoyo update check --json` 多带 Release 正文 `body`（截断到 4000 字），`yoyo update install` 在终端里每 5% 一行进度，`--json` 一行一个事件（`step`、`progress`、`done`、`error`）给外壳读，外壳的更新对话框显示可滚动的更新说明、安装时有进度条和百分比，「app 内更新」「app 外壳」「冒烟测试」跟上；新加「开机自启」（`app.launchAtLogin`，外壳自己读配置、每 3 秒看一眼文件变没变、macOS 13 以上用 `SMAppService`，菜单里「开机时打开」和设置页是同一项，新命令 `yoyo app login`）和「dmg 窗口」（背景图、图标位置、`dmg.sh`、访达用不了时退回不带布局的 dmg）两节，「为什么」加三条，「还没做」只留签名公证等。[安装与运行](product/getting-started.md)写 Intel 和 Apple 芯片各下哪个 dmg、更新时的进度和说明、新加「开机自启」；[配置](product/configuration.md)的开关表和选项表加 `app.launchAtLogin`，`config.example.json` 跟上；README 的快速开始跟上。

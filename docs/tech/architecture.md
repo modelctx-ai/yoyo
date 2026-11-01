@@ -85,7 +85,7 @@ flowchart TB
 
 * `features` 和 `brain` 只依赖端口接口，不依赖 `adapters`。`brain` 可以用 `features` 里的纯逻辑，例如粘贴板最近一条、加日程、查天气。
 * `adapters` 和 `storage` 不依赖 `features`、`brain`、`runtime`。
-* `app/config.ts`、`app/paths.ts`、`app/log.ts` 是共享的叶子模块，只依赖 zod、Node 和端口类型，哪一层都可以引用。`app/container.ts` 是组装根，在最上层。
+* `app/config.ts`、`app/paths.ts`、`app/log.ts`、`app/settings.ts` 是共享的叶子模块，只依赖 zod、Node 和端口类型，哪一层都可以引用。`app/container.ts` 是组装根，在最上层。
 * `cli` 和组装根可以直接用下面任何一层。
 * `packages/dsh-pet` 不依赖 yoyo 的任何东西。
 
@@ -99,14 +99,15 @@ flowchart TB
 | `src/ports` | 外部能力的接口：`WhisperPacer`（说完一句以后隔多久说下一句）、`PetHost`（舞台加对话记忆、工作状态、菜单、气泡、对话渠道）、`Synthesizer`、`AudioPlayer`、`Recorder`、`Transcriber`、`SfxPlayer`、`Clipboard`、`UrlOpener`（macOS 上还能在访达里显示）、`WebSearch`、`Repos`、`ArtifactFiles`（交付物的文件）、`Logger` |
 | `src/app/config.ts`、`paths.ts`、`log.ts`、`warnings.ts` | 配置结构（zod，缺省值都在这里，和旧版一样宽松：写错按缺省值）、所有读写位置（`YOYO_HOME`、`YOYO_CONFIG`、`YOYO_HOTKEY` 可换，`YOYO_APP` 指出所在的 yoyo.app）、日志、只去掉 node:sqlite 那条 ExperimentalWarning 的过滤 |
 | `src/features` | 一个功能一个目录：`whisper`（预制台词和 3 小时窗口）、`weather`、`alarms`、`memes`、`contacts`、`clipboard`、`listen`（听写规则和确认页）、`search`（像不像提问）、`approvals`（批准请求的规则和文字）、`tasks`（子任务的规则：开、拆 todo、标状态、交文件、交结果，和给人、给模型看的文字；子 agent 类型）、`files`（读写文件能碰哪里） |
-| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`system-one.ts`（System One 模型怎么按配置造，记忆和间隔共用）、`pace.ts`（碎碎念的间隔：固定的和决策模型挑档的两种间隔员）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`files.ts`（读、写、改文件三个工具）、`action.ts`（四个工具共用的动作和 `allow`、`ask`、`deny` 的接法）、`approvals.ts`（开关是 `ask` 时记批准请求）、`bash.ts`（跑命令的 `bash` 工具，经沙箱程序，见[读写文件和跑命令](files.md)）、`harness.ts`（跑一轮的 harness，和给工作台流式回复取文字增量的 `tapDeltas`）、`model.ts`、`tools.ts`、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器和 `bash` 经沙箱程序启动）、`channel.ts` |
+| `src/brain` | ctx 接线：`context.ts`（会话、投影、旧库迁移、写入）、`sources.ts`、`memory.ts`（记忆：存储、来源、读到的日志、决策和提取模型）、`system-one.ts`（System One 模型怎么按配置造，记忆和间隔共用）、`pace.ts`（碎碎念的间隔：固定的和决策模型挑档的两种间隔员）、`prompts.ts`、`agents.ts`（碎碎念和回复两个 agent 配置）、`compose.ts`（拼一轮的请求、经编排器跑、解析成台词）、`files.ts`（读、写、改文件三个工具）、`action.ts`（四个工具共用的动作和 `allow`、`ask`、`deny` 的接法）、`approvals.ts`（开关是 `ask` 时记批准请求）、`bash.ts`（跑命令的 `bash` 工具，经沙箱程序，见[读写文件和跑命令](files.md)）、`harness.ts`（跑一轮的 harness，和给工作台流式回复取文字增量的 `tapDeltas`）、`model.ts`、`tools.ts`、`settings.ts`（yoyo 自己改配置的三个工具）、`mcp.ts`、`sandbox.ts`（stdio 的 MCP 服务器和 `bash` 经沙箱程序启动）、`channel.ts` |
 | `src/adapters` | 端口的实现：`dsh-pet`（`patch.ts` 给打了补丁的桌宠排菜单）、`console`、`voice`（Fish Audio、afplay、ffmpeg、whisper.cpp、配音；没配语音、不是 macOS 时用 `silent.ts` 的静音实现）、`platform`（pbpaste、open、按键助手，别的系统用 `noop`）、`search`（anysearch） |
 | `src/storage` | `~/.yoyo/yoyo.db`：建表、旧 JSON 的一次性导入、`Repos` 的实现；`artifacts.ts` 是交付物的文件（`~/.yoyo/artifacts/`） |
 | `src/runtime` | `orchestrator.ts`（编排器：实现 ctx 的 `Orchestrator`，加上拍子、让路、收件箱、到点，碎碎念和听一句两段流程）、`tasks.ts`（子任务：后台同时做几件，结果写回主线程，见[子任务](tasks.md)）、`approvals.ts`（批准以后照做、结果交回主线程或等批准的子任务，见[先问](files.md#先问)）、`director.ts`（导演：说、听、提醒、预合成、压缩这些舞台动作）、`daemon.ts`（常驻进程：渠道、菜单、按键、气泡、信号）、`inbox.ts`（收件箱和 pid）、`compact.ts`、`testing.ts`（测试替身） |
 | `src/web` | 管理页：`server.ts`（只听本机的 HTTP 服务、令牌和来源检查）、`api.ts`（接口，用和命令行同一套函数）、`page.ts`（页面），见[管理页](web.md) |
 | `src/cli` | `registry.ts`（参数解析、分层输出、`find`、`inspect`、给 agent 的那部分）、`commands.ts`（领域表）、`search.ts`（`yoyo search`）、`main.ts`，见[命令原则](cli-principles.md) |
 | `src/app/cli.ts` | agent 的 `yoyo` 工具怎么跑命令行：另起 Node 进程、`YOYO_AGENT=1`、超时和输出上限 |
-| `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改了就关掉这一份应用、按新配置再组装一份 |
+| `src/app/supervisor.ts` | 常驻时的外层：盯 `config.json`，改的都是就地生效的项就交给应用换上，否则等主线程这一轮说完，关掉这一份、按新配置再组装一份 |
+| `src/app/settings.ts` | 配置项表：能直接改的项、怎么校验、就地生效还是重建、模型能不能改；`classify`（新旧配置怎么换上）、`editSettings`（改几项、原子写）、行为记录和撤销。工作台、命令行 `yoyo config`、模型的工具都经它 |
 | `src/app/update.ts` | yoyo.app 的自我更新：从 GitHub Release 取最新版本、下载校验 dmg、取出新的 app 交给 `swap.sh`，见[发版](release.md#app-内更新) |
 | `src/app/container.ts` | 组装根：按配置挑实现，建模型、工具和 MCP，建上下文、harness、导演和编排器，开对话渠道 |
 | `src/main.ts`、`bin/yoyo.js`、`src/main.js` | 常驻进程入口、命令行入口；`src/main.js` 只转到 `main.ts`，旧的 `node src/main.js` 照旧能启动。两个入口第一条都引入 `app/warnings.ts` |
@@ -116,7 +117,7 @@ flowchart TB
 
 # 常驻进程
 
-`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid。常驻时交给 `supervise`：它组装应用、跑常驻循环，`config.json` 改了就关掉这一份、按新的再组装一份，碎碎念的排期和管理页的端口、令牌接着用，见[管理页](web.md#热加载)。[^supervisor] 组装由 `createApp` 做：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），`memory.enabled` 打开才建记忆（`llm.tools` 也打开时把 `recall` 加进工具），最后建上下文、harness、导演和编排器。[^container]
+`src/main.ts` 读配置、检查驱动桌宠时语音配好了（控制台舞台不查）、写 pid。常驻时交给 `supervise`：它组装应用、跑常驻循环，`config.json` 改了，改的都是就地生效的项（间隔、语音、音效这些）就换掉应用里的 `LiveConfig`，编排器、导演每次用到时读现在的那份；改到别的项，等主线程这一轮说完，关掉这一份、按新的再组装一份，碎碎念的排期和管理页的端口、令牌接着用，见[管理页](web.md#热加载)。[^supervisor] 组装由 `createApp` 做：打开 `yoyo.db`（顺带导入旧 JSON），按 `stage` 挑宿主，建语音（Fish 的四项没填齐就用不出声的合成器，只出字）、播放和配音（只有 macOS 用 afplay，别处不播放）、录音、识别、搜索，模型配齐了才建模型，`llm.tools` 打开才建工具并连 MCP（写错的服务器跳过，打开 `sandbox` 时 stdio 服务器经沙箱程序启动），`memory.enabled` 打开才建记忆（`llm.tools` 也打开时把 `recall` 加进工具），最后建上下文、harness、导演和编排器。[^container]
 
 四样东西各管一件事：
 
