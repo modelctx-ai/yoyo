@@ -37,6 +37,16 @@ export function fixedPacer(ms: number): WhisperPacer {
   return { name: 'fixed', next: async () => ({ source: 'fixed', ms }) };
 }
 
+/** 每次都交给 `current()` 给的那一个：配置就地改了，换一个接着用。 */
+export function followPacer(current: () => WhisperPacer): WhisperPacer {
+  return {
+    get name() {
+      return current().name;
+    },
+    next: (input, signal) => current().next(input, signal),
+  };
+}
+
 /** 档位从短到长，最短一档对应「主人有空」，最长一档对应「主人在忙」，中间的是两者之间。 */
 export function paceQuestion(options: PaceOptions): DecisionQuestion {
   const last = options.length - 1;

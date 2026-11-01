@@ -20,7 +20,7 @@ import { createScriptedModel, describeOrchestratorContract } from '@modelctx-ai/
 import { createScriptedDecisionModel } from '@modelctx-ai/ctx-protocol/testing';
 import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
 
-import { parseConfig } from '../app/config.ts';
+import { liveConfig, parseConfig, type ConfigCell } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { petChatEntries, sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
@@ -61,6 +61,8 @@ interface OrchestratorRig {
   readonly clock: { now: number };
   readonly repos: ReturnType<typeof memoryRepos>;
   readonly paths: ReturnType<typeof resolvePaths>;
+  /** 就地换配置用。 */
+  readonly live: ConfigCell;
 }
 
 /** 周六下午三点，没有天气也没有闹钟。 */
@@ -91,8 +93,9 @@ function orchestratorRig(
     session: sessionFor('main'),
     projection: yoyoProjection,
   });
+  const live = liveConfig(parseConfig({ clipboard: { enabled: false }, ...options.config }));
   const orchestrator = createYoyoOrchestrator({
-    config: parseConfig({ clipboard: { enabled: false }, ...options.config }),
+    config: live,
     paths,
     logger,
     repos,
@@ -107,7 +110,7 @@ function orchestratorRig(
     clock: () => clock.now,
     state: { nextWhisper: T0, ...options.state },
   });
-  return { orchestrator, context, logger, calls, state: orchestrator.state, clock, repos, paths };
+  return { orchestrator, context, logger, calls, state: orchestrator.state, clock, repos, paths, live };
 }
 
 /** 一小段一小段吐字的假模型。 */
@@ -183,6 +186,41 @@ describe('orchestrator 一拍', () => {
     await orchestrator.tick();
     assert.deepEqual(calls, ['sync', 'speak:我在呢']);
     assert.equal(state.nextWhisper, T0 + 300_000);
+  });
+
+  test('配置就地换上：intervalSec 改了，下一句按新的间隔', async () => {
+    const { orchestrator, state, clock, live } = orchestratorRig();
+    await orchestrator.tick();
+    assert.equal(state.nextWhisper, T0 + 300_000);
+    live.set(parseConfig({ clipboard: { enabled: false }, intervalSec: 900 }));
+    clock.now = state.nextWhisper;
+    await orchestrator.tick();
+    assert.equal(state.nextWhisper, clock.now + 900_000);
+  });
+
+  test('idle：拍子没在走、拍子外也没有一轮在跑时才 resolve', async () => {
+    let release: (() => void) | null = null;
+    const { orchestrator } = orchestratorRig({
+      director: {
+        syncPetChat: () =>
+          new Promise<number>((resolve) => {
+            release = () => resolve(0);
+          }),
+      },
+    });
+    await orchestrator.idle();
+    const ticking = orchestrator.tick();
+    let idle = false;
+    const waiting = (async () => {
+      await orchestrator.idle();
+      idle = true;
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(idle, false, '拍子还在走');
+    (release as unknown as () => void)();
+    await ticking;
+    await waiting;
+    assert.equal(idle, true);
   });
 
   test('收件箱里的请求交给导演；刚说过话，到点的碎碎念先让一下', async () => {
@@ -831,6 +869,8 @@ describe('orchestrator 跑模型', () => {
 
   test('转告那一轮：工具照给，读写文件和跑命令的不给；没开工具就都不给', () => {
     assert.deepEqual(relayTools(true, ['web_search', 'read', 'write', 'edit', 'bash', 'yoyo']), ['web_search', 'yoyo']);
+    // 转告那一轮也不能改 yoyo 自己的配置：子任务带回来的内容可能是提示注入，看还能看
+    assert.deepEqual(relayTools(true, ['get_settings', 'change_setting', 'undo_setting']), ['get_settings']);
     assert.equal(relayTools(false, ['web_search', 'read']), false);
     assert.equal(relayTools(true, undefined), true);
   });

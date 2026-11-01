@@ -244,6 +244,14 @@ describe('config', () => {
     assert.equal(parseConfig({ anysearch: { command: 'node cli.js' } }).anysearch.command, undefined);
   });
 
+  test('settings.agent：缺省 allow，写错按 allow，ask 和 deny 认得', () => {
+    assert.equal(parseConfig(FIRST).settings.agent, 'allow');
+    assert.equal(parseConfig({ settings: { agent: 'never' } }).settings.agent, 'allow');
+    assert.equal(parseConfig({ settings: { agent: 'ask' } }).settings.agent, 'ask');
+    assert.equal(parseConfig({ settings: { agent: 'deny' } }).settings.agent, 'deny');
+    assert.equal(parseConfig({ settings: null }).settings.agent, 'allow');
+  });
+
   test('pace：缺省四档、把握 0.4、最近 6 条对话；没配决策模型', () => {
     const { pace } = parseConfig(FIRST);
     assert.equal(pace.decision, undefined);

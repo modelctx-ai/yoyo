@@ -550,6 +550,46 @@ describe('commands', () => {
     await assert.rejects(again.run('app', 'login', 'maybe'), /要写 on 或 off/);
   });
 
+  test('config：get 列出能改的项，set 按 JSON 读值、改了记一笔，undo 撤销最近一次；写错报一句话', async () => {
+    const { run, paths, env } = cli({ config: { stage: 'console', llm: { apiKey: 'secret-key' } } });
+    const rows = await run('config', 'get');
+    assert.ok(
+      rows.includes('intervalSec\t300\t马上生效，yoyo 也能改\t日常碎碎念的间隔（秒）；配了决策模型时是没判成时的间隔'),
+    );
+    assert.ok(rows.some((row) => row.startsWith('llm.apiKey\t"••••••"\t要重建\t')));
+    assert.ok(!rows.join('\n').includes('secret-key'));
+    assert.deepEqual(await run('config', 'get', 'weather.enabled'), ['true']);
+
+    // 前后是文件里的原文：原来没写就是（没写），撤销时拿掉
+    assert.deepEqual(await run('config', 'set', 'intervalSec', '900'), [
+      'intervalSec （没写） → 900（常驻进程一两秒内就地换上）',
+    ]);
+    assert.deepEqual(await run('config', 'set', 'llm.model', 'demo'), [
+      'llm.model （没写） → "demo"（常驻进程等这一轮说完重建一份）',
+    ]);
+    assert.deepEqual(await run('config', 'set', 'pace.options', '[1800, 600]'), [
+      'pace.options （没写） → [600,1800]（常驻进程一两秒内就地换上）',
+    ]);
+    assert.deepEqual(
+      env
+        .repos()
+        .activity.list(5)
+        .map((event) => [event['source'], event['text']]),
+      [
+        ['cli', 'intervalSec'],
+        ['cli', 'llm.model'],
+        ['cli', 'pace.options'],
+      ],
+    );
+    assert.deepEqual(await run('config', 'undo'), ['pace.options [600,1800] → （没写）（常驻进程一两秒内就地换上）']);
+    assert.deepEqual(JSON.parse(readFileSync(paths.configFile, 'utf8')).pace, {}, '原来没写的拿掉');
+
+    await assert.rejects(run('config', 'set', 'intervalSec', 'often'), /intervalSec 要是 60 到 86400 之间的秒数/);
+    await assert.rejects(run('config', 'set', 'mcpServers', '{}'), /mcpServers 不是能这样改的项/);
+    await assert.rejects(run('config', 'get', 'web.port'), /web\.port 不是能这样改的项/);
+    await assert.rejects(run('config', 'set', 'intervalSec'), /要给路径和值/);
+  });
+
   test('task：自己派、列、看、看它一步步做了什么、取消；规则不让做的报一句话', async () => {
     const { run, env } = cli();
     assert.deepEqual(await run('task', 'list'), ['还没有子任务']);

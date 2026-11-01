@@ -7,7 +7,7 @@ import { describe, test } from 'vite-plus/test';
 import { createContext, createMemoryStore, findLossySummaries } from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
-import { parseConfig } from '../app/config.ts';
+import { liveConfig, parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
@@ -173,7 +173,7 @@ describe('daemon 常驻', () => {
       projection: yoyoProjection,
     });
     const orchestrator = createYoyoOrchestrator({
-      config,
+      config: liveConfig(config),
       paths,
       logger,
       repos: memoryRepos(),
