@@ -165,23 +165,25 @@ describe('editSettings', () => {
   });
 });
 
-function edit(at: string, source: string, undoes: string | null = null): PastEdit {
-  return { at, source, before: {}, after: {}, undoes };
+function edit(id: string, source: string, undoes: string | null = null): PastEdit {
+  return { id, source, before: {}, after: {}, undoes };
 }
 
 describe('撤销', () => {
   test('从新到旧找：跳过撤销本身和撤销过的；可以只看某个来源', () => {
     const edits = [edit('1', 'agent'), edit('2', 'web'), edit('3', 'cli', '2')];
-    assert.equal(lastUndoable(edits)?.at, '1');
-    assert.equal(lastUndoable(edits, 'agent')?.at, '1');
+    assert.equal(lastUndoable(edits)?.id, '1');
+    assert.equal(lastUndoable(edits, 'agent')?.id, '1');
     assert.equal(lastUndoable([...edits, edit('4', 'agent', '1')]), null);
     assert.equal(lastUndoable([edit('1', 'web')], 'agent'), null);
     assert.equal(pastEdit({ at: '9', type: 'config-edit', source: 'web' }), null, '整份存的那种没有前后值');
+    assert.equal(pastEdit({ type: 'config-edit', before: '{}', after: '{}' }), null, '没有编号的不认');
   });
 
   test('改了记一笔，撤销改回原来的值；模型只撤自己改的；之后又改过、密钥都不撤', () => {
     const file = tempConfig();
-    const repos = memoryRepos();
+    // 时钟不走：几笔修改的时间一样，撤销也要认得是哪一笔
+    const repos = memoryRepos({ now: () => new Date(2026, 10, 1, 12, 0, 0) });
     const settings = settingsAccess(file, repos.activity);
     settings.edit([{ path: 'intervalSec', value: 900 }], 'agent');
     settings.edit([{ path: 'weather.enabled', value: false }], 'web');

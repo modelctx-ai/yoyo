@@ -3,7 +3,7 @@
  * 谁能改（`agent` 的模型也能改，`owner` 的只有主人）。改的时候读 config.json 原文、只动给的那几项、
  * 写之前和常驻进程启动时一样检查、先写临时文件再改名；常驻进程盯着文件，按 `classify` 就地换上或重建。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 
 import { z } from 'zod';
@@ -422,13 +422,16 @@ export interface EditRecord extends ActivityEvent {
   readonly text: string;
   readonly before: string;
   readonly after: string;
-  /** 撤销的是哪一笔（那一笔的 `at`）。 */
+  /** 这一笔的编号。不用时间认：同一毫秒里改两次，时间是一样的。 */
+  readonly id: string;
+  /** 撤销的是哪一笔（那一笔的 `id`）。 */
   readonly undoes?: string;
 }
 
 export function editRecord(source: EditSource, changes: readonly SettingChange[], undoes?: string): EditRecord {
   return {
     type: 'config-edit',
+    id: randomUUID(),
     source,
     text: changes.map((change) => change.path).join(' '),
     before: JSON.stringify(Object.fromEntries(changes.map((change) => [change.path, change.before]))),
@@ -439,7 +442,7 @@ export function editRecord(source: EditSource, changes: readonly SettingChange[]
 
 /** 行为记录里读回来的一笔逐项修改。整份配置存的那种没有前后值，不在这里。 */
 export interface PastEdit {
-  readonly at: string;
+  readonly id: string;
   readonly source: string;
   readonly before: Readonly<Record<string, Json>>;
   readonly after: Readonly<Record<string, Json>>;
@@ -456,13 +459,14 @@ function parseMap(text: unknown): Record<string, Json> | null {
   }
 }
 
-export function pastEdit(record: { readonly at: string; readonly [field: string]: unknown }): PastEdit | null {
+export function pastEdit(record: { readonly [field: string]: unknown }): PastEdit | null {
   const before = parseMap(record['before']);
   const after = parseMap(record['after']);
-  if (!before || !after) return null;
+  const id = record['id'];
+  if (!before || !after || typeof id !== 'string') return null;
   const undoes = record['undoes'];
   return {
-    at: record.at,
+    id,
     source: typeof record['source'] === 'string' ? record['source'] : '',
     before,
     after,
@@ -477,7 +481,7 @@ export function pastEdit(record: { readonly at: string; readonly [field: string]
 export function lastUndoable(edits: readonly PastEdit[], only?: EditSource): PastEdit | null {
   const undone = new Set(edits.flatMap((edit) => (edit.undoes ? [edit.undoes] : [])));
   for (const edit of edits.toReversed()) {
-    if (edit.undoes || undone.has(edit.at)) continue;
+    if (edit.undoes || undone.has(edit.id)) continue;
     if (only && edit.source !== only) continue;
     return edit;
   }
@@ -585,7 +589,7 @@ export function settingsAccess(file: string, activity: Pick<ActivityRepo, 'recor
         throw new SettingsError(only === 'agent' ? 'yoyo 最近没改过配置，没有能撤销的' : '没有能撤销的修改', 404);
       }
       const result = undoEdit(file, target, source);
-      if (result.changes.length > 0) activity.record(editRecord(source, result.changes, target.at));
+      if (result.changes.length > 0) activity.record(editRecord(source, result.changes, target.id));
       return result;
     },
   };

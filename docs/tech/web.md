@@ -133,7 +133,7 @@ sources:
 * 只改表单里的几项（`PATCH /api/config/fields`）：只认白名单里的路径，值按各项自己的校验（类型、范围），写错回 400，一句话说是哪一项（几项都错的一起说，一项也不写；报错里不带值）；写得进去的几项按路径放回原位，别的内容和键的顺序原样留着（没有的键加在那一段末尾）。给了 `version` 先对指纹，对不上回 409，和整份存一样。白名单：`llm.provider`（`openai-compatible`、`anthropic`）、`llm.baseUrl`（空或 `http(s)://` 开头）、`llm.model`、`llm.apiKey`、`llm.tools`，`speech.apiKey`、`speech.model`、`speech.referenceId`、`speech.autoplay`、`speech.tone`（四种语气或空，空是拿掉这一项），`intervalSec`（60 到 86400 秒），`pace.options`（2 到 8 档、每档 60 到 86400 的整数秒，去重排序再写）、`pace.recent`（0 到 20）。`llm.tools`、`speech.autoplay` 页面上已经是开关，表单里不重复放，接口收。
 * 表单里的密钥（`llm.apiKey`、`speech.apiKey`）：读出来是 `••••••`（空的是空），交回来还是码就不改（原来那里没有值就回 400，免得把码当密钥存），交新的是换，交空是清掉。页面只交回动过的项，所以没碰的密钥根本不会出现在请求里。
 * 写之前和常驻进程启动时一样检查（`parseConfig`、`assertDirectorReady`），不过就回 400，文件一个字不改。先写临时文件再改名，权限照旧。值和原来一样的项不算改，一项都没变就不写文件。
-* 行为记录：开关和表单改成了记一笔 `config-edit`，带 `source: web`、改了哪几项（`text`）、改之前和之后文件里的原文（`before`、`after`，按路径存成 JSON 文字，密钥打码），命令行和模型改的也这样记，能撤销（`yoyo config undo`、模型的 `undo_setting`）。整份存只记 `{ type: 'config-edit', source: 'web' }`，没有逐项的前后值，撤销不了。以前的 `config-switch`、`config-fields` 不再记。
+* 行为记录：开关和表单改成了记一笔 `config-edit`，带 `source: web`、编号 `id`、改了哪几项（`text`）、改之前和之后文件里的原文（`before`、`after`，按路径存成 JSON 文字，密钥打码），撤销的那一笔带 `undoes`（被撤销的那一笔的 `id`；不用时间认，同一毫秒里改两次时间是一样的），命令行和模型改的也这样记，能撤销（`yoyo config undo`、模型的 `undo_setting`）。整份存只记 `{ type: 'config-edit', source: 'web' }`，没有逐项的前后值，撤销不了。以前的 `config-switch`、`config-fields` 不再记。
 
 # 热加载
 
