@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import type { Context, LanguageModel } from '@modelctx-ai/ctx';
 
-import type { Config } from '../app/config.ts';
+import type { LiveConfig } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import { recordLine, storePetChat } from '../brain/context.ts';
@@ -38,7 +38,8 @@ import type {
 import { compactContext, historyTokens } from './compact.ts';
 
 export interface DirectorDeps {
-  readonly config: Config;
+  /** 每次用到时读现在的那份：音效、语音、天气、听写、表情包、压缩这些改了就地生效。 */
+  readonly config: LiveConfig;
   readonly paths: Paths;
   readonly logger: Logger;
   readonly host: PetHost;
@@ -96,7 +97,20 @@ function removeQuietly(path: string): void {
 }
 
 export function createDirector(deps: DirectorDeps): Director {
-  const { config, logger, host, synthesizer, player, sfx, recorder, transcriber, search, repos, context, model } = deps;
+  const {
+    config: live,
+    logger,
+    host,
+    synthesizer,
+    player,
+    sfx,
+    recorder,
+    transcriber,
+    search,
+    repos,
+    context,
+    model,
+  } = deps;
   const clock = deps.now ?? (() => new Date());
   const rand = deps.rand ?? Math.random;
   const confirm = deps.confirm ?? ((text: string) => confirmSend(text, { open: (url) => deps.opener.open(url) }));
@@ -125,12 +139,12 @@ export function createDirector(deps: DirectorDeps): Director {
       const label = activityLabel(line);
       logger.info(`${label} ${line.action} ${line.text.length}字`);
       repos.activity.record({ type: label, action: line.action, text: line.text, meme: line.imageUrl || undefined });
-      if (config.sfx.enabled) {
+      if (live.get().sfx.enabled) {
         sfx.play(line.action);
         repos.activity.record({ type: 'sfx', action: line.action });
       }
       // 没配语音时没有文件，只出字
-      if (file && config.speech.autoplay) await player.play(file);
+      if (file && live.get().speech.autoplay) await player.play(file);
       if (line.kind === 'weather') writeWeatherStamp(repos.kv, localDateKey(now));
       else repos.spoken.remember(line.text, now.getTime(), REPEAT_WINDOW_MS);
       await recordLine(context, line, now.getTime());
@@ -138,7 +152,7 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   async function choose(now = clock()): Promise<Line | null> {
-    if (config.weather.enabled && offWorkWeatherDue(now, readWeatherStamp(repos.kv))) {
+    if (live.get().weather.enabled && offWorkWeatherDue(now, readWeatherStamp(repos.kv))) {
       try {
         const report = await buildOffWorkWeather(repos.kv, now, deps.fetch);
         if (report) return report;
@@ -153,9 +167,9 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   async function capture(): Promise<string> {
-    const seconds = listenSeconds(config.listen);
+    const seconds = listenSeconds(live.get().listen);
     const wav = join(tmpdir(), `yoyo-mic-${Date.now()}.wav`);
-    const action = config.listen.action || LISTEN_ACTION;
+    const action = live.get().listen.action || LISTEN_ACTION;
     logger.info(`听 ${seconds} 秒`);
     host.cue(action).catch((error: unknown) => {
       logger.warn(`侧耳听没播成（${action}）：${errorText(error)}`);
@@ -211,11 +225,11 @@ export function createDirector(deps: DirectorDeps): Director {
 
   /** 桌宠自己说出的新句子（右键对话的回复）也念出来。yoyo 刚投喂过的不算。 */
   async function playForeign(text: string): Promise<boolean> {
-    if (!config.speech.autoplay) return false;
+    if (!live.get().speech.autoplay) return false;
     const trimmed = text.trim();
     if (!trimmed || owned.has(trimmed)) return false;
     own(trimmed);
-    const cue = TONE_CUES[config.speech.tone ?? 'lively'];
+    const cue = TONE_CUES[live.get().speech.tone ?? 'lively'];
     const file = await synthesizer.synthesize(trimmed, cue);
     if (!file) return false;
     logger.info(`对话朗读 ${trimmed.length}字`);
@@ -234,11 +248,11 @@ export function createDirector(deps: DirectorDeps): Director {
   }
 
   async function compactIfNeeded(): Promise<boolean> {
-    const limit = config.context.compactAt;
+    const limit = live.get().context.compactAt;
     if (!limit || !model) return false;
     const before = await historyTokens(context);
     if (before <= limit) return false;
-    const done = await compactContext(context, { keep: config.context.keep, model, before });
+    const done = await compactContext(context, { keep: live.get().context.keep, model, before });
     if (!done) return false;
     logger.info(`上下文压成摘要：约 ${done.before} → ${done.after} token`);
     return true;
@@ -246,7 +260,7 @@ export function createDirector(deps: DirectorDeps): Director {
 
   return {
     choose,
-    dress: (line) => (config.memes.enabled ? decorateMeme(line, repos.memes.read(), rand) : line),
+    dress: (line) => (live.get().memes.enabled ? decorateMeme(line, repos.memes.read(), rand) : line),
     speak,
     hear,
     remind,

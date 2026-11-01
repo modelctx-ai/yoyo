@@ -1,18 +1,24 @@
 /**
- * 常驻进程的外层：按 config.json 组装应用、跑常驻循环；config.json 改了，就关掉这一份、按新的再组装一份。
+ * 常驻进程的外层：按 config.json 组装应用、跑常驻循环。config.json 改了，按改了哪些项分两种：
+ * 都是就地生效的（`app/settings.ts` 的配置项表里标了 `live`），把新的一份交给应用，不重建；
+ * 有一项要重建，等主线程这一轮说完（最多等 `REBUILD_WAIT_MS`），关掉这一份、按新的再组装一份。
  * 改坏了（不是 JSON、驱动桌宠却缺语音）只记一行，接着用现在的，等下一次改好。
  */
 import { statSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { runDaemon, type DaemonOptions } from '../runtime/daemon.ts';
 import { assertDirectorReady, loadConfig, type Config } from './config.ts';
 import { createApp, type App, type AppOverrides, type Resume } from './container.ts';
+import { classify } from './settings.ts';
 import { consoleLogger, errorText } from './log.ts';
 import type { Paths } from './paths.ts';
 import type { Logger } from '../ports/index.ts';
 
 /** 多久看一次 config.json 变了没有。按 stat 轮询：编辑器另存再改名、管理页原子写入都认得出。 */
 export const CONFIG_POLL_MS = 1000;
+/** 要重建时最多等主线程这一轮说完这么久（右键对话一轮最多 55 秒），等不到照样重建。 */
+export const REBUILD_WAIT_MS = 90_000;
 
 /**
  * 盯着 config.json：内容变了、读得出来、驱动桌宠时语音也配齐了，才交给 `onChange`。
@@ -69,6 +75,8 @@ export function watchConfig(
 export interface SuperviseOptions {
   readonly logger?: Logger;
   readonly intervalMs?: number;
+  /** 测试用：要重建时最多等主线程多久。 */
+  readonly rebuildWaitMs?: number;
   /** 测试替身。 */
   readonly create?: (config: Config, paths: Paths, overrides: AppOverrides) => Promise<App>;
   readonly run?: (app: App, options: DaemonOptions) => Promise<void>;
@@ -99,12 +107,28 @@ export async function supervise(config: Config, paths: Paths, options: Supervise
     }
     const generation = new AbortController();
     let next: Config | null = null;
+    const running = app;
     const stop = watchConfig(
       paths.configFile,
       seen,
       (changed) => {
+        // 已经在等着重建了：重建时用最新的这份
+        if (next !== null) {
+          next = changed;
+          return;
+        }
+        const change = classify(running.config, changed);
+        if (change.kind === 'none') return;
+        if (change.kind === 'live') {
+          running.reconfigure(changed);
+          current = changed;
+          logger.info(`config.json 改了，就地换上：${change.paths.join('、')}`);
+          return;
+        }
         next = changed;
-        generation.abort();
+        // 等主线程这一轮说完再关，等太久照样关
+        const waited = delay(options.rebuildWaitMs ?? REBUILD_WAIT_MS, undefined, { ref: false });
+        void Promise.race([running.orchestrator.idle(), waited]).then(() => generation.abort());
       },
       { logger, ...(options.intervalMs ? { intervalMs: options.intervalMs } : {}) },
     );

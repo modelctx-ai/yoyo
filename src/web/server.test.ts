@@ -16,7 +16,7 @@ import {
 } from '@modelctx-ai/ctx';
 import { createMemoryStore as createMemory } from '@modelctx-ai/ctx-memory';
 
-import { parseConfig } from '../app/config.ts';
+import { liveConfig, parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import type { PaceDecision } from '../kernel/pace.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
@@ -146,7 +146,7 @@ describe('web 管理页', () => {
 
   beforeAll(async () => {
     web = await startWeb({
-      config: parseConfig({ llm: { model: 'demo', apiKey: 'secret-key' }, memory: { enabled: true } }),
+      config: liveConfig(parseConfig({ llm: { model: 'demo', apiKey: 'secret-key' }, memory: { enabled: true } })),
       paths,
       repos,
       context,
@@ -372,13 +372,14 @@ describe('web 管理页', () => {
       data: { error: '整份配置要是一个对象' },
     });
     assert.equal((await call('PATCH', '/api/config', { switches: { 'web.enabled': false } })).status, 400);
+    // 整份存的只记一笔；开关记了前后值，能撤销
+    const edits = repos.activity.list(10).filter((event) => event.type === 'config-edit');
     assert.deepEqual(
-      repos.activity
-        .list(10)
-        .map((event) => event.type)
-        .filter((type) => type.startsWith('config-'))
-        .toSorted(),
-      ['config-edit', 'config-switch'],
+      edits.map((event) => [event['source'], event['text'] ?? null, event['before'] ?? null, event['after'] ?? null]),
+      [
+        ['web', null, null, null],
+        ['web', 'weather.enabled', '{"weather.enabled":null}', '{"weather.enabled":false}'],
+      ],
     );
   });
 
@@ -484,9 +485,14 @@ describe('web 管理页', () => {
     assert.equal((await call('PATCH', '/api/config/fields', { fields: { 'web.port': 1 } })).status, 400);
     assert.equal((await call('PATCH', '/api/config/fields', { fields: [] })).status, 400);
     assert.equal((await call('PATCH', '/api/config/fields', {})).status, 400);
-    const events = repos.activity.list(20).filter((event) => event.type === 'config-fields');
-    assert.equal(events.length, 1);
-    assert.equal(events[0]?.['text'], 'llm.model llm.apiKey pace.options', '只记改了哪几项，不记值');
+    // 前面的用例也记过；填错的、过期的都没记
+    const last = repos.activity
+      .list(20)
+      .filter((event) => event.type === 'config-edit')
+      .at(-1);
+    assert.equal(last?.['text'], 'llm.model pace.options', '还是码的密钥没改，不算');
+    assert.equal(last?.['after'], '{"llm.model":"demo-2","pace.options":[300,900,1800]}');
+    assert.ok(!JSON.stringify(repos.activity.list(50)).includes('secret-key'), '记录里没有密钥');
   });
 
   test('子任务等回答：详情带问题，POST /api/tasks/:id/answer 回答以后排队接着做；不在等的、空回答、没有的都报清楚', async () => {
@@ -961,7 +967,7 @@ describe('web 管理页：没开子任务、往前翻', () => {
       projection: yoyoProjection,
     });
     const web = await startWeb({
-      config: parseConfig({}),
+      config: liveConfig(parseConfig({})),
       paths,
       repos,
       context,

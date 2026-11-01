@@ -85,7 +85,15 @@ describe('container', () => {
     assert.ok(app.model);
     assert.ok(app.tools && app.tools.size > 0);
     assert.equal(app.context.session, 'pet:desk');
+    for (const name of ['get_settings', 'change_setting', 'undo_setting']) assert.ok(app.tools.has(name), name);
     await app.close();
+
+    // settings.agent 是 deny：yoyo 不能改自己的配置
+    const locked = await createApp(parseConfig({ ...config, settings: { agent: 'deny' } }), tempPaths(), {
+      logger: memoryLogger(),
+    });
+    assert.ok(locked.tools && !locked.tools.has('change_setting') && !locked.tools.has('get_settings'));
+    await locked.close();
   });
 
   test('overrides 换掉任意一项，null 也算', async () => {
@@ -390,6 +398,18 @@ describe('container', () => {
         ms: 600_000,
       },
     );
+    // 就地换上：读到的是新的配置，间隔跟着变
+    plain.reconfigure(parseConfig({ stage: 'console', intervalSec: 900, memory: { enabled: true, decision } }));
+    assert.equal(plain.config.intervalSec, 900);
+    const after = await plain.pacer.next({
+      now: 0,
+      tone: 'warm',
+      line: { text: '嗨', kind: 'whisper' },
+      talked: false,
+      unanswered: 1,
+      sinceTalkMs: null,
+    });
+    assert.equal(after.ms, 900_000);
     await plain.close();
 
     const decided = await createApp(parseConfig({ stage: 'console', pace: { decision } }), tempPaths(), {

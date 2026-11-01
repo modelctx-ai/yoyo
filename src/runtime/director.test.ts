@@ -16,7 +16,7 @@ import {
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { silentSynthesizer } from '../adapters/voice/silent.ts';
-import { parseConfig } from '../app/config.ts';
+import { liveConfig, parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import { sessionFor, yoyoProjection } from '../brain/context.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
@@ -114,7 +114,7 @@ function rig(options: RigOptions = {}): Rig {
   const search = options.search === undefined ? null : fakeSearch(calls, options.search);
   const model = options.model ?? null;
   const director = createDirector({
-    config,
+    config: liveConfig(config),
     paths,
     logger,
     host: fakeHost(calls, options.host),
@@ -139,7 +139,7 @@ function rig(options: RigOptions = {}): Rig {
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
   const orchestrator = createYoyoOrchestrator({
-    config,
+    config: liveConfig(config),
     paths,
     logger,
     repos,

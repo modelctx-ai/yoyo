@@ -22,6 +22,14 @@ import {
   type AppOverrides,
 } from '../app/container.ts';
 import { consoleLogger, errorText } from '../app/log.ts';
+import {
+  SETTINGS,
+  SETTING_PATHS,
+  changeText,
+  isSettingPath,
+  settingsAccess,
+  type EditResult,
+} from '../app/settings.ts';
 import { loadAgentProfiles } from '../app/agents.ts';
 import type { Paths } from '../app/paths.ts';
 import {
@@ -64,7 +72,6 @@ import { directorAlive, enqueue } from '../runtime/inbox.ts';
 import { createArtifactFiles } from '../storage/artifacts.ts';
 import { openDatabase } from '../storage/db.ts';
 import { createRepos } from '../storage/repos.ts';
-import { saveSwitches } from '../web/settings.ts';
 import { flagText, type Domain } from './registry.ts';
 import { searchKinds, searchRows, searchTerms } from './search.ts';
 
@@ -205,6 +212,22 @@ function guard<T>(work: () => T): T {
     if (error instanceof TaskError || error instanceof ApprovalError) throw new Error(error.message, { cause: error });
     throw error;
   }
+}
+
+/** 命令行给的值：按 JSON 读，读不成就当文字。 */
+export function cliValue(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** 改完打出来的一行：改了什么、什么时候生效。 */
+function editedLine(result: EditResult): string {
+  if (result.changes.length === 0) return '值和原来一样，没改';
+  const when = result.apply === 'live' ? '常驻进程一两秒内就地换上' : '常驻进程等这一轮说完重建一份';
+  return `${result.changes.map(changeText).join('；')}（${when}）`;
 }
 
 function updateRepo(): string {
@@ -983,6 +1006,58 @@ export function buildDomains(env: CommandEnv): Domain[] {
       ],
     },
     {
+      name: 'config',
+      summary: '看、改、撤销能直接改的几项配置',
+      detail:
+        '和工作台设置页、yoyo 自己改配置是同一张表：每一项写明怎么校验、改了是马上生效还是常驻进程重建一份。' +
+        '值按 JSON 读（300、true、[300,900]），读不成 JSON 就当文字。别的项在 config.json 里改。',
+      verbs: [
+        {
+          name: 'get',
+          summary: '列出能改的项和现在的值，给了路径就只看那一项',
+          usage: '[路径]',
+          run(_flags, args) {
+            const [path] = args;
+            const settings = settingsAccess(env.paths.configFile, env.repos().activity);
+            if (path !== undefined) {
+              if (!isSettingPath(path)) throw new Error(`${path} 不是能这样改的项，yoyo config get 看有哪些`);
+              return env.out(JSON.stringify(settings.values([path])[path]));
+            }
+            const values = settings.values(SETTING_PATHS);
+            for (const key of SETTING_PATHS) {
+              const spec = SETTINGS[key];
+              const who = spec.editor === 'agent' ? '，yoyo 也能改' : '';
+              env.out(
+                `${key}\t${JSON.stringify(values[key])}\t${spec.apply === 'live' ? '马上生效' : '要重建'}${who}\t${spec.summary}`,
+              );
+            }
+          },
+        },
+        {
+          name: 'set',
+          summary: '改一项',
+          usage: '<路径> <值>',
+          run(_flags, args) {
+            const [path, ...rest] = args;
+            if (path === undefined || rest.length === 0)
+              throw new Error('要给路径和值：yoyo config set intervalSec 900');
+            const result = settingsAccess(env.paths.configFile, env.repos().activity).edit(
+              [{ path, value: cliValue(rest.join(' ')) }],
+              'cli',
+            );
+            env.out(editedLine(result));
+          },
+        },
+        {
+          name: 'undo',
+          summary: '撤销最近一次逐项修改（工作台、命令行、yoyo 改的都算）',
+          run() {
+            env.out(editedLine(settingsAccess(env.paths.configFile, env.repos().activity).undo('cli')));
+          },
+        },
+      ],
+    },
+    {
       name: 'app',
       summary: 'yoyo.app 自己的设置',
       detail:
@@ -998,7 +1073,10 @@ export function buildDomains(env: CommandEnv): Domain[] {
               return env.out(env.settings().app.launchAtLogin ? '登录时自动打开：开着' : '登录时自动打开：关着');
             }
             if (want !== 'on' && want !== 'off') throw new Error('要写 on 或 off：yoyo app login on');
-            saveSwitches(env.paths.configFile, { 'app.launchAtLogin': want === 'on' });
+            settingsAccess(env.paths.configFile, env.repos().activity).edit(
+              [{ path: 'app.launchAtLogin', value: want === 'on' }],
+              'cli',
+            );
             env.out(want === 'on' ? '登录时会自动打开 yoyo' : '登录时不再自动打开 yoyo');
             if (!env.paths.appBundle) env.out('注意：现在不是从 yoyo.app 跑的，这一项只在 yoyo.app 里管用');
           },

@@ -75,6 +75,12 @@ yoyo 的工作台：一个只在这台电脑上能打开的网页，从右键「
 * **等太久按拒绝**：24 小时没批（`files.askTimeout` 可以改，`0` 是一直等）就过期，不做，yoyo 照常告诉你。
 * 这些只能你批：yoyo 自己批不了，也不会因为你对她说「批准」就算数；要在工作台或命令行里点。
 
+# 让 yoyo 改设置
+
+打开了 `llm.tools`，直接跟 yoyo 说就行：「以后少念叨点」「别放语音了」「傍晚别报天气」「表情包别配了」。她先看现在是多少，改好以后告诉你改了什么，马上生效，不用重启；说「刚才那个改回去」她就撤销。
+
+她只能改碎碎念的间隔、语音、音效、傍晚的天气、表情包、念完听回应、子任务通知这几项。模型、密钥、MCP 服务器这些只有你能改，在工作台的「设置」或者命令行里。每次改都会在工作台的「轨迹」里记一笔，`pnpm yoyo config undo` 能撤销最近一次。想她每次改之前先问你，或者干脆不让她改，见[让 yoyo 改自己的配置](configuration.md#让-yoyo-改自己的配置)。
+
 # 按键
 
 Control+Option+Y：马上听一句。需要系统允许辅助功能。
@@ -104,6 +110,9 @@ pnpm yoyo search 周报    # 在对话、子任务、记住的事、日程、联
 pnpm yoyo memory core    # 记忆里的画像
 pnpm yoyo chat sync      # 右键对话没接上时重接
 pnpm yoyo web open       # 打开工作台
+pnpm yoyo config get     # 能直接改的配置和现在的值
+pnpm yoyo config set intervalSec 900   # 改一项，常驻进程一两秒内换上
+pnpm yoyo config undo    # 撤销最近一次修改
 ```
 
 完整的列表以 `pnpm yoyo` 的输出为准。`pnpm yoyo` 也可以写成 `node bin/yoyo.js`。常驻进程开着时，`whisper` 和 `listen` 交给它去做，不会另开一个去抢桌宠。

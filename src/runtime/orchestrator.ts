@@ -11,12 +11,13 @@ import {
   type RecoveredRun,
 } from '@modelctx-ai/ctx';
 
-import type { Config } from '../app/config.ts';
+import { derived, type Config, type LiveConfig } from '../app/config.ts';
 import { errorText } from '../app/log.ts';
 import type { Paths } from '../app/paths.ts';
 import type { FactSources } from '../brain/agents.ts';
 import { generateChat, generateRelay, generateReply, generateWhisper } from '../brain/compose.ts';
 import { OWNER_TOOL_NAMES } from '../brain/files.ts';
+import { SETTINGS_TOOL_NAMES } from '../brain/settings.ts';
 import { tapDeltas } from '../brain/harness.ts';
 import { recordUser } from '../brain/context.ts';
 import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
@@ -136,7 +137,8 @@ export interface PerformResult {
 }
 
 export interface YoyoOrchestratorDeps {
-  readonly config: Config;
+  /** 每次用到时读现在的那份：间隔、听写、通知、表情包这些改了就地生效。 */
+  readonly config: LiveConfig;
   readonly paths: Paths;
   readonly logger: Logger;
   readonly repos: Repos;
@@ -200,6 +202,11 @@ export interface YoyoOrchestrator extends Orchestrator {
    * 上一拍没走完就跳过。门控和整理在后台跑，不等。
    */
   tick(): Promise<void>;
+  /**
+   * 主线程空下来时 resolve：拍子没在走，也没有右键对话、工作台聊天、桌宠自己的碎碎念在跑。子任务不算，它们有自己的队列。
+   * 要重建应用时先等它，不把正在说的一轮砍掉。
+   */
+  idle(): Promise<void>;
   /** 每秒一拍，直到 `signal` 中止或 `close`。中止时正在跑的模型也一起取消。 */
   start(signal?: AbortSignal): void;
   readonly state: ScheduleState;
@@ -211,20 +218,40 @@ export interface YoyoOrchestrator extends Orchestrator {
  */
 export function relayTools(enabled: boolean, names: readonly string[] | undefined): boolean | readonly string[] {
   if (!enabled) return false;
-  return names ? names.filter((name) => !OWNER_TOOL_NAMES.includes(name)) : true;
+  return names ? names.filter((name) => !OWNER_TOOL_NAMES.includes(name) && !SETTINGS_TOOL_NAMES.includes(name)) : true;
 }
 
 export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestrator {
-  const { config, paths, logger, repos, clipboard, search, context, harness, director, model, factSources } = deps;
+  const {
+    config: live,
+    paths,
+    logger,
+    repos,
+    clipboard,
+    search,
+    context,
+    harness,
+    director,
+    model,
+    factSources,
+  } = deps;
   const memory = deps.memory ?? null;
   const clock = deps.clock ?? Date.now;
   // 编排器只调 harness.run；要看文字增量的那一轮（工作台的流式回复）由 tap 改走 stream
   const tap = tapDeltas(harness);
   const runs = createOrchestrator({ harness: tap.harness, store: context.store, logger });
   // 报错里抹掉的密钥：模型的，加上记忆的决策、提取模型的，和碎碎念间隔的决策模型的
-  const secrets = [config.llm.apiKey, ...memorySecrets(config.memory), ...paceSecrets(config.pace)].filter(Boolean);
-  const intervalMs = whisperIntervalMs(config.intervalSec);
-  const pacer = deps.pacer ?? fixedPacer(intervalMs);
+  // 密钥和要不要接子任务是组装时定的：改了要重建，不会就地变
+  const initial = live.get();
+  const secrets = [initial.llm.apiKey, ...memorySecrets(initial.memory), ...paceSecrets(initial.pace)].filter(Boolean);
+  const intervalMs = (): number => whisperIntervalMs(live.get().intervalSec);
+  // 没给定间隔的就按 `intervalSec`，它改了跟着换
+  const fixed = derived(
+    live,
+    (config) => config.intervalSec,
+    (config) => fixedPacer(whisperIntervalMs(config.intervalSec)),
+  );
+  const pacer = (): WhisperPacer => deps.pacer ?? fixed();
   const state: ScheduleState = {
     nextWhisper: clock(),
     lastTalk: 0,
@@ -239,6 +266,28 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   /** 常驻时随拍子一起停：停下以后，正在跑的模型不再等。 */
   const stopping = new AbortController();
   let busy = false;
+  /** 拍子之外在跑的几轮：右键对话、工作台聊天、桌宠自己的碎碎念。 */
+  let inflight = 0;
+  let waiters: (() => void)[] = [];
+
+  /** 主线程空了就叫醒等 `idle` 的。 */
+  function settle(): void {
+    if (busy || inflight > 0) return;
+    const ready = waiters;
+    waiters = [];
+    for (const wake of ready) wake();
+  }
+
+  /** 拍子之外跑一轮：记着它在跑，跑完看看主线程是不是空了。 */
+  async function track<T>(work: () => Promise<T>): Promise<T> {
+    inflight += 1;
+    try {
+      return await work();
+    } finally {
+      inflight -= 1;
+      settle();
+    }
+  }
   let started = false;
   let closed = false;
   let timer: NodeJS.Timeout | undefined;
@@ -252,7 +301,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
    * 上次没转告完就停了的，开始时补上。
    */
   const relayQueue = new Set<number>(
-    config.tasks.enabled
+    initial.tasks.enabled
       ? repos.agentTasks
           .list({ states: ['waiting', 'done', 'failed', 'cancelled'], limit: 20 })
           .filter(needsRelay)
@@ -294,7 +343,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     const now = new Date(clock());
     const day = localDateKey(now);
     const doneOn = failedOn === day ? day : repos.kv.get(CONSOLIDATED_KEY);
-    if (!consolidateDue(config.memory.consolidateAt, now, state.lastTalk, doneOn)) return;
+    if (!consolidateDue(live.get().memory.consolidateAt, now, state.lastTalk, doneOn)) return;
     consolidating = (async () => {
       const pending = await memory.store.notes.list({ pending: true, limit: 1 });
       if (pending.length === 0) {
@@ -357,7 +406,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
 
   /** 像提问就先搜一下。打开工具时由模型自己决定搜不搜，不再先按问句搜一遍。 */
   async function lookUp(heard: string): Promise<string> {
-    if (!search || config.llm.tools || !shouldSearch(heard)) return '';
+    if (!search || live.get().llm.tools || !shouldSearch(heard)) return '';
     try {
       const found = await search.search(heard);
       if (found) repos.activity.record({ type: 'search', query: heard });
@@ -377,7 +426,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       tone,
       model: llm,
       secrets,
-      tools: config.llm.tools,
+      tools: live.get().llm.tools,
       signal: stopping.signal,
       ...(factSources ? { sources: factSources.reply } : {}),
       ...(searchText ? { searchText } : {}),
@@ -396,7 +445,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     await director.speak(line, now);
     if (!model) return { line, talked: false };
     try {
-      if (!wantsReply(chosen, config.listen)) return { line, talked: false };
+      if (!wantsReply(chosen, live.get().listen)) return { line, talked: false };
       const accepted = await director.hear();
       if (accepted === null) return { line, talked: false };
       if (accepted) await reply(accepted, chosen.tone, now, model);
@@ -431,7 +480,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         tone: toneForHour(new Date(clock()).getHours()),
         model,
         secrets,
-        tools: config.llm.tools,
+        tools: live.get().llm.tools,
         signal: runSignal(signal),
         ...(runId ? { runId } : {}),
         ...(factSources ? { sources: factSources.reply } : {}),
@@ -445,11 +494,11 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     }
   }
 
-  const chat = (text: string, signal?: AbortSignal): Promise<string> => converse(text, signal);
+  const chat = (text: string, signal?: AbortSignal): Promise<string> => track(() => converse(text, signal));
 
   async function talk(text: string, signal?: AbortSignal, onDelta?: (text: string) => void): Promise<string> {
     const at = clock();
-    const answer = await converse(text, signal, onDelta);
+    const answer = await track(() => converse(text, signal, onDelta));
     // 回上来了才记：没回成的那句不留在日志里，工作台上提示一声就好。记的是整段回复（和 done 交回去的一样），不是增量拼的
     await context.append(
       userEntry(text, { at, source: WORKBENCH_SOURCE }),
@@ -473,7 +522,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       const task = repos.agentTasks.get(id);
       if (!task || !needsRelay(task)) continue;
       const asking = task.state === 'waiting';
-      if (config.tasks.notify && (asking || task.state === 'done' || task.state === 'failed')) {
+      if (live.get().tasks.notify && (asking || task.state === 'done' || task.state === 'failed')) {
         await director.speak(await relayLine(task, now), now);
         state.lastTalk = clock();
         wrote = true;
@@ -489,7 +538,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
   async function relayApprovals(now: Date): Promise<void> {
     const ids = [...approvalQueue].toSorted((a, b) => a - b);
     approvalQueue.clear();
-    if (!config.tasks.notify) return;
+    if (!live.get().tasks.notify) return;
     for (const id of ids) {
       const approval = repos.approvals.get(id);
       if (!approval) continue;
@@ -507,7 +556,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         tone: toneForHour(now.getHours()),
         model,
         secrets,
-        tools: relayTools(config.llm.tools, deps.toolNames?.()),
+        tools: relayTools(live.get().llm.tools, deps.toolNames?.()),
         signal: stopping.signal,
         ...(factSources ? { sources: factSources.reply } : {}),
       });
@@ -522,11 +571,11 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     if (!model) return announceLine(task, now, approving.length > 0);
     try {
       return await generateRelay(context, orchestrator, {
-        notice: relayPrompt(task, repos.artifacts.list({ task: task.id }), config.llm.tools, approving),
+        notice: relayPrompt(task, repos.artifacts.list({ task: task.id }), live.get().llm.tools, approving),
         tone: toneForHour(now.getHours()),
         model,
         secrets,
-        tools: relayTools(config.llm.tools, deps.toolNames?.()),
+        tools: relayTools(live.get().llm.tools, deps.toolNames?.()),
         signal: stopping.signal,
         ...(factSources ? { sources: factSources.reply } : {}),
       });
@@ -538,7 +587,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
 
   async function petWhisper(signal?: AbortSignal): Promise<string> {
     if (!model) throw new Error('没配 llm，写不了碎碎念');
-    return (await writeWhisper(new Date(clock()), model, signal)).text;
+    const llm = model;
+    return track(async () => (await writeWhisper(new Date(clock()), llm, signal)).text);
   }
 
   /**
@@ -546,7 +596,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
    * `pacer` 不该抛错，万一抛了也退回 `intervalSec`：这里不能出错，不然 `nextWhisper` 不动，下一拍又开口。
    */
   async function paceAfter(spoken: PerformResult | null, spokeAt: number): Promise<PaceDecision> {
-    if (!spoken) return { source: 'fixed', ms: intervalMs };
+    if (!spoken) return { source: 'fixed', ms: intervalMs() };
     // 这句有回应就清零；上一句以后主人说过话，前面没人理的不算了，从这句重新数
     state.unanswered = spoken.talked ? 0 : state.lastTalk > lastSpokeAt ? 1 : state.unanswered + 1;
     lastSpokeAt = spokeAt;
@@ -559,10 +609,10 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       sinceTalkMs: state.lastTalk > 0 ? Math.max(0, spokeAt - state.lastTalk) : null,
     };
     try {
-      return await pacer.next(input, stopping.signal);
+      return await pacer().next(input, stopping.signal);
     } catch (error) {
       logger.warn(`碎碎念的间隔没挑成，这句按固定间隔：${redact(errorText(error), secrets)}`);
-      return { source: 'fallback', ms: intervalMs, reason: 'error' };
+      return { source: 'fallback', ms: intervalMs(), reason: 'error' };
     }
   }
 
@@ -570,7 +620,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     if (busy || closed) return;
     busy = true;
     try {
-      if (config.clipboard.enabled) notePaste(repos, clipboard.read());
+      if (live.get().clipboard.enabled) notePaste(repos, clipboard.read());
       if ((await director.syncPetChat()) > 0) wrote = true;
       for (const message of drain(paths.inboxFile)) {
         if (message.type === 'listen') await listen();
@@ -582,9 +632,9 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         await director.remind(item, now);
         state.lastTalk = clock();
       }
-      if (config.tasks.enabled && relayQueue.size > 0) await relayTasks(now);
+      if (live.get().tasks.enabled && relayQueue.size > 0) await relayTasks(now);
       if (approvalQueue.size > 0) await relayApprovals(now);
-      if (config.memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
+      if (live.get().memes.enabled && memeDue(clock(), state.nextWhisper, state.memeFailedAt)) {
         try {
           await director.refreshMemes(now);
           state.memeFailedAt = null;
@@ -615,7 +665,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         // 没配决策模型时和以前一样，不多记一条
         if (pace.source !== 'fixed') repos.activity.record(paceActivity(pace));
       }
-      if (compactDue(config, clock(), state.lastCompact)) {
+      if (compactDue(live.get(), clock(), state.lastCompact)) {
         state.lastCompact = clock();
         try {
           await director.compactIfNeeded();
@@ -629,6 +679,7 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
       logger.error(errorText(error));
     } finally {
       busy = false;
+      settle();
     }
   }
 
@@ -678,6 +729,10 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
     },
     petWhisper,
     tick,
+    idle() {
+      if (!busy && inflight === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => waiters.push(resolve));
+    },
     start,
     state,
   };

@@ -5,7 +5,8 @@
 import { compareEntries, textOf, type Context, type Entry, type MemoryStore } from '@modelctx-ai/ctx';
 import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
-import type { Config } from '../app/config.ts';
+import type { LiveConfig } from '../app/config.ts';
+import { editRecord, type EditResult } from '../app/settings.ts';
 import { errorText } from '../app/log.ts';
 import { APPROVAL_EVENT, TASK_EVENT, taskSession, taskSteps } from '../brain/context.ts';
 import { ApprovalError, decideApproval } from '../features/approvals/approvals.ts';
@@ -23,7 +24,8 @@ import { enqueue } from '../runtime/inbox.ts';
 import { SettingsError, readSettings, saveFields, saveSwitches, saveText } from './settings.ts';
 
 export interface WebDeps {
-  readonly config: Config;
+  /** 每次读现在的那份：就地换上的项（例如几档间隔）页面上马上看得到。 */
+  readonly config: LiveConfig;
   readonly paths: Pick<Paths, 'inboxFile' | 'configFile'>;
   readonly repos: Repos;
   /** 主线程的上下文；`store` 用来读子任务各自的会话。 */
@@ -224,8 +226,13 @@ export function paceView(pace: PaceDecision, options: PaceOptions): Record<strin
 }
 
 export function createWebApi(deps: WebDeps): (method: string, path: string, body?: unknown) => Promise<ApiResult> {
-  const { config, repos, memory } = deps;
+  const { repos, memory } = deps;
   const now = deps.now ?? (() => new Date());
+
+  /** 开关和表单改成了就记一笔，和命令行、模型改的一样能撤销。 */
+  function recordEdit(result: EditResult): void {
+    if (result.changes.length > 0) repos.activity.record(editRecord('web', result.changes));
+  }
 
   async function status(): Promise<unknown> {
     let pet: unknown = null;
@@ -238,6 +245,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
     }
     const schedule = deps.schedule?.();
     const core = await memory.core.get();
+    const config = deps.config.get();
     return {
       stage: config.stage,
       petId: config.pet.id,
@@ -268,7 +276,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
       memory.procedures.list({ active: true }),
     ]);
     return {
-      enabled: config.memory.enabled,
+      enabled: deps.config.get().memory.enabled,
       core: core?.text.trim() ? { text: core.text, at: core.at } : null,
       facts: facts
         .toSorted((a, b) => a.validFrom - b.validFrom)
@@ -601,24 +609,23 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
         const value = text(body, 'text');
         if (value === undefined) throw new RequestError('整份配置要是一段文字');
         saveText(deps.paths.configFile, value, text(body, 'version'));
-        repos.activity.record({ type: 'config-edit' });
+        // 整份存的没有逐项的前后值，撤销不了
+        repos.activity.record({ type: 'config-edit', source: 'web' });
         // 常驻进程盯着 config.json，一两秒内自己换上
         return ok({ saved: true });
       }
       if (route === 'PATCH /api/config') {
         const switches = field(body, 'switches');
         if (typeof switches !== 'object' || switches === null) throw new RequestError('要给 switches');
-        saveSwitches(deps.paths.configFile, switches as Record<string, unknown>);
-        repos.activity.record({ type: 'config-switch', text: Object.keys(switches).join(' ') });
+        recordEdit(saveSwitches(deps.paths.configFile, switches as Record<string, unknown>));
         return ok({ saved: true });
       }
       if (route === 'PATCH /api/config/fields') {
         const fields = field(body, 'fields');
         if (typeof fields !== 'object' || fields === null || Array.isArray(fields))
           throw new RequestError('要给 fields');
-        saveFields(deps.paths.configFile, fields as Record<string, unknown>, text(body, 'version'));
-        // 行为记录只写改了哪几项，不写值（里面有密钥）
-        repos.activity.record({ type: 'config-fields', text: Object.keys(fields).join(' ') });
+        // 行为记录里有前后值，能撤销；密钥打码
+        recordEdit(saveFields(deps.paths.configFile, fields as Record<string, unknown>, text(body, 'version')));
         return ok({ saved: true });
       }
       if (route === 'POST /api/chat') return ok(await talk(body));

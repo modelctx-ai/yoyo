@@ -27,6 +27,9 @@ sources:
   - id: settings
     resource: src/web/settings.ts
     title: 改配置
+  - id: table
+    resource: src/app/settings.ts
+    title: 配置项表
   - id: supervisor
     resource: src/app/supervisor.ts
     title: 换配置
@@ -122,18 +125,24 @@ sources:
 
 「设置」页签：常用的开关直接点，开关下面是「常用设置」表单（模型、语音、碎碎念间隔），整份 `config.json` 也能改。写进文件就完了，换上新配置是常驻进程自己的事（见下一节）。[^settings]
 
+开关和表单只是配置项表（`app/settings.ts` 的 `SETTINGS`）的两个子集：每一项怎么校验、改了就地生效还是重建、模型能不能改，都写在表里，命令行的 `yoyo config` 和模型的 `change_setting` 用的是同一张表和同一个写入函数 `editSettings`。表里的路径编译期对着 `Config` 查，写错一条类型检查就不过。[^table]
+
 * 读：整份原文，名字像密钥的键（`apiKey`、`token`、`secret`、`password`、`Authorization` 之类，`mcpServers` 的 `env`、`headers` 里的也算）非空的值换成 `••••••`；还有各开关按缺省值补齐后的值，和文件内容的指纹。
 * 存整份：交回来的还是 `••••••` 的，换回同一位置原来的值；原来那里没有就不存，免得把码当成密钥写进去。指纹对不上（开关刚点过、编辑器里改过）回 409，页面换成最新的，刚才的改动要重新改。
-* 只改开关：只认开关表里那几个、只收 `true` / `false`，别的原样留着。`web.enabled` 不在里面：关掉它管理页就没了。开关改完，框里的整份没动过就跟着刷新。
-* 只改表单里的几项（`PATCH /api/config/fields`）：只认白名单里的路径，值按各项自己的校验（类型、范围），写错回 400，一句话说是哪一项（几项都错的一起说，一项也不写；报错里不带值）；写得进去的几项按路径放回原位，别的内容和键的顺序原样留着（没有的键加在那一段末尾）。给了 `version` 先对指纹，对不上回 409，和整份存一样。白名单：`llm.provider`（`openai-compatible`、`anthropic`）、`llm.baseUrl`（空或 `http(s)://` 开头）、`llm.model`、`llm.apiKey`、`llm.tools`，`speech.apiKey`、`speech.model`、`speech.referenceId`、`speech.autoplay`、`speech.tone`（四种语气或空，空是拿掉这一项），`intervalSec`（60 到 86400 秒），`pace.options`（2 到 8 档、每档 60 到 86400 的整数秒，去重排序再写）、`pace.recent`（0 到 20）。`llm.tools`、`speech.autoplay` 页面上已经是开关，表单里不重复放，接口收。记 `config-fields`，只写改了哪几项，不写值。
+* 只改开关：只认开关表里那几个、只收 `true` / `false`（按配置项表校验），别的原样留着。`web.enabled` 不在里面：关掉它管理页就没了。开关改完，框里的整份没动过就跟着刷新。
+* 只改表单里的几项（`PATCH /api/config/fields`）：只认白名单里的路径，值按各项自己的校验（类型、范围），写错回 400，一句话说是哪一项（几项都错的一起说，一项也不写；报错里不带值）；写得进去的几项按路径放回原位，别的内容和键的顺序原样留着（没有的键加在那一段末尾）。给了 `version` 先对指纹，对不上回 409，和整份存一样。白名单：`llm.provider`（`openai-compatible`、`anthropic`）、`llm.baseUrl`（空或 `http(s)://` 开头）、`llm.model`、`llm.apiKey`、`llm.tools`，`speech.apiKey`、`speech.model`、`speech.referenceId`、`speech.autoplay`、`speech.tone`（四种语气或空，空是拿掉这一项），`intervalSec`（60 到 86400 秒），`pace.options`（2 到 8 档、每档 60 到 86400 的整数秒，去重排序再写）、`pace.recent`（0 到 20）。`llm.tools`、`speech.autoplay` 页面上已经是开关，表单里不重复放，接口收。
 * 表单里的密钥（`llm.apiKey`、`speech.apiKey`）：读出来是 `••••••`（空的是空），交回来还是码就不改（原来那里没有值就回 400，免得把码当密钥存），交新的是换，交空是清掉。页面只交回动过的项，所以没碰的密钥根本不会出现在请求里。
-* 写之前和常驻进程启动时一样检查（`parseConfig`、`assertDirectorReady`），不过就回 400，文件一个字不改。先写临时文件再改名，权限照旧。记 `config-edit` 或 `config-switch`。
+* 写之前和常驻进程启动时一样检查（`parseConfig`、`assertDirectorReady`），不过就回 400，文件一个字不改。先写临时文件再改名，权限照旧。值和原来一样的项不算改，一项都没变就不写文件。
+* 行为记录：开关和表单改成了记一笔 `config-edit`，带 `source: web`、编号 `id`、改了哪几项（`text`）、改之前和之后文件里的原文（`before`、`after`，按路径存成 JSON 文字，密钥打码），撤销的那一笔带 `undoes`（被撤销的那一笔的 `id`；不用时间认，同一毫秒里改两次时间是一样的），命令行和模型改的也这样记，能撤销（`yoyo config undo`、模型的 `undo_setting`）。整份存只记 `{ type: 'config-edit', source: 'web' }`，没有逐项的前后值，撤销不了。以前的 `config-switch`、`config-fields` 不再记。
 
 # 热加载
 
 常驻时外层是 `supervise`：组装应用、跑常驻循环，同时每秒 `stat` 一次 `config.json`（编辑器另存再改名、管理页的原子写入都认得出）。[^supervisor]
 
-* 内容变了、读得出来、过了 `assertDirectorReady`，而且按缺省值补齐以后真的不一样（只改空白不算），才换：中止这一代的常驻循环（它关掉应用：等正在跑的一轮、关按键助手、管理页、MCP、对话渠道），按新配置再组装一份、再跑。
+* 内容变了、读得出来、过了 `assertDirectorReady`，而且按缺省值补齐以后真的不一样（只改空白不算），才换。换法按 `classify`（`app/settings.ts`）：把补齐缺省值以后的新旧两份按叶子路径比，数组算一片叶子。[^table]
+  * 变了的叶子都归配置项表里标了 `live` 的项：就地换上。`app.reconfigure(next)` 换掉应用里 `LiveConfig` 的那一份，编排器、导演、定间隔的、管理页的状态每次用到时读现在的那份，什么都不重建，记一行「config.json 改了，就地换上：intervalSec、weather.enabled」。定间隔的跟着 `intervalSec`、`pace` 变：哪一部分变了才按新的再挑一个（`derived`）。
+  * 有一片叶子不在表里（`mcpServers`、`context`、认不出的键、`pace.decision`），或者归 `rebuild` 的项：重建。先等主线程空下来（编排器的 `idle()`：拍子没在走，也没有右键对话、工作台聊天、桌宠自己的碎碎念在跑；子任务不算），最多等 90 秒（`REBUILD_WAIT_MS`），再中止这一代的常驻循环（它关掉应用：等正在跑的一轮、关按键助手、管理页、MCP、对话渠道），按新配置再组装一份、再跑。等的时候文件又改了，重建用最新的那份。不在表里就算重建：漏登记最多多重建一次，不会该重建的没重建。
+  * 就地换上以后再重建：比的是应用现在用的那份，新的一份也带着前面就地改的。
 * 改坏了只记一行「config.json 改得不对，先接着用现在的：…」，同一个问题只记一次。
 * 读得出来、按它却组装不起来（建应用时抛错）：记一行「按新的 config.json 组装不起来，先接着用原来的：…」，退回上一份，等文件再改才换，同一份不反复试。
 * 新的一代一开始先对一次文件：上一份换下来的那一两秒里又存了一次，也不会漏。
@@ -162,4 +171,5 @@ sources:
 [^commands]: 领域表
 [^settings]: 改配置
 [^supervisor]: 换配置
+[^table]: 配置项表
 [^harness]: 取文字增量

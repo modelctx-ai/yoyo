@@ -183,6 +183,11 @@ const files = z.looseObject({
   askTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
 });
 
+/** yoyo 自己改配置：回复的模型能不能用 `change_setting`、`undo_setting`，开关和读写文件的一样。只在 `llm.tools` 打开时有。 */
+const selfSettings = z.looseObject({
+  agent: permission(),
+});
+
 const context = z.looseObject({
   /** 交给模型的历史上限（估算 token）。不写就整段带上，和以前一样。 */
   maxTokens: optionalCount(),
@@ -334,6 +339,7 @@ export const configSchema = z.looseObject({
   context: z.preprocess(objectOrNothing, context.prefault({})),
   tasks: z.preprocess(objectOrNothing, tasks.prefault({})),
   files: z.preprocess(objectOrNothing, files.prefault({})),
+  settings: z.preprocess(objectOrNothing, selfSettings.prefault({})),
   memory: z.preprocess(objectOrNothing, memory.prefault({})),
   pace: z.preprocess(objectOrNothing, pace.prefault({})),
   /** 和常见的 mcpServers 写法相同。只在 `llm.tools` 打开时连接，每台服务器到那时再检查。 */
@@ -355,6 +361,7 @@ export type SandboxConfig = Config['sandbox'];
 export type WebConfig = Config['web'];
 export type TasksConfig = Config['tasks'];
 export type FilesConfig = Config['files'];
+export type SettingsConfig = Config['settings'];
 export type MemoryConfig = Config['memory'];
 export type PaceConfig = Config['pace'];
 export type SystemOneConfig = NonNullable<MemoryConfig['decision']>;
@@ -404,4 +411,39 @@ export function assertDirectorReady(config: Config): void {
 /** 模型配齐了才写碎碎念和回复。 */
 export function llmReady(settings: LlmConfig): boolean {
   return Boolean(settings.apiKey && settings.model && (settings.baseUrl || settings.provider === 'anthropic'));
+}
+
+/** 运行时读配置都经它：每次读到的是现在的那份。就地生效的项改了，常驻进程换掉里面那份，不重建。 */
+export interface LiveConfig {
+  get(): Config;
+}
+
+export interface ConfigCell extends LiveConfig {
+  /** 就地换上新的一份：只有常驻进程的外层（`supervise`）调。 */
+  set(next: Config): void;
+}
+
+export function liveConfig(initial: Config): ConfigCell {
+  let current = initial;
+  return {
+    get: () => current,
+    set(next) {
+      current = next;
+    },
+  };
+}
+
+/** 跟着配置变的东西：`key` 取出的那部分变了才重新 `build`，没变就用上次的。 */
+export function derived<T>(live: LiveConfig, key: (config: Config) => unknown, build: (config: Config) => T): () => T {
+  let seen: string | null = null;
+  let value: T;
+  return () => {
+    const config = live.get();
+    const now = JSON.stringify(key(config));
+    if (now !== seen) {
+      value = build(config);
+      seen = now;
+    }
+    return value;
+  };
 }

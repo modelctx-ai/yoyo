@@ -28,7 +28,8 @@ import { createSilentPlayer, silentSfx, silentSynthesizer } from '../adapters/vo
 import { createWhisperTranscriber } from '../adapters/voice/whisper-cpp.ts';
 import { startChannel, type Channel } from '../brain/channel.ts';
 import { createTaskContext, createYoyoContext } from '../brain/context.ts';
-import { createWhisperPacer, paceSecrets } from '../brain/pace.ts';
+import { createWhisperPacer, followPacer, paceSecrets } from '../brain/pace.ts';
+import { addSettingsTools } from '../brain/settings.ts';
 import { createYoyoHarness } from '../brain/harness.ts';
 import {
   MEMORY_SOURCE,
@@ -79,8 +80,9 @@ import { createRepos } from '../storage/repos.ts';
 import { startWeb, type WebServer } from '../web/server.ts';
 import { loadAgentProfiles } from './agents.ts';
 import { createCliRunner } from './cli.ts';
-import { speechReady, type AnysearchConfig, type Config } from './config.ts';
+import { derived, liveConfig, speechReady, type AnysearchConfig, type Config } from './config.ts';
 import { consoleLogger, errorText } from './log.ts';
+import { settingsAccess } from './settings.ts';
 import type { Paths } from './paths.ts';
 
 /** 组装好的各项服务。测试可以用 `createApp` 的 overrides 换掉任意一项。 */
@@ -116,7 +118,10 @@ export interface AppServices {
 }
 
 export interface App extends AppServices {
+  /** 现在的配置：就地换上过的话是换上以后的那份。 */
   readonly config: Config;
+  /** 就地换上新配置，不重建：只有 `supervise` 调，只在改的都是就地生效的项时调（见 `app/settings.ts` 的 `classify`）。 */
+  reconfigure(next: Config): void;
   readonly paths: Paths;
   /** 开本机对话渠道（只开一次），关闭应用时一起关。 */
   openChannel(): Promise<Channel>;
@@ -168,6 +173,8 @@ export function createSearch(anysearch: AnysearchConfig): WebSearch | null {
 }
 
 export async function createApp(config: Config, paths: Paths, overrides: AppOverrides = {}): Promise<App> {
+  // 组装只按 `config` 来；运行时读到的是 `live`，就地生效的项改了换掉里面那份
+  const live = liveConfig(config);
   /** 有替身用替身（null 也算替身），否则现做一份。 */
   function use<K extends keyof AppServices>(key: K, make: () => AppServices[K]): AppServices[K] {
     const given = overrides[key];
@@ -238,6 +245,15 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     if (fileAccess && bash) {
       addBashTool(local, { access: fileAccess, repos, sandbox: bash, config: config.files, ...askDeps });
     }
+    // yoyo 自己改配置：只认模型能改的几项，改了记一笔，常驻进程盯着文件就地换上
+    const settings = settingsAccess(paths.configFile, repos.activity);
+    addSettingsTools(local, {
+      permission: config.settings.agent,
+      values: (keys) => settings.values(keys),
+      edit: (path, value) => settings.edit([{ path, value }], 'agent'),
+      undo: () => settings.undo('agent', 'agent'),
+      ...askDeps,
+    });
     tools = local;
     mcp = await connectMcp(config.mcpServers, tools, logger, {
       sandbox: { config: config.sandbox, dataDir: paths.dataDir, configFile: paths.configFile },
@@ -281,7 +297,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
 
   const director = use('director', () =>
     createDirector({
-      config,
+      config: live,
       paths,
       logger,
       host,
@@ -298,16 +314,24 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
     }),
   );
 
-  // 间隔的决策模型有自己的配置，不借记忆的；密钥一并从报错里抹掉
+  // 间隔的决策模型有自己的配置，不借记忆的；密钥一并从报错里抹掉。`intervalSec`、`pace` 就地改了，按新的再挑一个
+  const secrets = [config.llm.apiKey, ...memorySecrets(config.memory), ...paceSecrets(config.pace)].filter(Boolean);
   const pacer = use('pacer', () =>
-    createWhisperPacer({
-      config: config.pace,
-      fallbackMs: whisperIntervalMs(config.intervalSec),
-      logger,
-      context,
-      work: () => host.workStatus(),
-      secrets: [config.llm.apiKey, ...memorySecrets(config.memory), ...paceSecrets(config.pace)].filter(Boolean),
-    }),
+    followPacer(
+      derived(
+        live,
+        (now) => [now.intervalSec, now.pace],
+        (now) =>
+          createWhisperPacer({
+            config: now.pace,
+            fallbackMs: whisperIntervalMs(now.intervalSec),
+            logger,
+            context,
+            work: () => host.workStatus(),
+            secrets,
+          }),
+      ),
+    ),
   );
 
   const harness = use('harness', () =>
@@ -318,7 +342,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   // 并在 `start()` 和第一次 `submit` 之前 `await orchestrator.recover()`，否则崩溃留下的未结束运行会让会话一直 `session_busy`。
   const orchestrator = use('orchestrator', () =>
     createYoyoOrchestrator({
-      config,
+      config: live,
       paths,
       logger,
       repos,
@@ -396,7 +420,12 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
   let closed = false;
 
   return {
-    config,
+    get config() {
+      return live.get();
+    },
+    reconfigure(next) {
+      live.set(next);
+    },
     paths,
     logger,
     db,
@@ -446,7 +475,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
         const { resume } = overrides;
         const open = (port: number): Promise<WebServer> =>
           startWeb({
-            config,
+            config: live,
             paths,
             repos,
             context,

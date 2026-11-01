@@ -25,6 +25,12 @@ sources:
   - id: channel
     resource: src/brain/channel.ts
     title: 对话渠道
+  - id: settings
+    resource: src/app/settings.ts
+    title: 配置项表
+  - id: settings-tools
+    resource: src/brain/settings.ts
+    title: 改配置的工具
 ---
 
 # 边界
@@ -47,6 +53,7 @@ yoyo 里分两层：编排器决定什么时候、在哪个会话上跑一轮模
 5. **提问才搜索。** 听写像在问事实时才调用本机 anysearch。打开 `llm.tools` 以后不再先按问句搜，由模型自己决定要不要搜。密钥留在本机配置，不进仓库，也不出现在命令参数里。
 6. **没事干可以去找表情包。** 离下一句日常碎碎念还有一段时间，就搜一套图，记在 SQLite 里。没搜成就隔 10 分钟再找。碎碎念大约四成会连同文字带上一张。天气和闹钟不带。找到或用上都会记一笔行为。`memes.enabled` 关掉就不找也不配。
 7. **自动的那一下都能关。** 傍晚的天气（`weather.enabled`）、表情包（`memes.enabled`）、动作音效（`sfx.enabled`，关了也不记那一笔）、说完就听（`listen.enabled`），关掉只停掉自动的那一下：打开工具的模型照样能查天气，`yoyo meme refresh`、`yoyo listen` 照样能用。
+8. **yoyo 能按主人说的改自己的几项配置，别的不碰。** 打开 `llm.tools` 时，回复的 agent 有 `get_settings`、`change_setting`、`undo_setting`（`settings.agent`：`allow` 直接改，`ask` 每次要主人批准，`deny` 没有）。能改的只有配置项表里标了 `agent` 的：碎碎念的间隔和几档间隔、语音、音效、天气、表情包、念完听回应、子任务通知，都是就地生效、改错了也不要紧的；`change_setting` 的参数结构就是从这张表生成的，路径不在里面过不了参数检查，写入时按来源再挡一次。模型、密钥、MCP 服务器、沙箱、粘贴板只给主人：yoyo 读到的网页、文件、子任务结果里可能藏着指令，能改它们就等于能在本机跑命令或把数据发出去。转告子任务结果的那一轮只给 `get_settings`。每次改都记一笔 `config-edit`（来源、路径、前后值，密钥打码），yoyo 只撤销自己改的；改了以后常驻进程就地换上，不打断正在说的这一轮。[^settings] [^settings-tools]
 
 # 记下什么
 
@@ -72,3 +79,5 @@ yoyo 里分两层：编排器决定什么时候、在哪个会话上跑一轮模
 [^pace]: 碎碎念让路
 [^context]: 上下文
 [^channel]: 对话渠道
+[^settings]: 配置项表
+[^settings-tools]: 改配置的工具

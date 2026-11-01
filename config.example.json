@@ -79,6 +79,9 @@
     "bashMaxTimeout": 600,
     "askTimeout": 24
   },
+  "settings": {
+    "agent": "allow"
+  },
   "context": {
     "keep": 40
   },
