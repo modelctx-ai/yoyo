@@ -1046,6 +1046,8 @@ describe('orchestrator 跑模型', () => {
 
 const REPORT: ConsolidateReport = {
   notes: 2,
+  failed: 0,
+  dead: 0,
   facts: { added: 1, merged: 0, superseded: 1, archived: 0 },
   procedures: { added: 0, confirmed: 0 },
   escalated: 0,
@@ -1061,7 +1063,7 @@ interface FakeMemory extends YoyoMemory {
 }
 
 /** 只记调用的记忆：笔记存储是真的，gate、consolidate 可以卡住或失败。 */
-function fakeMemory(): FakeMemory {
+function fakeMemory(report: ConsolidateReport = REPORT): FakeMemory {
   const store = createNoteStore();
   const gates: string[] = [];
   const consolidations: number[] = [];
@@ -1078,7 +1080,7 @@ function fakeMemory(): FakeMemory {
     async consolidate(options?: { readonly now?: number }): Promise<ConsolidateReport> {
       consolidations.push(options?.now ?? 0);
       if (failures.consolidate) throw failures.consolidate;
-      return REPORT;
+      return report;
     },
   } as unknown as Memory;
   return {
@@ -1252,7 +1254,10 @@ describe('orchestrator 记忆', () => {
     assert.equal(repos.kv.get(CONSOLIDATED_KEY), '2026-10-24');
     const done = repos.activity.list(5).at(-1);
     assert.equal(done?.type, 'memory-consolidate');
-    assert.deepEqual([done?.['notes'], done?.['added'], done?.['superseded'], done?.['core']], [2, 1, 1, true]);
+    assert.deepEqual(
+      [done?.['notes'], done?.['failed'], done?.['dead'], done?.['added'], done?.['superseded'], done?.['core']],
+      [2, 0, 0, 1, 1, true],
+    );
     assert.ok(logger.lines.includes('没配 llm：记忆整理只做衰减归档和画像的缺省渲染，反思和画像重写跳过'));
     assert.ok(logger.lines.includes('记忆整理了 2 条笔记：新增 1 条事实，并入 0，取代 1，归档 0'));
 
@@ -1265,6 +1270,29 @@ describe('orchestrator 记忆', () => {
     await orchestrator.tick();
     await settle();
     assert.equal(memory.consolidations.length, 2, '第二天照样整理');
+    await orchestrator.close();
+  });
+
+  test('有笔记没整理成：日志和轨迹带上留到下次的、进了死信的条数，这一天照样算整理过', async () => {
+    const memory = fakeMemory({ ...REPORT, notes: 1, failed: 2, dead: 1 });
+    await pendingNote(memory);
+    const { orchestrator, logger, repos } = orchestratorRig({
+      memory,
+      model: createScriptedModel([]),
+      state: { nextWhisper: T0 + 24 * 3600_000 },
+    });
+    await orchestrator.tick();
+    await settle();
+    assert.equal(memory.consolidations.length, 1);
+    assert.ok(
+      logger.lines.includes(
+        '记忆整理了 1 条笔记：新增 1 条事实，并入 0，取代 1，归档 0；2 条没整理成，下次再试，1 条失败太多次，不再试',
+      ),
+      logger.lines.join('\n'),
+    );
+    const done = repos.activity.list(5).at(-1);
+    assert.deepEqual([done?.type, done?.['failed'], done?.['dead']], ['memory-consolidate', 2, 1]);
+    assert.equal(repos.kv.get(CONSOLIDATED_KEY), '2026-10-24');
     await orchestrator.close();
   });
 

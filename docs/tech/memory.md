@@ -125,11 +125,12 @@ sources:
 9. 本地时间过了 memory.consolidateAt（缺省 03:00）且今天没整理过，
    且 30 分钟内没有对话（lastTalk），且待处理笔记 ≥ 1
    → 在后台 memory.consolidate({ signal: 停下或 10 分钟超时 })；
-     成功后记一件「做过的事」memory-consolidate：几条笔记、新增 / 并入 / 取代 / 归档几条事实、程序新增 / 确认几条、画像重写了没有
+     成功后记一件「做过的事」memory-consolidate：几条笔记、几条没整理成、几条进了死信、新增 / 并入 / 取代 / 归档几条事实、程序新增 / 确认几条、画像重写了没有
 ```
 
 - 和门控一样不等：整理最多 10 分钟，拍子里的提醒和碎碎念照常。`consolidateDue` 是纯函数（时间、`lastTalk`、今天整理过没有）；待处理的笔记由 `notes.list({ pending: true, limit: 1 })` 看，只在可能有新笔记时看（启动时、门控写下待处理的笔记以后），没有就等下一次门控。
 - 「今天整理过」记在 kv 的 `memory-consolidated`（本地日期），重启也认。失败记一行「记忆没整理成：…」，这个进程当天不再试，第二天或重启后再试。
+- 一批笔记整理失败不挡别的批次（ctx 的 `consolidate` 分批处理）：这一夜照样算整理过，日志那一行后面带上「N 条没整理成，下次再试」「M 条失败太多次，不再试」；有进了死信的用 warn。进了死信的笔记在 `yoyo memory tail` 里标「整理失败」，ctx 不再自动重试。
 - 主人在的时候不整理：`lastTalk` 30 分钟内就推到下一拍再看。过了 `consolidateAt` 当天都算：主人通宵到早上，就在他停下 30 分钟以后整理，笔记不会丢。`lastTalk` 算听写、收件箱、提醒，也算右键对话（回答在 yoyo 里跑）。
 - 整理时模型照常可用：`consolidate` 只读日志、写记忆表，和拍子里的碎碎念不冲突；真冲突时 SQLite 的写锁排队。
 - 没配 `llm` 时记一行警告「没配 llm：记忆整理只做衰减归档和画像的缺省渲染，反思和画像重写跳过」。这时有没有提取看 `memory.extraction`：配了就照常提取、并入；也没配就不处理笔记（笔记留着，等配了模型再整理），只衰减归档、用 `renderCore` 渲染画像。
@@ -137,7 +138,7 @@ sources:
 
 # 存在哪里
 
-都在 `~/.yoyo/yoyo.db`，和 `ctx_` 表共用一个库：`openMemoryStore(db)` 就是 `createSqliteMemoryStore({ database, prefix: 'memory_' })`，表是 `memory_notes`、`memory_facts`、`memory_procedures`、`memory_core`，加结构版本 `memory_meta`。`memory.enabled` 关着时常驻进程不建这些表；`yoyo memory` 的命令第一次打开时会建（空表）。[^memory]
+都在 `~/.yoyo/yoyo.db`，和 `ctx_` 表共用一个库：`openMemoryStore(db)` 就是 `createSqliteMemoryStore({ database, prefix: 'memory_' })`，表是 `memory_notes`、`memory_facts`、`memory_procedures`、`memory_core`，检索用的倒排索引 `memory_fact_terms`、`memory_fact_docs`，加结构版本 `memory_meta`。`memory.enabled` 关着时常驻进程不建这些表；`yoyo memory` 的命令第一次打开时会建（空表）。[^memory]
 
 - 事实、程序、画像都是数据库的行，不另写文件：yoyo 没有 git，画像的历史靠 `memory_core` 保留每个版本。
 - `MemoryStore` 的结构版本由 ctx 的 `memory_meta` 管，和 `ctx_meta` 一样：常驻进程和命令行要用同一个 ctx 版本。
@@ -155,7 +156,7 @@ sources:
     "extraction": { "provider": "cloudflare", "model": "clairic", "accountId": "…", "apiKey": "…" },
     "topics": { "owner": "主人的偏好、作息、称呼", "work": "手头的项目和工具链" },
     "gate": { "theta": 0.6 },
-    "decay": { "d": 0.5, "archiveAt": 0.55 },
+    "decay": { "d": 0.5, "archiveAt": 0.55, "minChances": 7 },
     "core": { "budgetTokens": 600 },
     "consolidateAt": "03:00"
   }
@@ -170,6 +171,7 @@ sources:
 | `topics` | 上面的六个 | 主题名 → 说明。名字和说明都要是非空文字，写错的项丢掉，一项不剩就用缺省。改了只影响以后的门控，旧笔记的主题不变 |
 | `gate.theta` | `0.6` | 显著性阈值，0 到 1。ctx 会按最近一周的分布自动调（`gate.auto` 缺省开），这里是起点 |
 | `decay.d`、`decay.archiveAt` | `0.5`、`0.55` | 衰减速率（正数）、归档阈值（0 到 1） |
+| `decay.minChances` | `7` | 归档前至少错过几次机会：这条事实最后一次活动之后，有几个不同的日子（UTC）召回过别的事实；没人用记忆的日子不算。非负整数，`0` 只看激活度。缺省和 ctx 的 `MEMORY_DEFAULTS.minChances` 一样 |
 | `core.budgetTokens` | `600` | 画像预算（估算 token） |
 | `consolidateAt` | `"03:00"` | 本地时间，`HH:MM` |
 
@@ -189,7 +191,7 @@ sources:
 | `yoyo memory rules`           | 列没退役的程序：触发条件 → 动作、确认次数；确认够 2 次（ctx 的 `recall.confirmations` 缺省）标「生效」，不够标「待确认」       |
 | `yoyo memory forget <id>`     | 真删除一条事实，画像下一次整理时跟着改，记一件 `memory-forget`（只记 id）。给的是程序的 id 就退役它，记 `memory-retire`        |
 | `yoyo memory consolidate`     | 现在就整理一次，不用模型（见上）；记一件 `memory-consolidate`                                                                  |
-| `yoyo memory tail`            | 最近 12 条笔记：时间、会话和 `seq` 区间、显著性、主题、类别、状态（待整理、已整理、不记：门控没过）、这段第一句话              |
+| `yoyo memory tail`            | 最近 12 条笔记：时间、会话和 `seq` 区间、显著性、主题、类别、状态（待整理、已整理、不记：门控没过，整理失败：失败次数到了 ctx 的 `consolidate.maxAttempts`、进了死信）、这段第一句话 |
 
 程序不能真删除：ctx 的 `MemoryStore` 只有 `procedures.retire`，没有删程序的方法。退役的程序不再交给模型，记录还在库里。
 

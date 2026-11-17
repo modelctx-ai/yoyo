@@ -221,7 +221,7 @@ describe('brain/memory 门控', () => {
 });
 
 describe('brain/memory 整理', () => {
-  test('衰减归档和画像重写由 ctx 的 consolidate 做：用 config.memory 的归档阈值，有模型才重写画像', async () => {
+  test('衰减归档和画像重写由 ctx 的 consolidate 做：用 config.memory 的归档阈值和机会数，有模型才重写画像', async () => {
     const day = 86_400_000;
     const now = 400 * day;
     const sessions = createSessionStore();
@@ -247,7 +247,7 @@ describe('brain/memory 整理', () => {
     };
 
     const rewrite = new MockLanguageModelV4({ doGenerate: textResult('主人在台北，最近在写 yoyo。') });
-    const loose = make({ decay: { archiveAt: 0.1 } }, rewrite);
+    const loose = make({ decay: { archiveAt: 0.1, minChances: 0 } }, rewrite);
     await seed(loose);
     const kept = await loose.memory.consolidate({ now });
     assert.equal(kept.facts.archived, 0, '归档阈值 0.1：都留着');
@@ -256,13 +256,18 @@ describe('brain/memory 整理', () => {
 
     const usual = make({});
     await seed(usual);
-    const report = await usual.memory.consolidate({ now });
-    assert.equal(report.facts.archived, 1, '缺省阈值 0.55：两天前的那条归档');
+    const waiting = await usual.memory.consolidate({ now });
+    assert.equal(waiting.facts.archived, 0, '缺省要错过 7 个召回过别的事实的日子：这两天没召回过，都留着');
+
+    const strict = make({ decay: { minChances: 0 } });
+    await seed(strict);
+    const report = await strict.memory.consolidate({ now });
+    assert.equal(report.facts.archived, 1, 'minChances 0 只看激活度，缺省阈值 0.55：两天前的那条归档');
     assert.deepEqual(
-      (await usual.store.facts.list({ open: true })).map((fact) => fact.text),
+      (await strict.store.facts.list({ open: true })).map((fact) => fact.text),
       ['主人最近在写 yoyo'],
     );
-    assert.equal((await usual.store.core.get())?.text, '主人最近在写 yoyo', '没有模型：画像是缺省渲染');
+    assert.equal((await strict.store.core.get())?.text, '主人最近在写 yoyo', '没有模型：画像是缺省渲染');
   });
 });
 

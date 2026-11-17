@@ -93,7 +93,7 @@
   "memory": {
     "enabled": false,
     "gate": { "theta": 0.6 },
-    "decay": { "d": 0.5, "archiveAt": 0.55 },
+    "decay": { "d": 0.5, "archiveAt": 0.55, "minChances": 7 },
     "core": { "budgetTokens": 600 },
     "consolidateAt": "03:00"
   },

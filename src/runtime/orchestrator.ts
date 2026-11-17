@@ -20,7 +20,7 @@ import { OWNER_TOOL_NAMES } from '../brain/files.ts';
 import { SETTINGS_TOOL_NAMES } from '../brain/settings.ts';
 import { tapDeltas } from '../brain/harness.ts';
 import { recordUser } from '../brain/context.ts';
-import { memorySecrets, type YoyoMemory } from '../brain/memory.ts';
+import { consolidateFailures, memorySecrets, type YoyoMemory } from '../brain/memory.ts';
 import { fixedPacer, paceSecrets } from '../brain/pace.ts';
 import { dueItems } from '../features/alarms/schedule.ts';
 import { notePaste } from '../features/clipboard/clipboard.ts';
@@ -359,6 +359,8 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
         repos.activity.record({
           type: 'memory-consolidate',
           notes: report.notes,
+          failed: report.failed,
+          dead: report.dead,
           added: facts.added,
           merged: facts.merged,
           superseded: facts.superseded,
@@ -367,9 +369,10 @@ export function createYoyoOrchestrator(deps: YoyoOrchestratorDeps): YoyoOrchestr
           confirmed: procedures.confirmed,
           core: report.core,
         });
-        logger.info(
-          `记忆整理了 ${report.notes} 条笔记：新增 ${facts.added} 条事实，并入 ${facts.merged}，取代 ${facts.superseded}，归档 ${facts.archived}`,
-        );
+        const summary = `记忆整理了 ${report.notes} 条笔记：新增 ${facts.added} 条事实，并入 ${facts.merged}，取代 ${facts.superseded}，归档 ${facts.archived}`;
+        // 有笔记进了死信要主人看一眼（`yoyo memory tail` 标「整理失败」），用 warn；只是留到下次的照常 info
+        if (report.dead > 0) logger.warn(summary + consolidateFailures(report));
+        else logger.info(summary + consolidateFailures(report));
       } catch (error) {
         failedOn = day;
         throw error;

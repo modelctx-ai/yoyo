@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 import {
+  type ConsolidateReport,
   type ContextSource,
   type DecisionModel,
   type Entry,
@@ -75,6 +76,15 @@ export interface YoyoMemoryOptions {
   readonly now?: () => number;
 }
 
+/** 有没整理成的笔记才说：`failed` 下次再试，`dead` 失败次数到了上限、不再试。都是 0 时是空串。 */
+export function consolidateFailures(report: ConsolidateReport): string {
+  const parts = [
+    ...(report.failed > 0 ? [`${report.failed} 条没整理成，下次再试`] : []),
+    ...(report.dead > 0 ? [`${report.dead} 条失败太多次，不再试`] : []),
+  ];
+  return parts.length > 0 ? `；${parts.join('，')}` : '';
+}
+
 /** 按 `config.memory` 建 ctx 的记忆。决策模型不配就是 ctx 的启发式。 */
 export function createYoyoMemory(options: YoyoMemoryOptions): YoyoMemory {
   const { config } = options;
@@ -87,7 +97,7 @@ export function createYoyoMemory(options: YoyoMemoryOptions): YoyoMemory {
     topics: config.topics,
     // 只看消息：碎碎念是事件，框架事件 ctx.* 也是事件，都不进门控
     gate: { theta: config.gate.theta, entries: { types: ['message'] } },
-    decay: { d: config.decay.d, archiveAt: config.decay.archiveAt },
+    decay: { d: config.decay.d, archiveAt: config.decay.archiveAt, minChances: config.decay.minChances },
     core: { budgetTokens: config.core.budgetTokens },
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.now ? { now: options.now } : {}),

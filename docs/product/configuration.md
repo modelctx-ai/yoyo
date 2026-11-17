@@ -84,6 +84,7 @@ status: stable
 | `memory.topics`                            | 六个主题                                         | 记哪些主题：名字 → 说明；写错的项丢掉，一项不剩用缺省                                               |
 | `memory.gate.theta`                        | `0.6`                                            | 值不值得记的门槛，0 到 1；会按最近一周的笔记自动调                                                  |
 | `memory.decay.d`、`memory.decay.archiveAt` | `0.5`、`0.55`                                    | 忘得多快（正数）、低于多少归档（0 到 1）                                                            |
+| `memory.decay.minChances`                  | `7`                                              | 归档前至少错过几次被想起的机会：别的事被想起过的日子才算一次；0 只看忘得多快                        |
 | `memory.core.budgetTokens`                 | `600`                                            | 画像多长（估算 token）                                                                              |
 | `memory.consolidateAt`                     | `03:00`                                          | 每天过了这个本地时间、主人 30 分钟没说话，就整理一次                                                |
 | `memory.decision`、`memory.extraction`     | 不写                                             | System One 的决策、提取模型；不写就用内置的判断和 `llm` 的模型，见[记忆](#记忆)                     |

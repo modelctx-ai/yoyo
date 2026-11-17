@@ -42,7 +42,15 @@ import {
   type UpdateSystem,
 } from '../app/update.ts';
 import { createYoyoContext, taskSession, taskSteps, type TaskStep } from '../brain/context.ts';
-import { allFacts, createYoyoMemory, evidenceOf, memorySessions, openMemoryStore, ungated } from '../brain/memory.ts';
+import {
+  allFacts,
+  consolidateFailures,
+  createYoyoMemory,
+  evidenceOf,
+  memorySessions,
+  openMemoryStore,
+  ungated,
+} from '../brain/memory.ts';
 import { createLanguageModel } from '../brain/model.ts';
 import { addSchedule, pauseSchedule, resumeSchedule, updateSchedule } from '../features/alarms/schedule.ts';
 import {
@@ -308,6 +316,7 @@ export function ruleRow(procedure: Procedure): string {
 
 /** 笔记的状态：门控没过的那段写下时就标成处理过（settledAt 等于 at）。 */
 function noteState(note: Note): string {
+  if (note.failedAt !== undefined) return '整理失败';
   if (note.settledAt === undefined) return '待整理';
   return note.settledAt === note.at ? '不记' : '已整理';
 }
@@ -329,7 +338,8 @@ export function consolidateText(report: ConsolidateReport): string {
   const { facts, procedures } = report;
   return (
     `整理了 ${report.notes} 条笔记：新增 ${facts.added} 条事实，并入 ${facts.merged}，取代 ${facts.superseded}，归档 ${facts.archived}；` +
-    `程序新增 ${procedures.added}，确认 ${procedures.confirmed}；画像${report.core ? '重写了' : '没变'}`
+    `程序新增 ${procedures.added}，确认 ${procedures.confirmed}；画像${report.core ? '重写了' : '没变'}` +
+    consolidateFailures(report)
   );
 }
 
@@ -677,7 +687,13 @@ export function buildDomains(env: CommandEnv): Domain[] {
               config: settings.memory,
             });
             const report = await memory.consolidate({ now: env.now().getTime() });
-            env.repos().activity.record({ type: 'memory-consolidate', notes: report.notes, manual: true });
+            env.repos().activity.record({
+              type: 'memory-consolidate',
+              notes: report.notes,
+              failed: report.failed,
+              dead: report.dead,
+              manual: true,
+            });
             env.out(consolidateText(report));
             const left = (await store.notes.list({ pending: true })).length;
             if (left > 0) env.out(`还有 ${left} 条笔记要用模型提取，留给常驻进程夜里整理`);

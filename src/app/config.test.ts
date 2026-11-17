@@ -312,13 +312,13 @@ describe('config', () => {
     assert.equal(parseConfig({ pace: { recent: 'x' } }).pace.recent, 6);
   });
 
-  test('memory：缺省关着，六个主题，theta 0.6，衰减 0.5 / 0.55，画像 600，夜里 03:00；模型不配就没有', () => {
+  test('memory：缺省关着，六个主题，theta 0.6，衰减 0.5 / 0.55 / 7 次机会，画像 600，夜里 03:00；模型不配就没有', () => {
     const { memory } = parseConfig(FIRST);
     assert.deepEqual(memory, {
       enabled: false,
       topics: MEMORY_TOPICS,
       gate: { theta: 0.6 },
-      decay: { d: 0.5, archiveAt: 0.55 },
+      decay: { d: 0.5, archiveAt: 0.55, minChances: 7 },
       core: { budgetTokens: 600 },
       consolidateAt: '03:00',
     });
@@ -333,7 +333,7 @@ describe('config', () => {
         enabled: 'true',
         topics: { owner: ' 主人 ', work: 3, people: '', ' ': '空名字' },
         gate: { theta: '1.5' },
-        decay: { d: -1, archiveAt: '0.4' },
+        decay: { d: -1, archiveAt: '0.4', minChances: -2 },
         core: { budgetTokens: '800' },
         consolidateAt: '25:00',
         decision: 'clef',
@@ -343,7 +343,8 @@ describe('config', () => {
     assert.equal(memory.enabled, true);
     assert.deepEqual(memory.topics, { owner: '主人', work: '3' });
     assert.equal(memory.gate.theta, 0.6);
-    assert.deepEqual(memory.decay, { d: 0.5, archiveAt: 0.4 });
+    assert.deepEqual(memory.decay, { d: 0.5, archiveAt: 0.4, minChances: 7 });
+    assert.equal(parseConfig({ memory: { decay: { minChances: '0' } } }).memory.decay.minChances, 0, '0 只看激活度');
     assert.equal(memory.core.budgetTokens, 800);
     assert.equal(memory.consolidateAt, '03:00');
     assert.equal(memory.decision, undefined);

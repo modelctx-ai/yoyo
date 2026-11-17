@@ -1,5 +1,9 @@
 # 文档更新记录
 
+## 2026-11-17
+
+* **更新** 跟上 ctx 的记忆改动（modelctx-ai/ctx#61）：[记忆](tech/memory.md)的配置示例和配置表加 `decay.minChances`（缺省 7，和 ctx 一样；归档前要错过几个召回过别的事实的日子，`0` 只看激活度），「存在哪里」加检索用的 `memory_fact_terms`、`memory_fact_docs` 两张表；「夜里什么时候整理」写明一批失败不挡别的批次，日志和 `memory-consolidate` 带上没整理成、进了死信的条数，有死信用 warn；命令表的 `yoyo memory tail` 多一个状态「整理失败」。[配置](product/configuration.md)的选项表加 `memory.decay.minChances`，`config.example.json` 跟上。
+
 ## 2026-11-01
 
 * **更新** yoyo 自己改配置、能就地生效的不重建（#38）：[管理页](tech/web.md)的「改配置」写明开关和表单是配置项表的子集、和命令行、模型共用 `editSettings`，行为记录改成带来源和前后值的 `config-edit`（不再记 `config-switch`、`config-fields`）、能撤销；「热加载」改写成按 `classify` 分就地换上和等主线程空下来再重建，`sources` 加 `app/settings.ts`。[运行时原则](tech/runtime-principles.md)加第 8 条：yoyo 能改哪几项、为什么别的只给主人、转告那一轮不能改，`sources` 加 `app/settings.ts`、`brain/settings.ts`。架构的目录表加 `app/settings.ts`、`brain/settings.ts`，`supervisor` 一行和「常驻进程」跟上。配置的「写法」写明哪些马上生效、哪些重新组装，开关表和选项表加 `settings.agent`，新加「能直接改的项」「让 yoyo 改自己的配置」两节；日常使用加「让 yoyo 改设置」一节，常用命令加 `yoyo config`。`config.example.json` 加 `settings`。

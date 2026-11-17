@@ -328,7 +328,7 @@ describe('commands', () => {
     assert.equal(env.repos().activity.list(5).at(-1)?.type, 'memory-consolidate');
   });
 
-  test('memory rules、tail：生效的程序和最近的笔记', async () => {
+  test('memory rules、tail：生效的程序和最近的笔记，失败太多次的标「整理失败」', async () => {
     const { run, env } = cli();
     assert.deepEqual(await run('memory', 'rules'), ['还没有程序']);
     assert.deepEqual(await run('memory', 'tail'), ['还没有笔记']);
@@ -348,20 +348,28 @@ describe('commands', () => {
     await context.append(assistantEntry('傍晚有雨', { at: 1, meta: { kind: 'weather' } }));
     await context.append(userEntry('别叫我老板', { at: 2 }));
     await context.append(userEntry('今天好累', { at: 3 }));
+    await context.append(userEntry('明天想去爬山', { at: 4 }));
+    await context.append(userEntry('我对花生过敏', { at: 5 }));
     const at = NOW.getTime();
     await store.notes.add([
       { session: 'pet:main', from: 1, upTo: 2, at, salience: 0.82, kind: 'fail', topic: 'fix' },
       { session: 'pet:main', from: 3, upTo: 3, at, salience: 0.31, settledAt: at },
     ]);
     const [first] = await store.notes.list();
-    await store.notes.add([{ session: 'pet:main', from: 3, upTo: 3, at: at + 1, salience: 0.7, topic: 'owner' }]);
-    await store.notes.settle([(await store.notes.list()).at(-1)!.id], at + 2);
+    const [settled, dead] = await store.notes.add([
+      { session: 'pet:main', from: 4, upTo: 4, at: at + 1, salience: 0.7, topic: 'owner' },
+      { session: 'pet:main', from: 5, upTo: 5, at: at + 1, salience: 0.9, topic: 'owner' },
+    ]);
+    await store.notes.settle([settled!.id], at + 2);
+    await store.notes.fail([dead!.id], at + 2, { error: 'extract failed', maxAttempts: 1 });
     assert.equal(first?.settledAt, undefined);
     const iso = NOW.toISOString();
+    const later = new Date(at + 1).toISOString();
     assert.deepEqual(await run('memory', 'tail'), [
       `${iso}\tpet:main#1-2\t0.82\tfix\tfail\t待整理\t别叫我老板`,
       `${iso}\tpet:main#3-3\t0.31\t-\t-\t不记\t今天好累`,
-      `${new Date(at + 1).toISOString()}\tpet:main#3-3\t0.70\towner\t-\t已整理\t今天好累`,
+      `${later}\tpet:main#4-4\t0.70\towner\t-\t已整理\t明天想去爬山`,
+      `${later}\tpet:main#5-5\t0.90\towner\t-\t整理失败\t我对花生过敏`,
     ]);
   });
 
