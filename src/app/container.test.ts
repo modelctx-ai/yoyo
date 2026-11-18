@@ -130,6 +130,8 @@ describe('container', () => {
     assert.ok(app.memory);
     assert.deepEqual(memoryTables(app), [
       'memory_core',
+      'memory_fact_docs',
+      'memory_fact_terms',
       'memory_facts',
       'memory_meta',
       'memory_notes',

@@ -287,7 +287,17 @@ const memory = z.looseObject({
   extraction: systemOne,
   topics,
   gate: z.preprocess(objectOrNothing, z.looseObject({ theta: unit(0.6) }).prefault({})),
-  decay: z.preprocess(objectOrNothing, z.looseObject({ d: positive(0.5), archiveAt: unit(0.55) }).prefault({})),
+  decay: z.preprocess(
+    objectOrNothing,
+    z
+      .looseObject({
+        d: positive(0.5),
+        archiveAt: unit(0.55),
+        /** 归档前至少错过几个「召回过别的事实」的日子；0 只看激活度。 */
+        minChances: z.coerce.number().int().min(0).catch(7).default(7),
+      })
+      .prefault({}),
+  ),
   core: z.preprocess(objectOrNothing, z.looseObject({ budgetTokens: count(600) }).prefault({})),
   /** 每天到这个本地时间以后，主人 30 分钟没说话，就整理一次。 */
   consolidateAt: clockTime('03:00'),

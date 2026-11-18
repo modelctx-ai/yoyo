@@ -293,12 +293,15 @@ describe('brain/context', () => {
       const context = await createYoyoContext({ db, petId: 'main' });
       assert.equal(columns(db).includes('thread'), false);
       assert.equal(columns(db).includes('session'), true);
-      // schema 3 多了行格式版本 v 和生成列 kind；按 (at, seq) 的索引换成按 seq 的
+      // schema 3 多了行格式版本 v 和生成列 kind；按 (at, seq) 的索引换成按 seq 的。
+      // 按 type、按 at 的两个是长会话只读尾部用的，打开库时补建，schema 不变
       assert.equal(columns(db).includes('v'), true);
       assert.equal(columns(db).includes('kind'), true);
       assert.deepEqual(indexSql(db), [
+        'CREATE INDEX ctx_entries_at ON ctx_entries (session, at)',
         'CREATE INDEX ctx_entries_kind ON ctx_entries (session, kind, seq)',
         'CREATE INDEX ctx_entries_seq ON ctx_entries (session, seq)',
+        'CREATE INDEX ctx_entries_type ON ctx_entries (session, type, seq)',
         'CREATE UNIQUE INDEX ctx_entries_key ON ctx_entries (session, key) WHERE key IS NOT NULL',
       ]);
       assert.deepEqual(
