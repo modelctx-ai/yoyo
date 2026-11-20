@@ -393,6 +393,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       onFinished: (task) => orchestrator.relayTask(task.id),
       onAsked: (task) => orchestrator.relayTask(task.id),
       answerTimeoutMs: config.tasks.answerTimeout * 3_600_000,
+      maxTokens: config.tasks.maxTokens,
       agents,
       toolNames: () => worker.list().map((definition) => definition.name),
       // 类型写了 model：服务商、地址和密钥照 llm，只换模型名
@@ -479,8 +480,10 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             paths,
             repos,
             context,
-            // 记忆没打开时库里也可能有以前记的，照样能看、能删
-            memory: memory?.store ?? openMemoryStore(db),
+            // 记忆没打开时库里也可能有以前记的，照样能看、能删；只删不整理，不用模型
+            memory:
+              memory ??
+              createYoyoMemory({ store: openMemoryStore(db), sessions: context.store, config: config.memory }),
             host,
             schedule: () => orchestrator.state,
             talk: (text, signal, onDelta) => orchestrator.talk(text, signal, onDelta),

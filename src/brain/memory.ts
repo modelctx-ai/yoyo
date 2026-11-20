@@ -152,6 +152,15 @@ export function memorySources(memory: Memory, deps: TaskDeps): ContextSource[] {
   ];
 }
 
+/**
+ * 主人要 yoyo 忘掉一条事实：经 ctx 的 `Memory.forget` 真删除。画像是事实压出来的，删掉的内容可能还在里面，
+ * 所以画像的历史版本一起删掉，按剩下的事实当场写一版（一行一条，不经模型；下一次整理再照常重写）。
+ * 和整理排同一个队。没有这条事实返回 false。
+ */
+export async function forgetFact(memory: Pick<Memory, 'forget'>, id: string): Promise<boolean> {
+  return (await memory.forget({ facts: [id] })).facts > 0;
+}
+
 /** 按 `query` 翻完所有页的事实。 */
 export async function allFacts(
   store: MemoryStore,

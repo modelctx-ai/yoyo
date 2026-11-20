@@ -48,6 +48,8 @@ export interface TaskRunnerDeps {
   readonly answerTimeoutMs?: number;
   /** 子 agent 收哪些事实来源；不给就全部。 */
   readonly sources?: readonly string[];
+  /** 子 agent 一次模型调用的估算 token 上限（`tasks.maxTokens`），超了先压缩再裁剪；不给或 0 不管。 */
+  readonly maxTokens?: number;
   /** 有哪些子 agent 类型；不给就只有内置的。 */
   readonly agents?: readonly AgentProfile[];
   /** 子 agent 那份注册表里有哪些工具，按类型的清单挑。 */
@@ -198,6 +200,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     return taskAgent(chosen ?? fallback, profile, {
       tools: agentTools(profile, deps.toolNames?.() ?? []),
       ...(deps.sources ? { sources: deps.sources } : {}),
+      ...(deps.maxTokens ? { maxTokens: deps.maxTokens } : {}),
     });
   }
 

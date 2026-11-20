@@ -189,11 +189,13 @@ sources:
 | `yoyo memory facts [--topic]` | 列仍然成立的事实，按起始时间排：id、主题、一句话、从何时起、被召回几次                                                         |
 | `yoyo memory history <id>`    | 这条事实的有效期、它取代的和取代它的，再列来源原文（按 `SourceRef` 读日志，经 `memorySessions`，所以不列天气和提醒）            |
 | `yoyo memory rules`           | 列没退役的程序：触发条件 → 动作、确认次数；确认够 2 次（ctx 的 `recall.confirmations` 缺省）标「生效」，不够标「待确认」       |
-| `yoyo memory forget <id>`     | 真删除一条事实，画像下一次整理时跟着改，记一件 `memory-forget`（只记 id）。给的是程序的 id 就退役它，记 `memory-retire`        |
+| `yoyo memory forget <id>`     | 真删除一条事实，画像当场重写（见下），记一件 `memory-forget`（只记 id）。给的是程序的 id 就退役它，记 `memory-retire`          |
 | `yoyo memory consolidate`     | 现在就整理一次，不用模型（见上）；记一件 `memory-consolidate`                                                                  |
 | `yoyo memory tail`            | 最近 12 条笔记：时间、会话和 `seq` 区间、显著性、主题、类别、状态（待整理、已整理、不记：门控没过，整理失败：失败次数到了 ctx 的 `consolidate.maxAttempts`、进了死信）、这段第一句话 |
 
-程序不能真删除：ctx 的 `MemoryStore` 只有 `procedures.retire`，没有删程序的方法。退役的程序不再交给模型，记录还在库里。
+删事实走 ctx 的 `Memory.forget({ facts })`（`forgetFact`），命令行和工作台一样：画像是事实压出来的，删掉的那件事可能还写在画像和它的历史版本里，所以历史版本一起删掉（主人在工作台里改过的也删），按剩下仍然成立的事实当场写一版，一行一条、不经模型，下一次整理再照常重写。删除和整理排同一个队；命令行不读配置里的模型，也用得上它。[^memory]
+
+程序只退役、不删：退役的程序不再交给模型，记录还在库里。ctx 有 `procedures.forget`，yoyo 没用。
 
 右键菜单暂不加：记忆的查看和删除是坐下来做的事，不是桌宠气泡里做的事。
 
@@ -203,7 +205,7 @@ sources:
 2. **说出口的才记，记下来的才进门控。** 和「延后记录」一致：没说出口的句子不进日志，也就不会被记住。
 3. **主人在，不整理。** 巩固只在 `lastTalk` 30 分钟之后，和碎碎念让路是同一个原则。
 4. **记忆是资料，不是指令。** 来源渲染时声明这一点；`fix` 主题的程序会变成「别再做什么」，但它经过了两次确认，而且主人能 `forget`。
-5. **删得掉。** `forget` 对事实是真删除，不是归档；程序只能退役（ctx 没有删程序的方法）；`YOYO_HOME` 整个删掉就什么都没了。
+5. **删得掉。** `forget` 对事实是真删除，不是归档，画像里跟着去掉；程序只退役；`YOYO_HOME` 整个删掉就什么都没了。
 
 # 分期
 

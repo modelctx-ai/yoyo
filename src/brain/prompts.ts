@@ -57,6 +57,12 @@ export function searchPrompt(searchText: string | undefined): string | undefined
 }
 
 /** 压缩历史时给模型的说明。 */
+/** 子任务的过程太长、超了 `tasks.maxTokens` 时，较早的部分压成摘要用的指令。摘要之后子 agent 只看得到它和最近几步。 */
+export const TASK_COMPACT_INSTRUCTIONS =
+  '你在整理一个后台子任务做到现在的过程记录：子 agent 收到的任务、调过的工具和结果。把给你的记录压成一段摘要，' +
+  '让子 agent 不看原文也能接着做完。保留任务编号、目标、验收标准、主人的回答和批准、每个 todo 的状态、已经查到的事实和数字、' +
+  '交过的文件、试过但不行的做法和原因；工具结果只留结论，不抄原文。没有的事不要编。用中文写。只输出摘要正文。';
+
 export const COMPACT_INSTRUCTIONS =
   '你在整理主人和桌面小女仆之间的对话记录。把给你的记录压成一段摘要，让对话不看原文也能接着说下去。' +
   '保留事实、答应过的事、提醒和约定、主人的喜好、名字和数字；碎碎念只留下有用的信息。' +

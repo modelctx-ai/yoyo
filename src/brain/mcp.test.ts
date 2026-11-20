@@ -17,7 +17,7 @@ import type { Logger } from '../ports/index.ts';
 import { generateReply } from './compose.ts';
 import { createYoyoContext, recordUser } from './context.ts';
 import { createYoyoHarness } from './harness.ts';
-import { connectMcp, mcpServerOf } from './mcp.ts';
+import { connectMcp, mcpLogger, mcpServerOf } from './mcp.ts';
 
 type DoGenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
 
@@ -52,6 +52,38 @@ function recordingConnector(real: readonly string[] = []) {
     return { tools: async () => ({ ping: fake('p') }), close: async () => {} };
   };
   return { seen, connector };
+}
+
+/** 每条连接的 `onClose`、`onToolsChanged` 留下来，测试里拿它们装作服务器断了、工具变了。 */
+function flaky(options: { fail?: (attempt: number) => boolean; failTools?: (call: number) => boolean } = {}) {
+  let listed = 0;
+  const opened: { close?: (reason?: string) => void; changed?: () => void }[] = [];
+  const connector: McpConnector = async (_name, _config, connect) => {
+    const attempt = opened.length;
+    opened.push({
+      ...(connect?.onClose ? { close: connect.onClose } : {}),
+      ...(connect?.onToolsChanged ? { changed: connect.onToolsChanged } : {}),
+    });
+    if (options.fail?.(attempt)) throw new Error('spawn ENOENT');
+    return {
+      tools: async () => {
+        listed += 1;
+        if (options.failTools?.(listed)) throw new Error('boom');
+        return { search: fake('s') };
+      },
+      close: async () => {},
+    };
+  };
+  return { opened, connector, drop: (reason?: string) => opened.at(-1)?.close?.(reason) };
+}
+
+/** 注册表里有没有那台服务器的工具。 */
+const has = (registry: ReturnType<typeof createToolRegistry>) =>
+  registry.list().some((info) => info.name === 'web__search');
+
+async function until(done: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(done(), what);
 }
 
 /** 三台服务器：一台要包的 stdio（经假 srt 真的启动）、一台豁免的 via、一台 HTTP。 */
@@ -224,6 +256,125 @@ describe('brain/mcp', () => {
     assert.equal(mcpServerOf({ command: '  ' }), null);
     assert.equal(mcpServerOf(null), null);
     assert.equal(mcpServerOf(['node']), null);
+  });
+
+  test('一台服务器的时限：timeoutMs、callTimeoutMs 原样交给 ctx-mcp，0 是不限时；写错当没写', () => {
+    assert.deepEqual(mcpServerOf({ command: 'node', timeoutMs: '30000', callTimeoutMs: 0 }), {
+      command: 'node',
+      timeoutMs: 30_000,
+      callTimeoutMs: 0,
+    });
+    assert.deepEqual(mcpServerOf({ url: 'http://a', callTimeoutMs: 300_000 }), {
+      url: 'http://a',
+      callTimeoutMs: 300_000,
+    });
+    for (const bad of [-1, 'soon', '', null, Infinity]) {
+      assert.deepEqual(
+        mcpServerOf({ command: 'node', timeoutMs: bad, callTimeoutMs: bad }),
+        { command: 'node' },
+        String(bad),
+      );
+    }
+  });
+
+  test('ctx-mcp 的告警换成中文：刷新失败、重名跳过、收不进来、没关干净；没连上和断开不在这里说；认不出的原样', () => {
+    const logger = recorder();
+    const ctx = mcpLogger(logger);
+    ctx.warn('MCP server "web" failed to refresh tools', { error: 'boom' });
+    ctx.warn('MCP tool "web__search" from server "web" skipped: name already registered', { owner: 'local' });
+    ctx.warn('MCP tool "web__x" from server "web" skipped', { error: 'bad schema' });
+    ctx.warn('MCP server "web" failed to close', {});
+    ctx.warn('MCP server "web" failed to connect', { error: 'ENOENT' });
+    ctx.warn('MCP server "web" disconnected', { error: 'exited' });
+    ctx.warn('something new', { error: 'x' });
+    assert.deepEqual(logger.lines, [
+      'warn MCP web 的工具列表没刷新成，先用原来的：boom',
+      'warn MCP web 的工具 web__search 和已有的工具重名，跳过',
+      'warn MCP web 的工具 web__x 收不进来，跳过：bad schema',
+      'warn MCP web 没关干净：原因不明',
+      'warn something new',
+    ]);
+  });
+
+  describe('断开以后', () => {
+    const servers = parseConfig({ mcpServers: { web: { url: 'https://mcp.example/api' } } }).mcpServers;
+    test('隔一阵重连，工具回到注册表；日志是中文', async () => {
+      const { connector, drop, opened } = flaky();
+      const registry = createToolRegistry();
+      const logger = recorder();
+      const hub = await connectMcp(servers, registry, logger, { connector, reconnectDelaysMs: [5, 5] });
+      assert.ok(hub && has(registry));
+      drop('process exited');
+      assert.equal(has(registry), false, '断开时工具撤掉');
+      await until(() => has(registry), '重连以后工具回来');
+      assert.equal(opened.length, 2);
+      assert.deepEqual(logger.lines, [
+        'info MCP web 已连上，1 个工具',
+        'warn MCP web 断开了：process exited，1 秒后重连',
+        'info MCP web 重新连上了，1 个工具',
+      ]);
+      await hub.close();
+    });
+
+    test('一直连不上：按次数重试，都不行就不再试', async () => {
+      const { connector, drop, opened } = flaky({ fail: (attempt) => attempt > 0 });
+      const logger = recorder();
+      const hub = await connectMcp(servers, createToolRegistry(), logger, { connector, reconnectDelaysMs: [5, 5] });
+      assert.ok(hub);
+      drop();
+      await until(() => logger.lines.length === 4, '试完两次');
+      assert.equal(opened.length, 3);
+      assert.deepEqual(logger.lines.slice(1), [
+        'warn MCP web 断开了：连接关了，1 秒后重连',
+        'warn MCP web 还没连上：spawn ENOENT，1 秒后再试',
+        'warn MCP web 重连了 2 次都没连上，先不连了，重启 yoyo 再试',
+      ]);
+      await hub.close();
+    });
+
+    test('一连上又断：接着上一次的次数往后排，不一直拉起来', async () => {
+      const { connector, drop, opened } = flaky();
+      const registry = createToolRegistry();
+      const logger = recorder();
+      const hub = await connectMcp(servers, registry, logger, { connector, reconnectDelaysMs: [5, 5] });
+      assert.ok(hub);
+      drop('crashed');
+      await until(() => opened.length === 2 && has(registry), '第一次重连');
+      drop('crashed');
+      await until(() => opened.length === 3 && has(registry), '第二次重连');
+      drop('crashed');
+      assert.equal(logger.lines.at(-1), 'warn MCP web 断开了：crashed；重连上又断了 2 次，先不连了，重启 yoyo 再试');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(opened.length, 3, '不再重连');
+      await hub.close();
+    });
+
+    test('关掉以后不再重连；等着的那次也取消', async () => {
+      const { connector, drop, opened } = flaky();
+      const logger = recorder();
+      const hub = await connectMcp(servers, createToolRegistry(), logger, { connector, reconnectDelaysMs: [20] });
+      assert.ok(hub);
+      drop('process exited');
+      await hub.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(opened.length, 1);
+      drop('process exited');
+      assert.equal(logger.lines.filter((line) => line.includes('断开了')).length, 1);
+    });
+
+    test('工具列表刷新失败：留着原来的工具，记一行中文', async () => {
+      // 连上时列一次照常，服务器说工具变了以后再列就失败
+      const { connector, opened } = flaky({ failTools: (call) => call > 1 });
+      const registry = createToolRegistry();
+      const logger = recorder();
+      const hub = await connectMcp(servers, registry, logger, { connector });
+      assert.ok(hub);
+      opened[0]?.changed?.();
+      await until(() => logger.lines.length === 2, '刷新失败记一行');
+      assert.equal(logger.lines[1], 'warn MCP web 的工具列表没刷新成，先用原来的：boom');
+      assert.ok(has(registry));
+      await hub.close();
+    });
   });
 
   describe('sandbox', () => {

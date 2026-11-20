@@ -47,6 +47,7 @@ import {
   consolidateFailures,
   createYoyoMemory,
   evidenceOf,
+  forgetFact,
   memorySessions,
   openMemoryStore,
   ungated,
@@ -655,19 +656,26 @@ export function buildDomains(env: CommandEnv): Domain[] {
         },
         {
           name: 'forget',
-          summary: '真删除一条事实；程序改成退役',
+          summary: '真删除一条事实，画像跟着重写；程序改成退役',
           usage: '<id>',
           async run(_flags, args) {
             const [id] = args;
             if (!id) return env.out('要给事实或程序的 id：yoyo memory forget <id>');
-            const store = openMemoryStore(env.db());
-            if ((await store.facts.forget([id])) > 0) {
+            const settings = env.settings();
+            const context = await createYoyoContext({ db: env.db(), petId: settings.pet.id });
+            // 只删不整理，不用模型
+            const { memory, store } = createYoyoMemory({
+              store: openMemoryStore(env.db()),
+              sessions: context.store,
+              config: settings.memory,
+            });
+            if (await forgetFact(memory, id)) {
               env.repos().activity.record({ type: 'memory-forget', id });
-              return env.out(`忘掉了 ${id}，下一次整理时画像跟着改`);
+              return env.out(`忘掉了 ${id}，画像按剩下的事重写了`);
             }
             const procedure = (await store.procedures.list()).find((item) => item.id === id);
             if (!procedure) return env.out(`没有这条事实或程序：${id}`);
-            // ctx 的 MemoryStore 没有删程序的方法，只能退役：不再交给模型，记录还在
+            // 规矩退役、不删：不再交给模型，记录还在
             await store.procedures.retire(id, env.now().getTime());
             env.repos().activity.record({ type: 'memory-retire', id });
             env.out(`程序 ${id} 退役了，不再交给模型`);
