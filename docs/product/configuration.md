@@ -139,7 +139,8 @@ yoyo.app、`yoyo start`、`yoyo pet` 和从源码运行时 `pnpm pet` 开的桌�
 * 有 `command` 走 stdio（`args`、`env`、`cwd`），有 `url` 走 Streamable HTTP，`"type": "sse"` 走 SSE。
 * `include`、`exclude` 用服务器上的原名挑工具，`"enabled": false` 先不连。
 * 工具名加服务器前缀，例如 `notes__search_notes`。
-* 连不上只记一行，其余照常。
+* 一次工具调用最多等 60 秒，到点按没做成告诉模型；慢的服务器写 `"callTimeoutMs": 300000`（毫秒，`0` 是一直等）。连接加列工具最多等 15 秒，`"timeoutMs"` 同样能改。
+* 连不上只记一行，其余照常。用着的服务器断了（进程退出、网断了），yoyo 隔 5 秒、30 秒、2 分钟、10 分钟、10 分钟各重连一次，连上了工具就回来；都不行就不再试，重启 yoyo 再连。
 
 # 把 MCP 服务器关进沙箱
 

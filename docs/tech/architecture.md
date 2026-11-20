@@ -25,6 +25,9 @@ sources:
   - id: harness
     resource: src/brain/harness.ts
     title: Harness
+  - id: mcp
+    resource: src/brain/mcp.ts
+    title: MCP 接线
   - id: sandbox
     resource: src/brain/sandbox.ts
     title: MCP 沙箱
@@ -426,7 +429,10 @@ registry.addTool(
 * 有 `command` 走 stdio（`args`、`env`、`cwd`），有 `url` 走 Streamable HTTP，`"type": "sse"` 走 SSE。
 * `include`、`exclude` 用服务器上的原名挑工具，`"enabled": false` 先不连。
 * 工具名加服务器前缀，例如 `notes__search_notes`。
+* 时限是 ctx-mcp 的：连接加列工具缺省等 15 秒（`timeoutMs`），一次工具调用缺省等 60 秒（`callTimeoutMs`），到点给模型一个错误结果；按服务器写这两项（毫秒，`0` 不限时）原样交给 ctx-mcp。工具说明、结果的上限（2000 字、10 万字、5 MiB）也是 ctx-mcp 的缺省，yoyo 不改。
 * 启动时连接，连不上只记一行「MCP notes 没连上：…」，其余照常；退出时关掉。
+* 用着的服务器自己断了（进程退出、连接断开）：ctx-mcp 撤掉它的工具，`connectMcp` 包了一层连接方式，看到 `onClose` 就记一行「MCP notes 断开了：…，5 秒后重连」，按 `RECONNECT_DELAYS_MS`（5 秒、30 秒、2 分钟、10 分钟、10 分钟）调 `hub.connect()`，连上了工具回到注册表；都没连上就记一行不再试。重连上一分钟之内又断的，接着上一次的次数往后排，免得一连上就崩的服务器被一直拉起来。关掉以后不再重连。子 agent 那份注册表是组装时从主注册表抄的，重连后工具名不变就照样能调，工具列表变了要重新组装才跟上。
+* ctx-mcp 的英文告警由 `mcpLogger` 换成一行中文（刷新工具列表失败、和已有的工具重名、收不进来、没关干净）；没连上、断开了由上面按状态记，不重复；认不出的原样记。[^mcp]
 * 每台服务器连接前才检查：没有 `command` 也没有 `url` 就记一行「MCP notes 的配置不对，要有 command 或 url，先跳过」；`type` 只认 `http`、`sse`，别的按缺省；其余字段写错当没写。
 
 ## 把 MCP 服务器关进沙箱
@@ -459,6 +465,7 @@ YOYO_HOME=/tmp/yoyo-dev YOYO_CONFIG=/tmp/yoyo-dev/config.json pnpm once
 [^agents]: agent 配置
 [^harness]: Harness
 [^orchestrator]: 编排器
+[^mcp]: MCP 接线
 [^sandbox]: MCP 沙箱
 [^channel]: 对话渠道
 [^director]: 导演
