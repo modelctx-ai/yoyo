@@ -97,6 +97,7 @@ status: stable
 | `web.enabled`、`web.port`                  | `true`、`0`                                      | 管理页开不开、用哪个端口；`0` 是每次随机                                                            |
 | `app.launchAtLogin`                        | `false`                                          | 登录 Mac 时自动打开 yoyo.app，用登录项注册（macOS 13 以上）；从源码运行没有 app，这一项没有用。app 菜单「开机时打开」、工作台设置里的开关和 `yoyo app login` 改的是它，几秒内生效 |
 | `tasks.enabled`、`tasks.notify`、`tasks.concurrency`、`tasks.answerTimeout` | `true`、`true`、`2`、`24` | 子任务开不开（yoyo 要 `llm.tools` 打开才能派，命令行和工作台照样能看）、做完或要问你时 yoyo 主动转告不转告、同时做几件（1 到 8）、子任务问了你以后等多少小时没回答就按没做成结束（`0` 是一直等，写错按 24）；等回答的不占做事的名额 |
+| `tasks.maxTokens` | `100000` | 子任务做得久、过程太长时，一次交给模型的估算 token 上限：超了先把较早的过程压成摘要，还超再丢掉最早的；都做完还放不下，这件子任务按没做成结束，说「上下文太长」。缺省是照 128K 窗口的模型、给回答留出余量定的，窗口小的模型调低（估算比实际偏少时还要再低一些）；`0` 是不管，写错按 100000 |
 | `files.workspace` | 空 | yoyo 读写文件的工作区，能读能写；空着是 `~/.yoyo/workspace`，`~` 开头算主目录 |
 | `files.readable`、`files.denyRead` | `[]`、`[]` | 另外能读（不能写）的目录或文件；另外读不到的，盖过 `readable`。配置、yoyo 自己的数据和 `~/.ssh` 这些一律读不到 |
 | `files.read`、`files.write`、`files.edit` | `allow`、`allow`、`allow` | 三个工具各自怎么给：`allow` 直接做，`ask` 给但每次动手前要你在工作台里批准，`deny` 不给；写错按 `allow`。只在 `llm.tools` 打开时有；转告子任务结果那一轮不给（`allow`、`ask` 都一样） |

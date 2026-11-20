@@ -393,6 +393,7 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
       onFinished: (task) => orchestrator.relayTask(task.id),
       onAsked: (task) => orchestrator.relayTask(task.id),
       answerTimeoutMs: config.tasks.answerTimeout * 3_600_000,
+      maxTokens: config.tasks.maxTokens,
       agents,
       toolNames: () => worker.list().map((definition) => definition.name),
       // 类型写了 model：服务商、地址和密钥照 llm，只换模型名

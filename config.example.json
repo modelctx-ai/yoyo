@@ -64,7 +64,8 @@
     "enabled": true,
     "notify": true,
     "concurrency": 2,
-    "answerTimeout": 24
+    "answerTimeout": 24,
+    "maxTokens": 100000
   },
   "files": {
     "workspace": "",

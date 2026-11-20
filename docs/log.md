@@ -3,6 +3,7 @@
 ## 2026-11-20
 
 * **更新** 跟上 ctx 在 modelctx-ai/ctx#53–#61 里、上次没跟的三处。[记忆](tech/memory.md)：`forget` 改走 ctx 的 `Memory.forget`（`forgetFact`），画像的历史版本一起删掉、按剩下的事实当场写一版，不再等夜里整理；命令表和运行时原则第 5 条跟上，「程序不能真删除」那句改成 yoyo 只退役、不用 ctx 的 `procedures.forget`。[管理页](tech/web.md)的 `DELETE /api/memory/facts/:id` 和「只做命令行也能做的事」一段跟上；日常使用的 `forget` 一条写明画像当场改、你改过的画像也会被换掉。
+* **更新** [子任务](tech/tasks.md)「怎么跑」加第 5 步：每一轮开始前按 `tasks.maxTokens` 查上限，超了先用 `TASK_COMPACT_INSTRUCTIONS` 把较早的过程压成摘要、再裁剪，都放不下就按没做成结束（「上下文太长」，模型接口自己说装不下也是这句）；「还没做」加一轮里的二十步不查。[配置](product/configuration.md)的选项表加 `tasks.maxTokens`（缺省 100000，`0` 不管），`config.example.json` 跟上。
 
 ## 2026-11-17
 

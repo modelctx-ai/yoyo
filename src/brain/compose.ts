@@ -1,5 +1,6 @@
 import {
   describeError,
+  isContextOverflow,
   redact,
   textOf,
   type Context,
@@ -70,6 +71,16 @@ function describeInfo(info: ErrorInfo, secrets: readonly string[]): ErrorDescrip
   };
 }
 
+/**
+ * 上下文太长：服务商说装不下（带状态码），或者超窗兜底压缩、裁剪以后估算还是超过上限（这一轮没调模型）。
+ * ctx 给的原文是英文，换成一句中文。
+ */
+function overflowText(info: ErrorInfo): string {
+  return info.statusCode !== undefined
+    ? `上下文太长，模型装不下（接口返回 ${info.statusCode}）`
+    : '上下文太长：压缩、裁剪以后还是超过上限，这一轮没调模型';
+}
+
 /** 交给编排器跑一轮，等它跑完，返回最后一步的文字。出错或被取消就抛一句中文。 */
 export async function run(runs: Runs, request: RunRequest, secrets: readonly string[] | undefined): Promise<string> {
   let result: RunResult;
@@ -81,6 +92,7 @@ export async function run(runs: Runs, request: RunRequest, secrets: readonly str
   }
   if (result.stopReason === 'error' || result.stopReason === 'aborted') {
     const info = result.error ?? { message: `这一轮停在 ${result.stopReason}` };
+    if (isContextOverflow(info)) throw new Error(overflowText(info), { cause: info });
     throw new Error(modelErrorText(describeInfo(info, secrets ?? [])), { cause: info });
   }
   return result.text;

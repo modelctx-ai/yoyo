@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'vite-plus/test';
 
-import { createContext, createMemoryStore, createOrchestrator, type Context } from '@modelctx-ai/ctx';
+import {
+  assistantEntry,
+  createContext,
+  createMemoryStore,
+  createOrchestrator,
+  userEntry,
+  type Context,
+} from '@modelctx-ai/ctx';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import { createTaskContext, mainProjection, sessionFor, taskSession } from '../brain/context.ts';
@@ -77,7 +84,12 @@ interface Rig {
   readonly clock: { at: number };
 }
 
-function rig(model: MockLanguageModelV4 | null, concurrency?: number, answerTimeoutMs?: number): Rig {
+function rig(
+  model: MockLanguageModelV4 | null,
+  concurrency?: number,
+  answerTimeoutMs?: number,
+  maxTokens?: number,
+): Rig {
   const clock = { at: T0 };
   const repos = memoryRepos({ now: () => new Date(clock.at) });
   const logger = memoryLogger();
@@ -101,6 +113,7 @@ function rig(model: MockLanguageModelV4 | null, concurrency?: number, answerTime
     pollMs: 5,
     ...(concurrency ? { concurrency } : {}),
     ...(answerTimeoutMs ? { answerTimeoutMs } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
     // 叫一声的那一刻，结果（问题）已经在主会话里了
     onFinished: (task) => {
       finished.push(noted(task.id));
@@ -121,6 +134,12 @@ function brief(repos: Repos) {
 }
 
 const CHECKS = [{ criterion: '三个项目都有', met: true, evidence: 'A、B、C 各一段' }];
+
+/** 一上来就交结果。 */
+const finishing = (): DoGenerateResult[] => [
+  call('task_finish', { id: 1, result: '好了', checks: CHECKS }),
+  text('好'),
+];
 
 async function until(done: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 400 && !done(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -622,5 +641,63 @@ describe('子任务的跑法', () => {
       again.abort();
       await forever.runner.close();
     });
+  });
+
+  test('超窗兜底：上限记进这一轮的配置；0 不兜底', async () => {
+    type Overflow = { maxTokens?: unknown; strategy?: unknown; compact?: { instructions?: unknown } };
+    const overflowOf = async (main: Context): Promise<Overflow | undefined> => {
+      const started = (await main.store.list(taskSession(1))).find(
+        (entry) => entry.type === 'event' && entry.kind === 'ctx.run.started',
+      );
+      const data = started?.type === 'event' ? (started.data as { agent?: { context?: { overflow?: Overflow } } }) : {};
+      return data.agent?.context?.overflow;
+    };
+    const on = rig(scripted(finishing()), undefined, undefined, 50_000);
+    brief(on.repos);
+    assert.equal((await on.runner.runNext())?.state, 'done');
+    const overflow = await overflowOf(on.main);
+    assert.deepEqual([overflow?.maxTokens, overflow?.strategy], [50_000, 'compact']);
+    assert.match(String(overflow?.compact?.instructions), /后台子任务做到现在的过程记录/);
+
+    const off = rig(scripted(finishing()), undefined, undefined, 0);
+    brief(off.repos);
+    assert.equal((await off.runner.runNext())?.state, 'done');
+    assert.equal(await overflowOf(off.main), undefined);
+  });
+
+  test('超窗兜底：过程太长先压成摘要再接着做；压完、裁完还放不下就不调模型，按没做成结束', async () => {
+    const prompts: unknown[] = [];
+    const model = scripted(
+      [
+        text('摘要：已经查过 A、B 两个项目的进展。'),
+        call('task_finish', { id: 1, result: '好了', checks: CHECKS }),
+        text('好'),
+      ],
+      prompts,
+    );
+    const { repos, main, runner } = rig(model, undefined, undefined, 9_000);
+    // 上次做到一半留下的很长的过程
+    for (let i = 0; i < 30; i += 1) {
+      await main.store.append(taskSession(1), [
+        i % 2 === 0 ? userEntry(`第${i}段资料：${'很长的资料'.repeat(120)}`) : assistantEntry(`记下了第${i}段`),
+      ]);
+    }
+    brief(repos);
+    const done = await runner.runNext();
+    assert.equal(done?.state, 'done');
+    assert.match(JSON.stringify(prompts[0]), /后台子任务做到现在的过程记录/, '第一次调模型是压缩，用子任务的指令');
+    const kinds = (await main.store.list(taskSession(1))).flatMap((entry) =>
+      entry.type === 'summary' ? ['summary'] : entry.type === 'event' ? [entry.kind] : [],
+    );
+    assert.ok(kinds.includes('summary') && kinds.includes('ctx.compacted'), kinds.join(','));
+    assert.match(JSON.stringify(prompts[1]), /已经查过 A、B 两个项目的进展/, '接着做的那一步看得到摘要');
+
+    const tight = scripted([text('不该用到')]);
+    const small = rig(tight, undefined, undefined, 1);
+    brief(small.repos);
+    const failed = await small.runner.runNext();
+    assert.equal(failed?.state, 'failed');
+    assert.equal(failed?.error, '上下文太长：压缩、裁剪以后还是超过上限，这一轮没调模型');
+    assert.equal(tight.doGenerateCalls.length, 0);
   });
 });

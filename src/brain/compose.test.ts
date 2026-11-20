@@ -349,6 +349,23 @@ describe('brain/compose 模型报错', () => {
     });
   });
 
+  test('上下文太长：服务商说装不下，报一句中文，不抄原文', async () => {
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          message: "This model's maximum context length is 8192 tokens",
+          url: 'u',
+          requestBodyValues: {},
+          statusCode: 400,
+        });
+      },
+    });
+    const error = await reply(await seeded({ model }), { tone: 'calm' }).catch((e: unknown) => e);
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, '上下文太长，模型装不下（接口返回 400）');
+    assert.equal((error.cause as { type?: unknown }).type, 'context_overflow');
+  });
+
   test('编排器关了：照样报一句模型没回', async () => {
     const model = new MockLanguageModelV4({ doGenerate: textResult('不该用到') });
     const context = await seeded({ model });

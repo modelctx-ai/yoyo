@@ -146,6 +146,11 @@ const tasks = z.looseObject({
   concurrency: z.coerce.number().int().min(1).max(8).catch(2).default(2),
   /** 子 agent 问了主人，等多久没回答就按没做成结束，单位小时；0 不超时。 */
   answerTimeout: z.coerce.number().min(0).max(720).catch(24).default(24),
+  /**
+   * 子任务一次模型调用的估算 token 上限：超了先把较早的过程压成摘要，还超再裁掉最早的；0 不管。
+   * 缺省按 128K 窗口的模型、给回答留出余量定的，窗口小的模型调低。
+   */
+  maxTokens: z.coerce.number().int().min(0).catch(100_000).default(100_000),
 });
 
 /**
