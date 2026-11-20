@@ -20,6 +20,7 @@ import { liveConfig, parseConfig } from '../app/config.ts';
 import { resolvePaths } from '../app/paths.ts';
 import type { PaceDecision } from '../kernel/pace.ts';
 import { petChatEntries, sessionFor, taskSession, yoyoProjection } from '../brain/context.ts';
+import { createYoyoMemory } from '../brain/memory.ts';
 import { deliverArtifact } from '../features/tasks/artifacts.ts';
 import { requestApproval } from '../features/approvals/approvals.ts';
 import { mergeAgents } from '../features/tasks/agents.ts';
@@ -150,7 +151,7 @@ describe('web 管理页', () => {
       paths,
       repos,
       context,
-      memory,
+      memory: createYoyoMemory({ store: memory, sessions: context.store, config: parseConfig({}).memory }),
       host: {
         name: 'dsh-pet',
         workStatus: async () => {
@@ -311,6 +312,8 @@ describe('web 管理页', () => {
     assert.equal((await call('PUT', '/api/memory/core', { text: 1 })).status, 400);
 
     assert.equal((await call('DELETE', `/api/memory/facts/${fact.id}`)).status, 200);
+    // 画像跟着重写：历史版本删掉，剩下没有仍然成立的事实，画像就空了
+    assert.deepEqual([await memory.core.get(), await memory.core.history()], [null, []]);
     assert.equal((await call('DELETE', `/api/memory/facts/${fact.id}`)).status, 404);
     assert.equal((await call('DELETE', `/api/memory/rules/${rule.id}`)).status, 200);
     view = (await call('GET', '/api/memory')).data as typeof view;
@@ -971,7 +974,7 @@ describe('web 管理页：没开子任务、往前翻', () => {
       paths,
       repos,
       context,
-      memory: createMemory(),
+      memory: createYoyoMemory({ store: createMemory(), sessions: context.store, config: parseConfig({}).memory }),
       host: { name: 'console', workStatus: async () => ({ state: 'idle', task: null }) },
       ...(options.agents ? { agents: options.agents } : {}),
     });

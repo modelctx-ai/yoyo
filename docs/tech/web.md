@@ -42,7 +42,7 @@ sources:
 
 主人在命令行里能看的、能改的，管理页都给一份网页，长成一个聊天工作台（布局和后面的打算见[工作台](workbench.md)）：主聊天（最近的对话，能打字和 yoyo 聊，回复边写边显示，往上滚接着加载更早的）、状态（桌宠连没连上、模型、右键对话、记忆、下一句碎碎念、在忙什么）、心迹（画像能改，事实能忘，规矩能退役）、日程（加、改、暂停、删）和联系人（加、删）、行为轨迹。还有「说一句」「听一句」，和右键菜单一样交给收件箱。
 
-除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，改和暂停日程是 `updateSchedule`，忘掉事实是 `facts.forget`，退役规矩是 `procedures.retire`，派子任务是 `createAgentTask`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
+除了打字聊天（和右键对话同一个 agent，见[工作台](workbench.md#已经有的)），只做命令行也能做的事，用的是同一套函数：加日程是 `addSchedule`，改和暂停日程是 `updateSchedule`，忘掉事实是 `forgetFact`（ctx 的 `Memory.forget`，画像跟着当场重写；记忆没打开时组装根另建一份不带模型的），退役规矩是 `procedures.retire`，派子任务是 `createAgentTask`，都照旧记一笔行为记录。不改配置，也不碰模型和 MCP。[^api]
 
 # 在哪跑
 
@@ -95,7 +95,7 @@ sources:
 | `GET /api/activity?limit=&types=&before=` | 做过的事，缺省 50 条，最多 500。`types=a,b` 只看这几种，`before=<ISO 时间>` 只看那以前的（条数在筛过的里面数）：对话里穿插的小卡片用它按时间段取 |
 | `GET /api/memory` | 画像、仍然成立的事实（按开始成立的时间）、没退役的规矩 |
 | `PUT /api/memory/core` | 改画像：`{ text }`，去掉首尾空白，最多 4000 字；记 `memory-core-edit` |
-| `DELETE /api/memory/facts/:id` | 真删除一条事实；记 `memory-forget` |
+| `DELETE /api/memory/facts/:id` | 真删除一条事实，画像的历史版本一起删掉、按剩下的事实重写；记 `memory-forget` |
 | `DELETE /api/memory/rules/:id` | 规矩退役；记 `memory-retire` |
 | `GET`、`POST /api/alarms`，`PATCH`、`DELETE /api/alarms/:id` | 日程：列、加、改、删；删记 `schedule-remove`。`PATCH` 正文里写了的项才改：`title`、`time`、`date`、`repeat`（`null` 是改成一次性，要有日期）、`weekday`、`kind`、`enabled`（`false` 暂停、`true` 恢复），规则和校验同 `addSchedule`（`updateSchedule`）；改了时间、日期、重复、星期几的清掉「最近响过」的记号，新时间当天照样响；记 `schedule-edit`（带改了哪几项）、`schedule-pause`、`schedule-resume`，什么都没变不记。类型不对、填错回 400，没有这条 404，回改好的这一条 |
 | `GET`、`POST /api/contacts`，`DELETE /api/contacts/:id` | 联系人：列、加、删；删记 `contact-remove` |

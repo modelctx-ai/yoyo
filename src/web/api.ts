@@ -2,7 +2,7 @@
  * 管理页的接口：只做主人在命令行里也能做的事（看状态、上下文和记录，管记忆、日程和联系人，让 yoyo 说一句或听一句），
  * 用的也是同一套函数。HTTP 和安全检查在 `server.ts`。
  */
-import { compareEntries, textOf, type Context, type Entry, type MemoryStore } from '@modelctx-ai/ctx';
+import { compareEntries, textOf, type Context, type Entry } from '@modelctx-ai/ctx';
 import { MEMORY_DEFAULTS } from '@modelctx-ai/ctx-memory';
 
 import type { LiveConfig } from '../app/config.ts';
@@ -16,7 +16,7 @@ import { TaskError, answerTask, cancelAgentTask, createAgentTask, isOpen, progre
 import { paceNote, type PaceDecision, type PaceOptions } from '../kernel/pace.ts';
 import type { AgentTask, Approval, Artifact } from '../kernel/types.ts';
 import type { Paths } from '../app/paths.ts';
-import { allFacts } from '../brain/memory.ts';
+import { allFacts, forgetFact as forgetMemoryFact, type YoyoMemory } from '../brain/memory.ts';
 import { addSchedule, removeSchedule, updateSchedule } from '../features/alarms/schedule.ts';
 import { addContact, removeContact } from '../features/contacts/contacts.ts';
 import type { ArtifactFiles, PetHost, Repos } from '../ports/index.ts';
@@ -30,7 +30,8 @@ export interface WebDeps {
   readonly repos: Repos;
   /** 主线程的上下文；`store` 用来读子任务各自的会话。 */
   readonly context: Pick<Context, 'entries' | 'store'>;
-  readonly memory: MemoryStore;
+  /** 看用存储；忘掉一条事实走门面，画像跟着当场重写。 */
+  readonly memory: YoyoMemory;
   readonly host: Pick<PetHost, 'name' | 'workStatus'>;
   /** 编排器的排期：下一句碎碎念、最近一次说话。常驻进程里才有。 */
   readonly schedule?: () => {
@@ -226,7 +227,8 @@ export function paceView(pace: PaceDecision, options: PaceOptions): Record<strin
 }
 
 export function createWebApi(deps: WebDeps): (method: string, path: string, body?: unknown) => Promise<ApiResult> {
-  const { repos, memory } = deps;
+  const { repos } = deps;
+  const memory = deps.memory.store;
   const now = deps.now ?? (() => new Date());
 
   /** 开关和表单改成了就记一笔，和命令行、模型改的一样能撤销。 */
@@ -311,7 +313,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
   }
 
   async function forgetFact(id: string): Promise<unknown> {
-    if ((await memory.facts.forget([id])) === 0) throw new RequestError(`没有这条事实：${id}`, 404);
+    if (!(await forgetMemoryFact(deps.memory.memory, id))) throw new RequestError(`没有这条事实：${id}`, 404);
     repos.activity.record({ type: 'memory-forget', id });
     return { id };
   }
@@ -319,7 +321,7 @@ export function createWebApi(deps: WebDeps): (method: string, path: string, body
   async function retireRule(id: string): Promise<unknown> {
     const rule = (await memory.procedures.list({ active: true })).find((item) => item.id === id);
     if (!rule) throw new RequestError(`没有这条程序：${id}`, 404);
-    // ctx 的 MemoryStore 没有删程序的方法，只能退役：不再交给模型，记录还在
+    // 规矩退役、不删：不再交给模型，记录还在
     await memory.procedures.retire(id, now().getTime());
     repos.activity.record({ type: 'memory-retire', id });
     return { id };

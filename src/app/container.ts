@@ -479,8 +479,10 @@ export async function createApp(config: Config, paths: Paths, overrides: AppOver
             paths,
             repos,
             context,
-            // 记忆没打开时库里也可能有以前记的，照样能看、能删
-            memory: memory?.store ?? openMemoryStore(db),
+            // 记忆没打开时库里也可能有以前记的，照样能看、能删；只删不整理，不用模型
+            memory:
+              memory ??
+              createYoyoMemory({ store: openMemoryStore(db), sessions: context.store, config: config.memory }),
             host,
             schedule: () => orchestrator.state,
             talk: (text, signal, onDelta) => orchestrator.talk(text, signal, onDelta),

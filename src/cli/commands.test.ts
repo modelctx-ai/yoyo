@@ -292,12 +292,19 @@ describe('commands', () => {
     assert.deepEqual(await run('memory', 'history'), ['要给事实的 id：yoyo memory history <id>']);
     assert.deepEqual(await run('memory', 'history', 'nope'), ['没有这条事实：nope']);
 
-    assert.deepEqual(await run('memory', 'forget', cat.id), [`忘掉了 ${cat.id}，下一次整理时画像跟着改`]);
+    await store.core.set('主人喜欢猫的表情包，最近在做项目 Y。', NOW.getTime());
+    assert.deepEqual(await run('memory', 'forget', cat.id), [`忘掉了 ${cat.id}，画像按剩下的事重写了`]);
     assert.deepEqual(await run('memory', 'forget', cat.id), [`没有这条事实或程序：${cat.id}`]);
     assert.equal(
       (await store.facts.list()).some((fact) => fact.id === cat.id),
       false,
       '真删除，不是归档',
+    );
+    // 画像里还有删掉的那件事：历史版本一起删掉，按剩下仍然成立的事实当场写一版
+    assert.equal((await store.core.get())?.text, '主人在做项目 Y');
+    assert.deepEqual(
+      (await store.core.history()).map((version) => version.text),
+      ['主人在做项目 Y'],
     );
     const forgot = env.repos().activity.list(5).at(-1);
     assert.deepEqual([forgot?.type, forgot?.['id'], forgot?.text], ['memory-forget', cat.id, undefined]);

@@ -1,5 +1,9 @@
 # 文档更新记录
 
+## 2026-11-20
+
+* **更新** 跟上 ctx 在 modelctx-ai/ctx#53–#61 里、上次没跟的三处。[记忆](tech/memory.md)：`forget` 改走 ctx 的 `Memory.forget`（`forgetFact`），画像的历史版本一起删掉、按剩下的事实当场写一版，不再等夜里整理；命令表和运行时原则第 5 条跟上，「程序不能真删除」那句改成 yoyo 只退役、不用 ctx 的 `procedures.forget`。[管理页](tech/web.md)的 `DELETE /api/memory/facts/:id` 和「只做命令行也能做的事」一段跟上；日常使用的 `forget` 一条写明画像当场改、你改过的画像也会被换掉。
+
 ## 2026-11-17
 
 * **更新** 跟上 ctx 的记忆改动（modelctx-ai/ctx#61）：[记忆](tech/memory.md)的配置示例和配置表加 `decay.minChances`（缺省 7，和 ctx 一样；归档前要错过几个召回过别的事实的日子，`0` 只看激活度），「存在哪里」加检索用的 `memory_fact_terms`、`memory_fact_docs` 两张表；「夜里什么时候整理」写明一批失败不挡别的批次，日志和 `memory-consolidate` 带上没整理成、进了死信的条数，有死信用 warn；命令表的 `yoyo memory tail` 多一个状态「整理失败」。[配置](product/configuration.md)的选项表加 `memory.decay.minChances`，`config.example.json` 跟上。
